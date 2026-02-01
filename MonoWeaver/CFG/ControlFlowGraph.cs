@@ -5,94 +5,159 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
+using MonoWeaver.Utils;
 
 namespace MonoWeaver.CFG;
 
 [Flags]
-public enum StackTypeKind : uint 
+public enum VerificationType : uint 
 {
     Unknown = 0,
-    I4 = 1,
-    I8 = 1 << 1,
-    I =  1 << 2,      // native int
-    R4 = 1 << 3,
-    R8 = 1 << 4,
-    ByRef = 1 << 5,
-    Ptr = 1 << 6,
-    O = 1 << 7,      // object ref
-    ValueType = 1 << 8,
     
-    Num = I4 | I8 | R4 | R8 | I,
+    ByRef = 1 << 0,
+    Ptr = 1 << 1,
+    O = 1 << 2,      // object ref
+    ValueType = 1 << 3,
+    
+    I1 = 1 << 4,
+    I2 = 1 << 5,
+    I4 = 1 << 6,
+    I8 = 1 << 7,
+    I =  1 << 8,      // native int
+    R4 = 1 << 9,
+    R8 = 1 << 10,
+    
+    Null = 1 << 11 | O,
     F = R4 | R8,
-    
-    All = int.MaxValue
+    All = uint.MaxValue
 }
 
 internal class StackTypeRef 
 {
-    public StackTypeRef(StackTypeKind kind) => Kind = kind;
+    public StackTypeRef(VerificationType kind) => Kind = kind;
 
-    public StackTypeRef(TypeReference type, StackTypeKind kind = StackTypeKind.Unknown)
+    public StackTypeRef(TypeReference type)
     {
-        Kind = kind;
-        var typeSystem = type.Module.TypeSystem;
-        if(typeSystem.Int32 == type || typeSystem.UInt32 == type || 
-         typeSystem.Int16 == type || typeSystem.UInt16 == type ||
-         typeSystem.Byte == type || typeSystem.Char == type)
-        {
-            Kind |= StackTypeKind.I4;
-            return;
-        }
+        type = type.StripType();
         
-        throw new NotImplementedException();
+        var typeSystem = type.Module.TypeSystem;
+       
+        if (type is ByReferenceType refType)
+        {
+            var eleType = refType.ElementType;
+            TypeDefinition typeDef = eleType.Resolve() ?? throw new ResolveFailedException(eleType);
+            var enumType = typeDef.GetEnumUnderlyingType();
+            Kind |= VerificationType.ByRef;
+
+            if (enumType != null) eleType = enumType;
+            
+            if(typeSystem.Boolean == eleType || typeSystem.Byte == eleType || typeSystem.SByte == eleType)
+            {
+                Kind |= VerificationType.I1;
+                return;
+            }
+            if(typeSystem.Int16 == eleType || typeSystem.UInt16 == eleType || typeSystem.Char == eleType)
+            {
+                Kind |= VerificationType.I2;
+                return;
+            }
+            if(typeSystem.Int32 == eleType || typeSystem.UInt32 == eleType)
+            {
+                Kind |= VerificationType.I4;
+                return;
+            }
+            if (typeSystem.Int64 == eleType || typeSystem.UInt64 == eleType)
+            {
+                Kind |= VerificationType.I8;
+                return;
+            }
+            if (typeSystem.Single == eleType)
+            {
+                Kind |= VerificationType.R4;
+                return;
+            }
+            if (typeSystem.Double == eleType)
+            {
+                Kind |= VerificationType.R8;
+                return;
+            }
+            if (typeSystem.IntPtr == eleType || typeSystem.UIntPtr == eleType)
+            {
+                Kind |= VerificationType.I;
+                return;
+            }
+
+            Type = type; //对于ByRef的类型不能直接合
+        }
+        else if (type is PointerType)
+        {
+            Kind |= VerificationType.Ptr | VerificationType.I;
+            Type = type; //保留类型但可以转化为native int
+        }
+        else
+        {
+            TypeDefinition typeDef = type.Resolve() ?? throw new ResolveFailedException(type);
+            var cmpType = typeDef.GetEnumUnderlyingType() ?? type;
+            if(typeSystem.Boolean == cmpType ||
+               typeSystem.Int32 == cmpType || typeSystem.UInt32 == cmpType || 
+               typeSystem.Int16 == cmpType || typeSystem.UInt16 == cmpType ||
+               typeSystem.Byte == cmpType || typeSystem.Char == cmpType ||
+               typeSystem.SByte == cmpType)
+            {
+                Kind |= VerificationType.I4;
+                return;
+            }
+            if (typeSystem.Int64 == cmpType || typeSystem.UInt64 == cmpType)
+            {
+                Kind |= VerificationType.I8;
+                return;
+            }
+        
+            if (typeSystem.IntPtr == cmpType || typeSystem.UIntPtr == cmpType)
+            {
+                Kind |= VerificationType.I;
+                return;
+            }
+            if (typeSystem.Single == cmpType || typeSystem.Double == cmpType)
+            {
+                Kind |= VerificationType.F;
+                return;
+            }
+        }
+        if (type.IsValueType) Kind |= VerificationType.ValueType;
+        else  Kind |= VerificationType.O;
         Type = type;
     } 
 
-    public readonly StackTypeKind Kind;
+    public readonly VerificationType Kind;
 
     public readonly TypeReference? Type;
     
     public static implicit operator StackTypeRef(TypeReference type) => new(type);
-    public static implicit operator StackTypeRef(StackTypeKind kind) => new(kind);
-    public bool Match(TypeReference? right) 
-    {
-        if (right is null)
-            return false;
-        if (Type is not null)
-            return Type == right;
-        var typeSystem = right.Module.TypeSystem;
-        if(Kind.HasFlag(StackTypeKind.I4) && 
-           (typeSystem.Int32 == right || typeSystem.UInt32 == right || 
-            typeSystem.Int16 == right || typeSystem.UInt16 == right ||
-            typeSystem.Byte == right || typeSystem.Char == right))
-            return true;
-        if(Kind.HasFlag(StackTypeKind.I8) &&  
-           (typeSystem.Int64 == right || typeSystem.UInt64 == right))
-            return true;
-        if(Kind.HasFlag(StackTypeKind.I) && 
-           (typeSystem.IntPtr == right || typeSystem.UIntPtr == right))
-            return true;
-        if(Kind.HasFlag(StackTypeKind.R4) && typeSystem.Single == right)
-            return true;
-        if(Kind.HasFlag(StackTypeKind.R8) && typeSystem.Double == right)
-            return true;
-        return false;
-    }
+    public static implicit operator StackTypeRef(VerificationType kind) => new(kind);
+
 
     public StackTypeRef? GetCompatible(StackTypeRef other)
     {
         throw new NotImplementedException();
     }
 
-    public bool Match(StackTypeRef? right)
+    public bool CanConvertTo(StackTypeRef? right)
     {
         if (right is null)
             return false;
-        if (this.Type is not null)
-            return right.Match(Type);
-        if (right.Type is not null)
-            return Match(right.Type);
-        return (right.Kind | Kind) != 0;
+        if (((uint)Kind & 0xF) != ((uint)right.Kind & 0xF)) //类别不相等
+            return false;
+        
+        if (Kind == VerificationType.Null || right.Kind == VerificationType.Null) //已经确定类别一致则null一定可以转换
+            return true;
+        
+        if (right.Type is null) //无细分类别
+            return true; 
+        
+        if (Type is null) //细分类别不一致
+            return false;
+        throw new NotImplementedException();
     }
 }
 
@@ -241,6 +306,7 @@ public partial class ControlFlowGraph
                 {
                     StackBehaviour.Pop0 => [],
 
+                    StackBehaviour.Pop1 => FindExpectType_Pop1(inst),
                     StackBehaviour.Popi   => [ts.Int32],
                     StackBehaviour.Popref => FindExpectType_Popref(inst),
 
@@ -249,21 +315,15 @@ public partial class ControlFlowGraph
                     StackBehaviour.Popi_popr4  => [ts.Int32, ts.Single],
                     StackBehaviour.Popi_popr8  => [ts.Int32, ts.Double],
                     StackBehaviour.Popref_popi => FindExpectTypes_Popref_popi(inst),
-
-                    StackBehaviour.Popi_popi_popi       => [ts.Int32, ts.Int32, ts.Int32],
+                    StackBehaviour.Popi_pop1 => FindExpectTypes_Popi_pop1(inst),
+                    StackBehaviour.Popref_pop1 => FindExpectTypes_Popref_pop1(inst),
+                    StackBehaviour.Pop1_pop1 => FindExpectTypes_Pop1_pop1(inst),
+                    
+                    StackBehaviour.Popi_popi_popi    => [ts.Int32, ts.Int32, ts.Int32],
                     StackBehaviour.Popref_popi_popi or StackBehaviour.Popref_popi_popi8 or
                     StackBehaviour.Popref_popi_popr4 or StackBehaviour.Popref_popi_popr8 or 
                     StackBehaviour.Popref_popi_popref   => FindExpectTypes_Pop3(inst),
                     
-                    
-                    StackBehaviour.Pop1 => FindExpectType_Pop1(inst),
-
-                    StackBehaviour.Popi_pop1 => FindExpectTypes_Popi_pop1(inst),
-
-                    StackBehaviour.Popref_pop1 => FindExpectTypes_Popref_pop1(inst),
-
-                    StackBehaviour.Pop1_pop1 => FindExpectTypes_Pop1_pop1(inst),
-
                     StackBehaviour.Varpop => FindExpectTypes_VarPop(inst),
 
                     _ => throw new ArgumentOutOfRangeException()
@@ -312,7 +372,7 @@ public partial class ControlFlowGraph
             case Code.Starg:
             {
                 if (inst.Operand is not ushort index)
-                    throw new InvalidOperationException(typeof(ushort), inst.Operand?.GetType(), inst);
+                    throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
                 if (index >= _method.Parameters.Count + (_method.HasThis ? 1 : 0))
                     throw new OperandOutOfRangeException(inst,
                         $"Method parameters count: {_method.Parameters.Count + (_method.HasThis ? 1 : 0)}");
@@ -321,7 +381,7 @@ public partial class ControlFlowGraph
             case Code.Stloc:
             {
                 if (inst.Operand is not ushort index)
-                    throw new InvalidOperationException(typeof(ushort), inst.Operand?.GetType(), inst);
+                    throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
                 if (index >= _method.Body.Variables.Count)
                     throw new OperandOutOfRangeException(inst,
                         $"Method local variables count: {_method.Body.Variables}");
@@ -330,7 +390,7 @@ public partial class ControlFlowGraph
             case Code.Stsfld:
             {
                 if (inst.Operand is not FieldReference field)
-                    throw new InvalidOperationException(typeof(FieldReference), inst.Operand?.GetType(), inst);
+                    throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
                 return [field.FieldType];
             }
             case Code.Conv_I1:
@@ -389,7 +449,7 @@ public partial class ControlFlowGraph
             if (sig is MethodReference methodRef)
                 paramTypes = paramTypes.Prepend(methodRef.DeclaringType);
             else
-                paramTypes = paramTypes.Prepend(StackTypeKind.All);
+                paramTypes = paramTypes.Prepend(VerificationType.All);
         }
 
         return paramTypes.ToArray();

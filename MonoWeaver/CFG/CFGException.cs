@@ -12,15 +12,16 @@ public enum CFGExceptionType
     TypeMismatch,
     InvalidOperation,
     OutOfRange,
+    ResolveFailed
 }
 
 public class CFGException : Exception
 {
     public CFGExceptionType Type { get; }
     
-    public Instruction Instruction { get; }
+    public Instruction? Instruction { get; }
 
-    public CFGException(CFGExceptionType type, Instruction instruction, string? message = null) : base(message ?? type.ToString())
+    public CFGException(CFGExceptionType type, Instruction? instruction, string? message = null) : base(message ?? type.ToString())
     {
         Type = type;
         Instruction = instruction;
@@ -49,16 +50,27 @@ public class OperandOutOfRangeException : CFGException
     }
 }
 
-public class InvalidOperationException : CFGException
+public class InvalidInstructionException : CFGException
 {
     public Type ExpectType { get; }
     public Type? CurrentType { get; }
 
-    public InvalidOperationException(Type expectType, Type? currentType,
+    public InvalidInstructionException(Type expectType, Type? currentType,
         Instruction instruction, string? message = null) 
         : base(CFGExceptionType.InvalidOperation, instruction, message)
     {
         ExpectType = expectType;
         CurrentType = currentType;
+    }
+}
+
+public class ResolveFailedException : CFGException
+{
+    public TypeReference Type { get; }
+
+    public ResolveFailedException(TypeReference type, string? message = null) 
+        : base(CFGExceptionType.InvalidOperation, null, message)
+    {
+        Type = type;
     }
 }
