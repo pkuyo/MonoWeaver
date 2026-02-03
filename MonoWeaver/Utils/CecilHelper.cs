@@ -2,11 +2,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
+using Mono.Cecil.Rocks;
+using MonoMod.Utils;
 using MonoWeaver.CFG;
 
 namespace MonoWeaver.Utils;
 
-internal static class CecilHelper
+public static class CecilHelper
 {
     
     internal struct TypeKey
@@ -59,6 +61,8 @@ internal static class CecilHelper
                 return IsAssignableFromGenericParam(to, gpFrom, strict, guard); 
             }
 
+
+
             if (strict)
             {
                 if (!to.IsValueType && from.IsValueType) return false;
@@ -107,6 +111,7 @@ internal static class CecilHelper
                 if (IsAssignableFromArray(to, fromArr, strict, guard))
                     return true;
             }
+
             
             //均为泛型
             if (to is GenericInstanceType toGi && from is GenericInstanceType fromGi)
@@ -118,14 +123,14 @@ internal static class CecilHelper
                     return true;
                 }
             }
-
-            if (from is GenericParameter fromG)
+            if (to.HasGenericParameters)
             {
-                //TODO:
+                //TODO
             }
-            
+
+
             var toDef = TryResolve(to);
-            
+
             //接口
             if (toDef?.IsInterface == true)
             {
@@ -162,7 +167,7 @@ internal static class CecilHelper
 
     private static IEnumerable<TypeReference> EnumerateAllInterfaces(TypeReference type)
     {
-        var seen = new HashSet<(string? scopeName, string fullName)>();
+        var seen = new HashSet<(Guid mvid, string fullName)>();
         var stack = new Stack<TypeReference>();
         stack.Push(type);
 
@@ -175,7 +180,7 @@ internal static class CecilHelper
                 foreach (var iface in EnumerateArrayRuntimeInterfaces(arr))
                 {
                     var i = iface.StripType();
-                    if (seen.Add((iface.Scope?.ToString(), iface.FullName)))
+                    if (seen.Add((iface.Module.Mvid, iface.FullName)))
                         yield return i;
                 }
                 
@@ -197,7 +202,7 @@ internal static class CecilHelper
 
                     iface = iface.StripType();
 
-                    if (seen.Add((iface.Scope?.ToString(), iface.FullName)))
+                    if (seen.Add((iface.Module.Mvid, iface.FullName)))
                     {
                         yield return iface;
                         // 还要继续处理接口的父接口
@@ -249,7 +254,9 @@ internal static class CecilHelper
         var td = new TypeReference(@namespace, name, mod, mod.TypeSystem.CoreLibrary);
         return mod.ImportReference(td);
     }
+
     private static TypeReference SystemArrayRef(ModuleDefinition module) => ImportCorelibType(module, "System", "Array");
+
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
         bool strict,
         HashSet<(string To, string From)> guard)
@@ -416,7 +423,10 @@ internal static class CecilHelper
         }
         
         if (ReferenceEquals(a, b)) return true;
-        if (a.FullName == b.FullName && a.Scope?.ToString() == b.Scope?.ToString()) return true;
+        if (a.FullName == b.FullName && 
+            (Same(a.Scope?.Name, b.Scope?.Name) || 
+            (IsSystem(a.Scope?.Name) && IsSystem(b.Scope?.Name)))) 
+            return true;
         
         if (a is GenericInstanceType ag && b is GenericInstanceType bg)
         {
@@ -432,6 +442,56 @@ internal static class CecilHelper
 
         return false;
     }
+
+    public static bool Same(string? str1, string? str2)
+    {
+        if (str1 == null || str2 == null) return str1 == str2;
+
+        if (str1.Length == str2.Length)
+        {
+            return string.Equals(str1, str2, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (str1.Length < str2.Length)
+        {
+            return CheckMatch(str2, str1);
+        }
+
+        return CheckMatch(str1, str2);
+
+        bool CheckMatch(string longer, string shorter)
+        {
+
+            if (longer.StartsWith(shorter, StringComparison.OrdinalIgnoreCase))
+            {
+                if (longer[shorter.Length] == '.')
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    private static bool IsSystem(string? str1)
+    {
+        if (str1 == null) return false;
+        foreach (var a in CoreLibLike)
+            if (str1.Contains(a))
+                return true;
+        return false;
+    }
+
+
+    private static readonly string[] CoreLibLike = new[]
+    {
+        "System.Private.CoreLib",
+        "mscorlib",
+        "System.Runtime",
+        "netstandard"
+    };
+
+
 
     public static TypeReference? BaseType(this TypeReference? type)
     {
@@ -525,12 +585,12 @@ internal static class CecilHelper
         {
             var ownerKey = gp.Owner switch
             {
-                TypeReference tr  => $"{tr.Scope}:{tr.FullName}",
-                MethodReference mr => $"{mr.DeclaringType.Scope}:{mr.FullName}",
+                TypeReference tr  => $"{tr.Module.Mvid}:{tr.FullName}",
+                MethodReference mr => $"{mr.DeclaringType.Module.Mvid}:{mr.FullName}",
                 _ => gp.Owner?.ToString() ?? ""
             };
             return $"{ownerKey}|{gp.Type}|{gp.Position}";
         }
-        return $"{t.Scope}:{t.FullName}";
+        return $"{t.Module.Mvid}:{t.FullName}";
     }
 }

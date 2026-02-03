@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="MonoWeaver.Demo/MonoWeaver.Demo.csproj" Id="eae7ab85-4da0-45cc-9e7d-ca1cdbb05738" />
   <Project Path="MonoWeaver/MonoWeaver.csproj" />
 </Solution>
