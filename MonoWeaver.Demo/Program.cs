@@ -7,9 +7,8 @@ using System.Reflection;
 using Mono.Cecil;
 using MonoWeaver.Utils;
 
-namespace CecilAssignabilityFuzz
+namespace MonoWeaver.Fuzz
 {
-    // ====== 为了制造更多可测关系：自定义类型 ======
     public class Base { }
     public class Derived : Base { }
     public class MoreDerived : Derived { }
@@ -27,9 +26,9 @@ namespace CecilAssignabilityFuzz
     {
         static void Main(string[] args)
         {
-            int iterations = GetArgInt(args, "--n", 50_000);
+            int iterations = GetArgInt(args, "--n", 50_0000);
             int maxDepth = GetArgInt(args, "--depth", 3);
-            int seed = GetArgInt(args, "--seed", 20260204);
+            int seed = GetArgInt(args, "--seed", 20260304);
             int maxMismatchesToPrint = GetArgInt(args, "--print", 50);
 
             var asmPath = Assembly.GetExecutingAssembly().Location;
@@ -44,6 +43,12 @@ namespace CecilAssignabilityFuzz
             });
 
             var m = ass.MainModule;
+            var t1 = typeof(MonoWeaver.Fuzz.IContravariant<MonoWeaver.Fuzz.Derived[][]>);
+            var t2 = typeof(MonoWeaver.Fuzz.ContraImpl<System.Object[]>);
+            var mt1 = m.ImportReference(t1);
+            var mt2 = m.ImportReference(t2);
+            mt1.IsAssignableFrom(mt2);
+
 
             RunFuzz(m, iterations, maxDepth, seed, maxMismatchesToPrint);
         }
@@ -62,7 +67,6 @@ namespace CecilAssignabilityFuzz
             {
                 var (type1, type2) = TypeGen.RandomTypePair(rng, maxDepth);
 
-                // 理论上不会为空；但生成失败时兜底
                 if (type1 == null || type2 == null || type1.ContainsGenericParameters || type2.ContainsGenericParameters)
                 {
                     skipped++;

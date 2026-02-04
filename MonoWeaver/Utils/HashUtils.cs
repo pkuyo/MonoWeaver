@@ -1,5 +1,6 @@
-﻿using System;
-using Mono.Cecil;
+﻿using Mono.Cecil;
+using System;
+using System.Runtime.CompilerServices;
 
 namespace MonoWeaver.Utils
 {
@@ -221,22 +222,56 @@ namespace MonoWeaver.Utils
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int Mix(int hash, int value) => unchecked(hash * Prime + value);
 
-        private static int OrdinalHash(string s)
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static int OrdinalHash(string s)
         {
             unchecked
             {
-                const uint fnvOffset = 2166136261;
-                const uint fnvPrime = 16777619;
-
-                uint h = fnvOffset;
-                for (int i = 0; i < s.Length; i++)
+                unsafe
                 {
-                    h ^= s[i];
-                    h *= fnvPrime;
+                    const uint fnvOffset = 2166136261u;
+                    const uint fnvPrime = 16777619u;
+
+                    uint h = fnvOffset;
+
+                    fixed (char* p0 = s)
+                    {
+                        char* p = p0;
+                        char* end = p0 + s.Length;
+
+                        while (p + 4 <= end)
+                        {
+                            h = (h ^ p[0]) * fnvPrime;
+                            h = (h ^ p[1]) * fnvPrime;
+                            h = (h ^ p[2]) * fnvPrime;
+                            h = (h ^ p[3]) * fnvPrime;
+                            p += 4;
+                        }
+
+                        while (p < end)
+                        {
+                            h = (h ^ *p) * fnvPrime;
+                            p++;
+                        }
+                    }
+                    return (int)h;
                 }
-                return (int)h;
+            }
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static int CombineHashCodes(in int a, in int b)
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 23 + a;
+                hash = hash * 23 + b;
+
+                return hash;
             }
         }
     }
