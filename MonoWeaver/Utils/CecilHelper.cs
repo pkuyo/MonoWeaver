@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Rocks;
@@ -8,7 +9,7 @@ using MonoWeaver.CFG;
 
 namespace MonoWeaver.Utils;
 
-public static class CecilHelper
+public static partial class CecilHelper
 {
     
     internal struct TypeKey
@@ -54,13 +55,20 @@ public static class CecilHelper
 
             to   = to.StripType();
             from = from.StripType();
-            
-            //优先处理未闭合泛型参数
-            if (from is GenericParameter gpFrom)
-            {
-                return IsAssignableFromGenericParam(to, gpFrom, strict, guard); 
-            }
 
+
+            /*
+            if (to is GenericParameter toGp)
+            {
+                return IsGenericParamAssignableFrom(toGp, from, strict, guard);
+            }
+            */
+            //优先处理未闭合
+            if (from is GenericParameter fromGp)
+            {
+                return IsAssignableFromGenericParam(to, fromGp, strict, guard); 
+            }
+        
 
 
             if (strict)
@@ -82,7 +90,19 @@ public static class CecilHelper
             if (!guard.Add(key)) return false;
             
             if (IsSameType(to, from)) return true;
-            
+
+            /*
+            if (IsOpenGenericDefinition(to))
+            {
+                return IsAssignableFromCore(GenerateGenericInstanceType(to), from, strict, guard);
+            }
+            */
+
+            if (IsOpenGenericDefinition(from))
+            {
+                return IsAssignableFromCore(to, GenerateGenericInstanceType(from), strict, guard);
+            }
+
             //byRef
             if (from is ByReferenceType fromRef)
             {
@@ -102,34 +122,36 @@ public static class CecilHelper
                 }
                 return false;
             }
+
+ 
             
-     
-            
-            //处理数组
+            //数组
             if (from is ArrayType fromArr)
             {
                 if (IsAssignableFromArray(to, fromArr, strict, guard))
                     return true;
+                
             }
 
             
-            //均为泛型
+            //泛型
             if (to is GenericInstanceType toGi && from is GenericInstanceType fromGi)
             {
                 //处理逆变/协变
                 if (IsSameType(toGi.ElementType, fromGi.ElementType) &&
-                    GenericArgsAssignableWithVariance(toGi, fromGi, strict, guard))
+                    GenericArgsAssignableWithVariance(toGi, fromGi, strict, guard, from.IsArray))
                 {
                     return true;
                 }
             }
-            if (to.HasGenericParameters)
-            {
-                //TODO
-            }
-
 
             var toDef = TryResolve(to);
+
+            //nullable
+            if(toDef?.FullName == "System.Nullable`1" && to is GenericInstanceType instTo)
+            {
+                return IsSameType(instTo.GenericArguments[0], from);
+            }
 
             //接口
             if (toDef?.IsInterface == true)
@@ -152,12 +174,19 @@ public static class CecilHelper
     {
         foreach (var iface in EnumerateAllInterfaces(from))
         {
-            if (IsSameType(iface, toInterface)) return true;
+            var iface2 = iface;
+            if (IsSameType(iface2, toInterface)) return true;
+            if(from is GenericInstanceType fromG) iface2 = TryInflateGenericType(iface2, fromG);
+            /*
+            if (IsOpenGenericDefinition(toInterface) && HasSameGenericDefinition(toInterface, iface))
+                return true;
+            */
 
             // 处理逆变/协变
-            if (toInterface is GenericInstanceType toGi && iface is GenericInstanceType fromGi &&
+            if (toInterface is GenericInstanceType toGi &&
+                iface2 is GenericInstanceType fromGi &&
                 IsSameType(toGi.ElementType, fromGi.ElementType) &&
-                GenericArgsAssignableWithVariance(toGi, fromGi, strict, guard))
+                GenericArgsAssignableWithVariance(toGi, fromGi, strict, guard, from.IsArray))
             {
                 return true;
             }
@@ -198,7 +227,7 @@ public static class CecilHelper
                 foreach (var ii in curDef.Interfaces)
                 {
                     var iface = ii.InterfaceType;
-                    if (curInst != null) iface = InflateGenericType(iface, curInst);
+                    if (curInst != null) iface = TryInflateGenericType(iface, curInst);
 
                     iface = iface.StripType();
 
@@ -216,7 +245,23 @@ public static class CecilHelper
             }
         }
     }
-    
+
+    private static GenericInstanceType GenerateGenericInstanceType(TypeReference type)
+    {
+        type = type.StripType();
+
+        if (type is GenericInstanceType gi) return gi;
+
+        // 这里的语义是：把 “泛型定义” 变成 “用自身 GenericParameter 作为参数的实例”
+        // 例如 IEnumerable`1 => IEnumerable<!0>
+        var result = new GenericInstanceType(type);
+        foreach (var gp in type.GenericParameters)
+            result.GenericArguments.Add(gp);
+
+        return result;
+    }
+
+
     private static IEnumerable<TypeReference> EnumerateArrayRuntimeInterfaces(ArrayType arr)
     {
         var mod = arr.Module ?? throw new InvalidOperationException("ArrayType.Module is null.");
@@ -259,13 +304,13 @@ public static class CecilHelper
 
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
         bool strict,
-        HashSet<(string To, string From)> guard)
+        HashSet<(string To, string From)> guard, bool isArrayType)
     {
         if (target.GenericArguments.Count != source.GenericArguments.Count)
             return false;
 
         var def = TryResolve(target.ElementType);
-        if (def == null) //无法解析 TODO:更宽松的方式
+        if (def == null)
         {
             return false;
         }
@@ -273,23 +318,26 @@ public static class CecilHelper
         {
             var param = def.GenericParameters[i];
             var variance = param.Attributes & GenericParameterAttributes.VarianceMask;
-
             var tArg = target.GenericArguments[i].StripType();
             var sArg = source.GenericArguments[i].StripType();
 
-            
+            if (isArrayType && !sArg.IsValueType) //引用数组对于其他接口按协变处理
+            {
+                variance = GenericParameterAttributes.Covariant;
+            }
+
             switch (variance)
             {
                 case GenericParameterAttributes.Covariant: //协变
                     if (!DefinitelyRef(tArg) || !DefinitelyRef(sArg))
                         return IsSameType(tArg, sArg);
-                    if (!IsAssignableFromCore(tArg, sArg, strict, guard)) return false;
+                    if (!IsAssignableFromCore(tArg, sArg, strict, new HashSet<(string To, string From)>())) return false;
                     break;
 
                 case GenericParameterAttributes.Contravariant: //逆变
                     if (!DefinitelyRef(tArg) || !DefinitelyRef(sArg))
                         return IsSameType(tArg, sArg);
-                    if (!IsAssignableFromCore(sArg, tArg, strict, guard)) return false;
+                    if (!IsAssignableFromCore(sArg, tArg, strict, new HashSet<(string To, string From)> ())) return false; //TODO:
                     break;
 
                 default: // 常规
@@ -352,15 +400,13 @@ public static class CecilHelper
     private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool strict, 
         HashSet<(string To, string From)> guard)
     {
-        // 如果目标也是同一个泛型参数（来源和位置一致）
-        if (to is GenericParameter toGp && toGp.Position == fromGp.Position && Equals(toGp.Owner, fromGp.Owner)) 
-            return true;
+ 
 
         // 对每个显式约束：where T : C, IFoo 处理，假定T为每一个约束类型进行赋值比较判断
         foreach (var c in fromGp.Constraints)
         {
             var ct = c.ConstraintType.StripType();
-            // 如果 to 是约束本身或其父类型/接口
+
             if (IsAssignableFromCore(to, ct, strict, guard))
                 return true;
         }
@@ -370,10 +416,6 @@ public static class CecilHelper
         {
             case GenericParameterAttributes.ReferenceTypeConstraint:
                 return to.FullName == "System.Object";
-            /*
-            case GenericParameterAttributes.DefaultConstructorConstraint:
-                break;
-            */
             case GenericParameterAttributes.NotNullableValueTypeConstraint:
                 if (strict) return false;
                 return to.FullName is "System.Object" or "System.ValueType";
@@ -393,7 +435,7 @@ public static class CecilHelper
             return null;
         }
     }
-    
+
     public static bool IsSameType(this TypeReference a, TypeReference b)
     {
         a = StripType(a);
@@ -415,14 +457,23 @@ public static class CecilHelper
             return true;
         }
         
+        /*
         if (a is GenericParameter agp && b is GenericParameter bgp)
         {
             return agp.Position == bgp.Position
                    && agp.Type == bgp.Type          // Type / Method
                    && Equals(agp.Owner, bgp.Owner); // 所属类型/方法
         }
+        */
+
+      
         
         if (ReferenceEquals(a, b)) return true;
+        var da = a.Resolve();
+        var db = b.Resolve();
+        if (da != null && db != null && a.FullName == b.FullName
+                && da.Module.Assembly.Name.FullName == db.Module.Assembly.Name.FullName)
+            return true;
         if (a.FullName == b.FullName && 
             (Same(a.Scope?.Name, b.Scope?.Name) || 
             (IsSystem(a.Scope?.Name) && IsSystem(b.Scope?.Name)))) 
@@ -511,26 +562,33 @@ public static class CecilHelper
         
         return type is not GenericInstanceType derivedInstance ? 
             baseTypeRef :
-            InflateGenericType(baseTypeRef, derivedInstance);
+            TryInflateGenericType(baseTypeRef, derivedInstance);
     }
 
-    private static TypeReference InflateGenericType(TypeReference typeToInflate, GenericInstanceType context)
+    /// <summary>
+    /// 尝试填充泛型
+    /// </summary>
+    /// <param name="typeToInflate"></param>
+    /// <param name="context"></param>
+    /// <returns></returns>
+    private static TypeReference TryInflateGenericType(TypeReference typeToInflate, GenericInstanceType context)
     {
         switch (typeToInflate)
         {
             case ByReferenceType byRef:
-                return new ByReferenceType(InflateGenericType(byRef.ElementType, context));
+                return new ByReferenceType(TryInflateGenericType(byRef.ElementType, context));
             case PointerType ptr:
-                return new PointerType(InflateGenericType(ptr.ElementType, context));
+                return new PointerType(TryInflateGenericType(ptr.ElementType, context));
             case OptionalModifierType modifier:
-                return new OptionalModifierType(modifier.ModifierType, InflateGenericType(modifier.ElementType, context));
+                return new OptionalModifierType(modifier.ModifierType, TryInflateGenericType(modifier.ElementType, context));
             case RequiredModifierType required:
-                return new RequiredModifierType(required.ModifierType, InflateGenericType(required.ElementType, context));
+                return new RequiredModifierType(required.ModifierType, TryInflateGenericType(required.ElementType, context));
         }
         
         if (typeToInflate is GenericParameter gp)
         {
-            if (gp.Owner is TypeReference ownerRef && IsSameType(ownerRef, context.ElementType)) //来源一致获取泛型参数
+            if (gp.Owner is TypeReference ownerRef && IsSameType(ownerRef, context.ElementType) &&
+                context.GenericArguments.Count > gp.Position) //来源一致获取泛型参数
             {
                 return context.GenericArguments[gp.Position];
             }
@@ -539,11 +597,11 @@ public static class CecilHelper
         
         if (typeToInflate is GenericInstanceType git)
         {
-            var element = InflateGenericType(git.ElementType, context); 
+            var element = TryInflateGenericType(git.ElementType, context); 
             var result = new GenericInstanceType(element); //创建空泛型，并填充内容
             foreach (var argument in git.GenericArguments)
             {
-                var inflatedArgument = InflateGenericType(argument, context);
+                var inflatedArgument = TryInflateGenericType(argument, context);
                 result.GenericArguments.Add(inflatedArgument);
             }
 
@@ -552,7 +610,7 @@ public static class CecilHelper
         
         if (typeToInflate is ArrayType arrayType)
         {
-            var inflatedElement = InflateGenericType(arrayType.ElementType, context);
+            var inflatedElement = TryInflateGenericType(arrayType.ElementType, context);
             ArrayType res = arrayType.IsVector
                 ? new ArrayType(inflatedElement)
                 : new ArrayType(inflatedElement, arrayType.Rank);
@@ -562,7 +620,17 @@ public static class CecilHelper
         }
         return typeToInflate;
     }
-    
+
+    private static bool IsOpenGenericDefinition(TypeReference t)
+    {
+        t = t.StripType();
+        return t is not GenericInstanceType && t.HasGenericParameters;
+    }
+
+
+
+
+
     public static TypeReference StripType(this TypeReference t)
     {
         while (true)
@@ -593,4 +661,45 @@ public static class CecilHelper
         }
         return $"{t.Module.Mvid}:{t.FullName}";
     }
+}
+
+public static partial class CecilHelper
+{
+    /*
+    private static bool HasSameGenericDefinition(TypeReference openDef, TypeReference candidate)
+    {
+        openDef = openDef.StripType();
+        candidate = candidate.StripType();
+
+        if (candidate is GenericInstanceType gi)
+            candidate = gi.ElementType.StripType();
+
+        return IsSameType(openDef, candidate);
+    }
+    */
+
+    /*
+     private static bool IsGenericParamAssignableFrom(GenericParameter toGp, TypeReference from, bool strict,
+        HashSet<(string To, string From)> guard)
+    {
+        // 如果目标也是同一个泛型参数（来源和位置一致）
+        if (from is GenericParameter fromGp && fromGp.Position == toGp.Position && Equals(toGp.Owner, fromGp.Owner))
+            return true;
+
+        foreach(var c in toGp.Constraints)
+        {
+            var ct = c.ConstraintType.StripType();
+            if (IsAssignableFromCore(ct, from, strict, guard))
+                return true;
+        }
+        var constraint = toGp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
+        switch (constraint)
+        {
+
+            case GenericParameterAttributes.NotNullableValueTypeConstraint:
+                return from.IsValueType;
+        }
+         return !strict || !from.IsValueType;
+    }
+    */
 }
