@@ -1,24 +1,48 @@
 ﻿using Mono.Cecil;
-using Mono.Cecil.Rocks;
-using MonoMod.Utils;
 using MonoWeaver.CFG;
 using System;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Runtime.ConstrainedExecution;
-using System.Xml.Linq;
 
 namespace MonoWeaver.Utils;
 
 public static partial class CecilHelper
 {
-    private static Dictionary<ModuleDefinition, TypeDefinition> _arrayDefs = new();
-    private static Dictionary<ModuleDefinition, TypeReference[]> _arrayInfs = new();
+    private static readonly Dictionary<ModuleDefinition, TypeDefinition> _arrayDefs = new();
+    private static readonly Dictionary<ModuleDefinition, TypeReference[]> _arrayInfs = new();
 
-    public static readonly LruCache<(int from, int to), (bool result, TypeReference from, TypeReference to)> _assignableCache = new(16384);
-    public static readonly LruCache<(int metaToken, int hash), (TypeDefinition def, TypeReference refType)> _typeCache = new(4096);
+    private static readonly LruCache<(TypeSig from, TypeSig to), bool> _assignableCache = new(16384);
+    private static readonly LruCache<(int metaToken, Hash128 hash), TypeDefinition> _typeCache = new(8192);
+
+    internal static class InterfaceTraversalCache
+    {
+        [ThreadStatic]
+        private static HashSet<TypeSig> _reusableSet;
+
+        [ThreadStatic]
+        private static Stack<TypeReference> _reusableStack;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static HashSet<TypeSig> GetClearedSet()
+        {
+            if (_reusableSet == null)
+                _reusableSet = new HashSet<TypeSig>();
+            else
+                _reusableSet.Clear();
+            return _reusableSet;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Stack<TypeReference> GetClearedStack()
+        {
+            if (_reusableStack == null)
+                _reusableStack = new Stack<TypeReference>();
+            else
+                _reusableStack.Clear();
+            return _reusableStack;
+        }
+    }
 
 }
 
@@ -31,27 +55,27 @@ public static partial class CecilHelper
 
 
         private readonly Guid _moduleMvid;
-        private readonly int _fullNameHash;
+        private readonly Hash128 _fullNameHash;
 
         private readonly Guid _ownerModuleMvid;
-        private readonly int _ownerFullNameHash;
+        private readonly Hash128 _ownerFullNameHash;
         private readonly GenericParameterType _gpType;
         private readonly int _gpPosition;
 
 
-        private TypeSig(Guid moduleMvid, int fullNameHash)
+        private TypeSig(Guid moduleMvid, Hash128 fullNameHash)
         {
             _kind = KeyKind.Normal;
             _moduleMvid = moduleMvid;
             _fullNameHash = fullNameHash;
 
-            _ownerModuleMvid = default;
+            _ownerModuleMvid = Guid.Empty;
             _ownerFullNameHash = default;
             _gpType = default;
-            _gpPosition = default;
+            _gpPosition = 0;
         }
 
-        private TypeSig(Guid ownerModuleMvid, int ownerFullNameHash, GenericParameterType gpType, int gpPosition)
+        private TypeSig(Guid ownerModuleMvid, Hash128 ownerFullNameHash, GenericParameterType gpType, int gpPosition)
         {
             _kind = KeyKind.GenericParameter;
 
@@ -60,7 +84,7 @@ public static partial class CecilHelper
             _gpType = gpType;
             _gpPosition = gpPosition;
 
-            _moduleMvid = default;
+            _moduleMvid = Guid.Empty;
             _fullNameHash = default;
         }
 
@@ -115,12 +139,12 @@ public static partial class CecilHelper
                 if (_kind == KeyKind.Normal)
                 {
                     h = h * 31 + _moduleMvid.GetHashCode();
-                    h = h * 31 + _fullNameHash;
+                    h = h * 31 + _fullNameHash.GetHashCode();
                 }
                 else
                 {
                     h = h * 31 + _ownerModuleMvid.GetHashCode();
-                    h = h * 31 + _ownerFullNameHash;
+                    h = h * 31 + _ownerFullNameHash.GetHashCode();
                     h = h * 31 + (int)_gpType;
                     h = h * 31 + _gpPosition;
                 }
@@ -128,23 +152,7 @@ public static partial class CecilHelper
                 return h;
             }
         }
-
-
-
-        public static int CombineHashCodes(in TypeSig a, in TypeSig b)
-        {
-            unchecked
-            {
-                int hash = 17;
-                hash = hash * 23 + a.GetHashCode();
-                hash = hash * 23 + b.GetHashCode();
-
-                return hash;
-            }
-        }
-
-      
-
+        
         private enum KeyKind : byte
         {
             Normal = 0,
@@ -154,22 +162,22 @@ public static partial class CecilHelper
 
     //不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在别的地方实现该功能）
     public static bool IsILStackAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromCore(to, from, true, new HashSet<(int from, int to)>());
+        => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
 
     public static bool IsAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromCore(to, from, false, new HashSet<(int from, int to)>());
+        => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig from, TypeSig to)>());
 
-    private static bool IsAssignableFromCore(TypeReference to, TypeReference? from, bool strict, HashSet<(int from, int to)> guard)
+    private static bool IsAssignableFromCore(TypeReference to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
     {
-        var result = IsAssignableFromInteral(to, from, strict, guard);
+        var result = IsAssignableFromInternal(to, from, strict, guard);
         if (from != null)
         {
-             _assignableCache.Put((TypeSig.Create(to).GetHashCode(), TypeSig.Create(from).GetHashCode()), (result, from, to));
+             _assignableCache.Put((TypeSig.Create(to), TypeSig.Create(from)), result);
         }
         return result;
     }
-
-    private static bool IsAssignableFromInteral(TypeReference to, TypeReference? from, bool strict, HashSet<(int from, int to)> guard)
+    
+    private static bool IsAssignableFromInternal(TypeReference to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
     {
         while (true)
         {
@@ -205,20 +213,15 @@ public static partial class CecilHelper
 
             var toKey = TypeSig.Create(to);
             var fromKey = TypeSig.Create(from);
-            var hash = (toKey.GetHashCode(), from.GetHashCode());
+            var hash = (toKey, fromKey);
 
           
             if (fromKey.Equals(toKey)) 
                 return true;
 
-            if (_assignableCache.TryGetValue(hash, out var pair))
+            if (_assignableCache.TryGetValue(hash, out var result))
             {
-                var (result, lastFrom, lastTo) = pair;
-                if (lastFrom.Name == from.Name && lastTo.Name == to.Name &&
-                    lastFrom.Namespace == from.Namespace && lastTo.Namespace == to.Namespace)
-                {
-                    return result;
-                }
+                return result;
             }
 
     
@@ -290,9 +293,11 @@ public static partial class CecilHelper
         }
     }
 
-    private static bool ImplementsInterface(TypeReference from, TypeReference toInterface, bool strict, HashSet<(int from, int to)> guard)
+    private static bool ImplementsInterface(TypeReference from, TypeReference toInterface, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
     {
-        foreach (var iface in EnumerateAllInterfaces(from))
+        var list = new List<TypeReference>();
+        CollectAllInterfaces(from, list);
+        foreach (var iface in list)
         {
             var iface2 = iface;
             if (IsSameType(iface2, toInterface)) return true;
@@ -309,22 +314,22 @@ public static partial class CecilHelper
         return false;
     }
 
-    private static IEnumerable<TypeReference> EnumerateAllInterfaces(TypeReference type)
+    public static void CollectAllInterfaces(TypeReference type, List<TypeReference> resultBuffer)
     {
+        if (type == null) return;
 
         if (type is ArrayType arr)
         {
             foreach (var iface in EnumerateArrayRuntimeInterfaces(arr))
             {
-                yield return iface;
+                resultBuffer.Add(iface);
             }
-
-            var mod = (arr.Module ?? type.Module) ?? throw new InvalidOperationException("Module is null.");
-            yield break;
+            return;
         }
 
-        var seen = new HashSet<TypeSig>();
-        var stack = new Stack<TypeReference>();
+        var seen = InterfaceTraversalCache.GetClearedSet();
+        var stack = InterfaceTraversalCache.GetClearedStack();
+
         stack.Push(type);
 
         while (stack.Count > 0)
@@ -336,27 +341,28 @@ public static partial class CecilHelper
             if (curDef != null)
             {
                 var curInst = cur as GenericInstanceType;
+                var interfaces = curDef.Interfaces;
 
-                // 当前类型声明的接口
-                foreach (var ii in curDef.Interfaces)
+                for (int i = 0; i < interfaces.Count; i++)
                 {
+                    var ii = interfaces[i];
                     var iface = ii.InterfaceType;
-                    if (curInst != null) iface = TryInflateGenericType(iface, curInst);
+
+                    if (curInst != null)
+                        iface = TryInflateGenericType(iface, curInst);
 
                     if (seen.Add(TypeSig.Create(iface)))
                     {
-                        yield return iface;
-
-                        // 还要继续处理接口的父接口
-                        stack.Push(iface);
+                        resultBuffer.Add(iface);
+                        stack.Push(iface); 
                     }
                 }
 
-                // 再追基类
                 var bt = cur.BaseType();
                 if (bt != null) stack.Push(bt);
             }
         }
+
     }
 
     private static GenericInstanceType GenerateGenericInstanceType(TypeReference type)
@@ -428,7 +434,7 @@ public static partial class CecilHelper
 
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
         bool strict,
-        HashSet<(int from, int to)> guard, bool isArrayType)
+        HashSet<(TypeSig from, TypeSig to)> guard, bool isArrayType)
     {
         if (target.GenericArguments.Count != source.GenericArguments.Count)
             return false;
@@ -493,7 +499,7 @@ public static partial class CecilHelper
 
 
 
-    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, HashSet<(int from, int to)> guard)
+    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
     {
         to = to.StripType();
 
@@ -531,7 +537,7 @@ public static partial class CecilHelper
     }
 
     private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool strict,
-        HashSet<(int from, int to)> guard)
+        HashSet<(TypeSig from, TypeSig to)> guard)
     {
         // 对每个显式约束：where T : C, IFoo 处理，假定T为每一个约束类型进行赋值比较判断
         foreach (var c in fromGp.Constraints)
@@ -654,15 +660,13 @@ public static partial class CecilHelper
     {
         if (t is null)
             return null;
-        if (_typeCache.TryGetValue((t.MetadataToken.ToInt32(), HashUtils.OrdinalHash(t.Name)), out var pair))
+        if (_typeCache.TryGetValue((t.MetadataToken.ToInt32(), HashUtils.GetTypeHash(t)), out var def1))
         {
-            var (def1, r) = pair;
-            if(t.Name == r.Name)
-                return def1;
+            return def1;
         }
         var def = t.Resolve();
         if(def is not null)
-            _typeCache.Put((t.MetadataToken.ToInt32(), HashUtils.OrdinalHash(t.Name)), (def, t));
+            _typeCache.Put((t.MetadataToken.ToInt32(), HashUtils.GetTypeHash(t)), def);
         return def;
     }
 
