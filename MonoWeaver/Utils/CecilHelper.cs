@@ -12,8 +12,15 @@ namespace MonoWeaver.Utils;
 
 public static partial class CecilHelper
 {
+    private static TypeDefinition? _array;
 
+    public static readonly LruCache<int, bool> _assignableTrueCache = new(4096);
+    public static readonly LruCache<int, bool> _assignableFalseCache = new(4096);
 
+}
+
+public static partial class CecilHelper
+{
 
     public readonly struct TypeKey : IEquatable<TypeKey>
     {
@@ -21,56 +28,57 @@ public static partial class CecilHelper
 
 
         private readonly Guid _moduleMvid;
-        private readonly string? _fullName;
+        private readonly int _fullNameHash;
 
         private readonly Guid _ownerModuleMvid;
-        private readonly string? _ownerFullName;
+        private readonly int _ownerFullNameHash;
         private readonly GenericParameterType _gpType;
         private readonly int _gpPosition;
 
-        private TypeKey(Guid moduleMvid, string fullName)
+
+        private TypeKey(Guid moduleMvid, int fullNameHash)
         {
             _kind = KeyKind.Normal;
             _moduleMvid = moduleMvid;
-            _fullName = fullName;
+            _fullNameHash = fullNameHash;
 
             _ownerModuleMvid = default;
-            _ownerFullName = default;
+            _ownerFullNameHash = default;
             _gpType = default;
             _gpPosition = default;
         }
 
-        private TypeKey(Guid ownerModuleMvid, string ownerFullName, GenericParameterType gpType, int gpPosition)
+        private TypeKey(Guid ownerModuleMvid, int ownerFullNameHash, GenericParameterType gpType, int gpPosition)
         {
             _kind = KeyKind.GenericParameter;
 
             _ownerModuleMvid = ownerModuleMvid;
-            _ownerFullName = ownerFullName;
+            _ownerFullNameHash = ownerFullNameHash;
             _gpType = gpType;
             _gpPosition = gpPosition;
 
             _moduleMvid = default;
-            _fullName = default;
+            _fullNameHash = default;
         }
 
-        public static TypeKey From(TypeReference t)
+        public static TypeKey Create(TypeReference t)
         {
-            t = t.StripType();
+   
             if (t is GenericParameter gp)
             {
-     
+
                 if (gp.Owner is TypeReference tr)
                     return new TypeKey(tr.Resolve()?.Module?.Mvid ?? tr.Module?.Mvid ?? Guid.Empty,
-                        tr.FullName, gp.Type, gp.Position);
+                        HashUtils.GetTypeHash(tr), gp.Type, gp.Position);
 
                 if (gp.Owner is MethodReference mr)
                     return new TypeKey(mr.DeclaringType?.Resolve()?.Module?.Mvid ?? mr.DeclaringType?.Module?.Mvid ?? Guid.Empty,
-                        mr.FullName, gp.Type, gp.Position);
+                        HashUtils.GetMethodHash(mr), gp.Type, gp.Position);
 
-                return new TypeKey(Guid.Empty, gp.Owner?.ToString() ?? string.Empty, gp.Type, gp.Position);
+                return new TypeKey(Guid.Empty, HashUtils.GetTypeHash(gp), gp.Type, gp.Position);
             }
 
-            return new TypeKey(t.Resolve()?.Module?.Mvid ?? t.Module?.Mvid ?? Guid.Empty, t.FullName);
+            return new TypeKey(t.Resolve()?.Module?.Mvid ?? t.Module?.Mvid ?? Guid.Empty, HashUtils.GetTypeHash(t));
         }
 
         public bool Equals(TypeKey other)
@@ -80,12 +88,12 @@ public static partial class CecilHelper
             if (_kind == KeyKind.Normal)
             {
                 return _moduleMvid == other._moduleMvid
-                       && string.Equals(_fullName, other._fullName, StringComparison.Ordinal);
+                       && _fullNameHash == other._fullNameHash;
             }
 
             // GenericParameter
             return _ownerModuleMvid == other._ownerModuleMvid
-                   && string.Equals(_ownerFullName, other._ownerFullName, StringComparison.Ordinal)
+                   && _ownerFullNameHash == other._ownerFullNameHash
                    && _gpType == other._gpType
                    && _gpPosition == other._gpPosition;
         }
@@ -102,23 +110,33 @@ public static partial class CecilHelper
                 if (_kind == KeyKind.Normal)
                 {
                     h = h * 31 + _moduleMvid.GetHashCode();
-                    h = h * 31 + OrdinalHash(_fullName);
+                    h = h * 31 + _fullNameHash;
                 }
                 else
                 {
                     h = h * 31 + _ownerModuleMvid.GetHashCode();
-                    h = h * 31 + OrdinalHash(_ownerFullName);
+                    h = h * 31 + _ownerFullNameHash;
                     h = h * 31 + (int)_gpType;
                     h = h * 31 + _gpPosition;
                 }
 
                 return h;
             }
-
-            int OrdinalHash(string? s)
-                => s == null ? 0 : StringComparer.Ordinal.GetHashCode(s);
         }
 
+
+
+        public static int CombineHashCodes(TypeKey a, TypeKey b)
+        {
+            unchecked
+            {
+                int hash = 17;
+                hash = hash * 23 + a.GetHashCode();
+                hash = hash * 23 + b.GetHashCode();
+
+                return hash;
+            }
+        }
 
 
         private enum KeyKind : byte
@@ -129,10 +147,6 @@ public static partial class CecilHelper
     }
 
 
-    static CecilHelper()
-    {
-
-    }
 
     public static TypeReference? GetEnumUnderlyingType(this TypeReference typeRef)
     {
@@ -152,15 +166,34 @@ public static partial class CecilHelper
         }
         return valueField.FieldType;
     }
+
     //TODO: 进行性能优化
     //不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在别的地方实现该功能）
     public static bool IsILStackAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromCore(to, from, true, new HashSet<(TypeKey To, TypeKey From)>());
+        => IsAssignableFromCore(to, from, true, new HashSet<int>());
 
     public static bool IsAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromCore(to, from, false, new HashSet<(TypeKey To, TypeKey From)>());
+        => IsAssignableFromCore(to, from, false, new HashSet<int>());
 
-    private static bool IsAssignableFromCore(TypeReference to, TypeReference? from, bool strict, HashSet<(TypeKey To, TypeKey From)> guard)
+    private static bool IsAssignableFromCore(TypeReference to, TypeReference? from, bool strict, HashSet<int> guard)
+    {
+        var result = IsAssignableFromInteral(to, from, strict, guard);
+        if (from != null)
+        {
+            var hash = TypeKey.CombineHashCodes(TypeKey.Create(to), TypeKey.Create(from));
+            if (result)
+            {
+                _assignableTrueCache.Put(hash, result);
+            }
+            else
+            {
+                _assignableFalseCache.Put(hash, result);
+            }
+        }
+        return result;
+    }
+
+    private static bool IsAssignableFromInteral(TypeReference to, TypeReference? from, bool strict, HashSet<int> guard)
     {
         while (true)
         {
@@ -169,13 +202,6 @@ public static partial class CecilHelper
             to = to.StripType();
             from = from.StripType();
 
-
-            /*
-            if (to is GenericParameter toGp)
-            {
-                return IsGenericParamAssignableFrom(toGp, from, strict, guard);
-            }
-            */
             //优先处理未闭合
             if (from is GenericParameter fromGp)
             {
@@ -190,7 +216,7 @@ public static partial class CecilHelper
                 if (to.IsValueType && !from.IsValueType) return false;
             }
 
-            if (to.FullName == "System.Object")
+            if (to.Name == "Object" && to.Namespace == "System")
             {
                 return from is not ByReferenceType
                        && from is not PointerType
@@ -199,17 +225,20 @@ public static partial class CecilHelper
             }
 
 
-            var key = (TypeKey.From(to), TypeKey.From(from));
-            if (!guard.Add(key)) return false;
+            var toKey = TypeKey.Create(to);
+            var fromKey = TypeKey.Create(from);
+            var hash = TypeKey.CombineHashCodes(toKey, fromKey);
+            if (_assignableTrueCache.TryGetValue(hash, out var result))
+                return result;
 
-            if (IsSameType(to, from)) return true;
+            if (_assignableFalseCache.TryGetValue(hash, out result))
+                return result;
 
-            /*
-            if (IsOpenGenericDefinition(to))
-            {
-                return IsAssignableFromCore(GenerateGenericInstanceType(to), from, strict, guard);
-            }
-            */
+            if (!guard.Add(hash)) 
+                return false;
+
+            if (fromKey.Equals(toKey)) 
+                return true;
 
             if (IsOpenGenericDefinition(from))
             {
@@ -220,9 +249,7 @@ public static partial class CecilHelper
             if (from is ByReferenceType fromRef)
             {
                 if (to is ByReferenceType toRef)
-                {
                     return fromRef.ElementType.IsSameType(toRef.ElementType);
-                }
                 return false;
             }
 
@@ -230,12 +257,9 @@ public static partial class CecilHelper
             if (from is PointerType fromPtr)
             {
                 if (to is PointerType toPtr)
-                {
                     return fromPtr.ElementType.IsSameType(toPtr.ElementType);
-                }
                 return false;
             }
-
 
 
             //数组
@@ -243,7 +267,6 @@ public static partial class CecilHelper
             {
                 if (IsAssignableFromArray(to, fromArr, strict, guard))
                     return true;
-
             }
 
 
@@ -258,10 +281,10 @@ public static partial class CecilHelper
                 }
             }
 
-            var toDef = TryResolve(to);
+            var toDef = to.Resolve();
 
             //nullable
-            if (toDef?.FullName == "System.Nullable`1" && to is GenericInstanceType instTo)
+            if (toDef?.Name == "Nullable`1" && toDef.Namespace == "System" && to is GenericInstanceType instTo)
             {
                 return IsSameType(instTo.GenericArguments[0], from);
             }
@@ -283,17 +306,13 @@ public static partial class CecilHelper
         }
     }
 
-    private static bool ImplementsInterface(TypeReference from, TypeReference toInterface, bool strict, HashSet<(TypeKey To, TypeKey From)> guard)
+    private static bool ImplementsInterface(TypeReference from, TypeReference toInterface, bool strict, HashSet<int> guard)
     {
         foreach (var iface in EnumerateAllInterfaces(from))
         {
             var iface2 = iface;
             if (IsSameType(iface2, toInterface)) return true;
             if (from is GenericInstanceType fromG) iface2 = TryInflateGenericType(iface2, fromG);
-            /*
-            if (IsOpenGenericDefinition(toInterface) && HasSameGenericDefinition(toInterface, iface))
-                return true;
-            */
 
             // 处理逆变/协变
             if (toInterface is GenericInstanceType toGi &&
@@ -309,7 +328,7 @@ public static partial class CecilHelper
 
     private static IEnumerable<TypeReference> EnumerateAllInterfaces(TypeReference type)
     {
-        var seen = new HashSet<(Guid mvid, string fullName)>();
+        var seen = new HashSet<TypeKey>();
         var stack = new Stack<TypeReference>();
         stack.Push(type);
 
@@ -322,7 +341,7 @@ public static partial class CecilHelper
                 foreach (var iface in EnumerateArrayRuntimeInterfaces(arr))
                 {
                     var i = iface.StripType();
-                    if (seen.Add((iface.Module.Mvid, iface.FullName)))
+                    if (seen.Add(TypeKey.Create(i)))
                         yield return i;
                 }
 
@@ -330,7 +349,7 @@ public static partial class CecilHelper
                 stack.Push(SystemArrayRef(mod));
                 continue;
             }
-            var curDef = TryResolve(cur);
+            var curDef = cur.Resolve();
 
             if (curDef != null)
             {
@@ -344,7 +363,7 @@ public static partial class CecilHelper
 
                     iface = iface.StripType();
 
-                    if (seen.Add((iface.Module.Mvid, iface.FullName)))
+                    if (seen.Add(TypeKey.Create(iface)))
                     {
                         yield return iface;
                         // 还要继续处理接口的父接口
@@ -380,9 +399,7 @@ public static partial class CecilHelper
         var mod = arr.Module ?? throw new InvalidOperationException("ArrayType.Module is null.");
         var elem = arr.ElementType.StripType();
 
-        // 非泛型：所有数组都支持
-
-        // 只有 一位数组才有这些泛型接口
+        // 只有一位数组才有这些泛型接口
         if (arr is { Rank: 1, IsVector: true })
         {
             foreach (var g in new[]
@@ -407,16 +424,19 @@ public static partial class CecilHelper
         return mod.ImportReference(td);
     }
 
-    private static TypeReference SystemArrayRef(ModuleDefinition module) => ImportCorelibType(module, "System", "Array");
+    private static TypeReference SystemArrayRef(ModuleDefinition module)
+    {
+        return _array ??= ImportCorelibType(module, "System", "Array").Resolve();
+    }
 
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
         bool strict,
-        HashSet<(TypeKey To, TypeKey From)> guard, bool isArrayType)
+        HashSet<int> guard, bool isArrayType)
     {
         if (target.GenericArguments.Count != source.GenericArguments.Count)
             return false;
 
-        var def = TryResolve(target.ElementType);
+        var def = target.ElementType.Resolve();
         if (def == null)
         {
             return false;
@@ -438,13 +458,13 @@ public static partial class CecilHelper
                 case GenericParameterAttributes.Covariant: //协变
                     if (!DefinitelyRef(tArg) || !DefinitelyRef(sArg))
                         return IsSameType(tArg, sArg);
-                    if (!IsAssignableFromCore(tArg, sArg, strict, new HashSet<(TypeKey To, TypeKey From)>())) return false;
+                    if (!IsAssignableFromCore(tArg, sArg, strict, guard)) return false;
                     break;
 
                 case GenericParameterAttributes.Contravariant: //逆变
                     if (!DefinitelyRef(tArg) || !DefinitelyRef(sArg))
                         return IsSameType(tArg, sArg);
-                    if (!IsAssignableFromCore(sArg, tArg, strict, new HashSet<(TypeKey To, TypeKey From)>())) return false; //TODO:
+                    if (!IsAssignableFromCore(sArg, tArg, strict, guard)) return false;
                     break;
 
                 default: // 常规
@@ -473,22 +493,26 @@ public static partial class CecilHelper
 
 
 
-    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, HashSet<(TypeKey To, TypeKey From)> guard)
+    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, HashSet<int> guard)
     {
         to = to.StripType();
 
         // T[] -> System.Array
-        if (to.FullName == "System.Array")
-            return true;
+        if (to.Namespace == "System")
+        {
+            if (to.Name is "Array" or "ICloneable")
+                return true;
+        }
 
         // T[] -> 非泛型 IEnumerable/ICollection/IList
-        if (to.FullName is "System.Collections.IEnumerable"
-                      or "System.Collections.ICollection"
-                      or "System.Collections.IList"
-                      or "System.ICloneable"
-                      or "System.Collections.IStructuralEquatable")
+        else if (to.Namespace == "System.Collections")
+        { 
+            if (to.Name is "IEnumerable"
+                      or "ICollection"
+                      or "IList"
+                      or "SIStructuralEquatable")
             return true;
-
+        }
         // 数组 -> 数组 (处理协变)
         if (to is ArrayType toArr)
         {
@@ -507,10 +531,8 @@ public static partial class CecilHelper
     }
 
     private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool strict,
-        HashSet<(TypeKey To, TypeKey From)> guard)
+        HashSet<int> guard)
     {
-
-
         // 对每个显式约束：where T : C, IFoo 处理，假定T为每一个约束类型进行赋值比较判断
         foreach (var c in fromGp.Constraints)
         {
@@ -524,55 +546,23 @@ public static partial class CecilHelper
         switch (constraint)
         {
             case GenericParameterAttributes.ReferenceTypeConstraint:
-                return to.FullName == "System.Object";
+                return to.Name == "Object" && to.Namespace == "System";
             case GenericParameterAttributes.NotNullableValueTypeConstraint:
                 if (strict) return false;
-                return to.FullName is "System.Object" or "System.ValueType";
+                return to.Name is "Object" or "ValueType" && to.Namespace is "System";
         }
-        return to.FullName == "System.Object" && !strict;
+        return to.Name == "Object" && to.Namespace == "System" && !strict;
     }
 
-    private static TypeDefinition? TryResolve(TypeReference t)
-    {
-        try
-        {
-            return t.Resolve();
-        }
-        catch
-        {
-            //TODO:日志or处理
-            return null;
-        }
-    }
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsSameType(this TypeReference a, TypeReference b)
     {
-        return TypeKey.From(a).Equals(TypeKey.From(b));
-    }
-
-    public static bool Same(string? a, string? b)
-    {
-        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+        if (ReferenceEquals(a, b))
             return true;
-
-        if (a is null || b is null)
-            return false;
-
-        int lenA = a.Length, lenB = b.Length;
-
-        string longer, shorter;
-        if (lenA > lenB) { longer = a; shorter = b; }
-        else { longer = b; shorter = a; }
-
-        int n = shorter.Length;
-
-        return longer[n] == '.'
-            && longer.StartsWith(shorter, StringComparison.OrdinalIgnoreCase);
+        return TypeKey.Create(a).Equals(TypeKey.Create(b));
     }
-
-
 
 
     public static TypeReference? BaseType(this TypeReference? type)
@@ -586,7 +576,7 @@ public static partial class CecilHelper
             return SystemArrayRef(mod);
         }
 
-        var typeDef = TryResolve(type);
+        var typeDef = type.Resolve();
         if (typeDef?.BaseType == null) return null;
 
         var baseTypeRef = typeDef.BaseType; // 泛型TypeDefinition的BaseType可能是GenericInstanceType
@@ -652,16 +642,16 @@ public static partial class CecilHelper
         return typeToInflate;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool IsOpenGenericDefinition(TypeReference t)
     {
-        t = t.StripType();
         return t is not GenericInstanceType && t.HasGenericParameters;
     }
 
 
 
 
-
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static TypeReference StripType(this TypeReference t)
     {
         while (true)
@@ -676,45 +666,4 @@ public static partial class CecilHelper
             }
         }
     }
-}
-
-public static partial class CecilHelper
-{
-    /*
-    private static bool HasSameGenericDefinition(TypeReference openDef, TypeReference candidate)
-    {
-        openDef = openDef.StripType();
-        candidate = candidate.StripType();
-
-        if (candidate is GenericInstanceType gi)
-            candidate = gi.ElementType.StripType();
-
-        return IsSameType(openDef, candidate);
-    }
-    */
-
-    /*
-     private static bool IsGenericParamAssignableFrom(GenericParameter toGp, TypeReference from, bool strict,
-        HashSet<(TypeKey To, TypeKey From)> guard)
-    {
-        // 如果目标也是同一个泛型参数（来源和位置一致）
-        if (from is GenericParameter fromGp && fromGp.Position == toGp.Position && Equals(toGp.Owner, fromGp.Owner))
-            return true;
-
-        foreach(var c in toGp.Constraints)
-        {
-            var ct = c.ConstraintType.StripType();
-            if (IsAssignableFromCore(ct, from, strict, guard))
-                return true;
-        }
-        var constraint = toGp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
-        switch (constraint)
-        {
-
-            case GenericParameterAttributes.NotNullableValueTypeConstraint:
-                return from.IsValueType;
-        }
-         return !strict || !from.IsValueType;
-    }
-    */
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -53,7 +54,10 @@ namespace CecilAssignabilityFuzz
 
             int mismatches = 0;
             int skipped = 0;
-
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
+            long clrCost = 0;
+            long cecilCost = 0;
             for (int i = 0; i < iterations; i++)
             {
                 var (type1, type2) = TypeGen.RandomTypePair(rng, maxDepth);
@@ -68,12 +72,15 @@ namespace CecilAssignabilityFuzz
                 try
                 {
                     // CLR
+                    var start = sw.ElapsedMilliseconds;
                     bool clr = type1.IsAssignableFrom(type2);
-
+                    clrCost += sw.ElapsedMilliseconds - start;
                     // Cecil
                     var tr1 = m.ImportReference(type1);
                     var tr2 = m.ImportReference(type2);
+                    start = sw.ElapsedMilliseconds;
                     bool cecil = tr1.IsAssignableFrom(tr2);
+                    cecilCost += sw.ElapsedMilliseconds - start;
 
                     if (cecil != clr)
                     {
@@ -83,7 +90,6 @@ namespace CecilAssignabilityFuzz
                         Console.WriteLine($"  type2 (source): {Pretty(type2)}");
                         Console.WriteLine($"  Cecil: {cecil}   CLR: {clr}");
                         Console.WriteLine();
-                        tr1.IsAssignableFrom(tr2);
                         if (mismatches >= maxMismatchesToPrint)
                             break;
                     }
@@ -95,6 +101,7 @@ namespace CecilAssignabilityFuzz
             }
 
             Console.WriteLine($"Done. iterations={iterations}, mismatches={mismatches}, skipped/errors={skipped}, seed={seed}, maxDepth={maxDepth}");
+            Console.WriteLine($"Clr cost:{clrCost}ms, Cecil cost:{cecilCost}ms");
         }
 
         static string Pretty(Type t)
@@ -121,9 +128,11 @@ namespace CecilAssignabilityFuzz
 
         static void AddTrustedPlatformAssemblyDirs(DefaultAssemblyResolver resolver)
         {
+         
             var tpa = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
             if (string.IsNullOrEmpty(tpa))
             {
+
                 var coreDir = Path.GetDirectoryName(typeof(object).Assembly.Location);
                 if (!string.IsNullOrEmpty(coreDir))
                     resolver.AddSearchDirectory(coreDir);
