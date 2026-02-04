@@ -26,21 +26,15 @@ namespace CecilAssignabilityFuzz
     {
         static void Main(string[] args)
         {
-            // 可调参数
             int iterations = GetArgInt(args, "--n", 50_000);
             int maxDepth = GetArgInt(args, "--depth", 3);
             int seed = GetArgInt(args, "--seed", 20260204);
             int maxMismatchesToPrint = GetArgInt(args, "--print", 50);
 
-            // 读取当前程序集（包含上面这些自定义类型），让 Cecil 能 Resolve
             var asmPath = Assembly.GetExecutingAssembly().Location;
 
             var resolver = new DefaultAssemblyResolver();
-
-            // 关键：把运行时(BCL)程序集目录加入 resolver，避免 Resolve 失败
             AddTrustedPlatformAssemblyDirs(resolver);
-
-            // 当前程序集目录（自定义类型在这里）
             resolver.AddSearchDirectory(Path.GetDirectoryName(asmPath)!);
 
             var ass = AssemblyDefinition.ReadAssembly(asmPath, new ReaderParameters
@@ -79,8 +73,6 @@ namespace CecilAssignabilityFuzz
                     // Cecil
                     var tr1 = m.ImportReference(type1);
                     var tr2 = m.ImportReference(type2);
-
-                    // 这里调用你的实现：TypeReferenceExtensions.IsAssignableFrom(TypeReference, TypeReference)
                     bool cecil = tr1.IsAssignableFrom(tr2);
 
                     if (cecil != clr)
@@ -129,11 +121,9 @@ namespace CecilAssignabilityFuzz
 
         static void AddTrustedPlatformAssemblyDirs(DefaultAssemblyResolver resolver)
         {
-            // 在 .NET Core/5+/6+ 上，TPA 里列了大部分 BCL 程序集路径
             var tpa = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
             if (string.IsNullOrEmpty(tpa))
             {
-                // 兜底：至少把 corelib 所在目录加进去
                 var coreDir = Path.GetDirectoryName(typeof(object).Assembly.Location);
                 if (!string.IsNullOrEmpty(coreDir))
                     resolver.AddSearchDirectory(coreDir);
@@ -220,7 +210,7 @@ namespace CecilAssignabilityFuzz
             return typeof(object);
         }
 
-        private static Type BuildType(Random rng, int depth)
+        private static Type? BuildType(Random rng, int depth)
         {
             if (depth <= 0)
                 return PickLeaf(rng);
@@ -329,8 +319,4 @@ namespace CecilAssignabilityFuzz
             return (t1, t2);
         }
     }
-
-    // 注意：这里假设你已经有下面这个扩展/实现：
-    // public static bool IsAssignableFrom(this TypeReference target, TypeReference source) { ... }
-    // 所以本文件不再重复定义，避免与你项目里已有的冲突。
 }
