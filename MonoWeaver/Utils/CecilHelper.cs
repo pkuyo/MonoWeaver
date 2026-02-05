@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.Remoting.Metadata.W3cXsd2001;
 
 namespace MonoWeaver.Utils;
 
@@ -160,6 +161,12 @@ public static partial class CecilHelper
         }
     }
 
+    public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
+    => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
+
+    public static bool IsAssignableTo(this TypeReference from, TypeReference? to)
+        => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig from, TypeSig to)>());
+
     //不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在别的地方实现该功能）
     public static bool IsILStackAssignableFrom(this TypeReference to, TypeReference? from)
         => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
@@ -167,22 +174,79 @@ public static partial class CecilHelper
     public static bool IsAssignableFrom(this TypeReference to, TypeReference? from)
         => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig from, TypeSig to)>());
 
-    private static bool IsAssignableFromCore(TypeReference to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
+    public static TypeReference? BaseType(this TypeReference? type)
+    {
+        if (type == null) return null;
+        type = type.StripType();
+
+        if (type is ArrayType)
+        {
+            var mod = type.Module ?? throw new InvalidOperationException("TypeReference.Module is null.");
+            return SystemArrayRef(mod);
+        }
+
+        var typeDef = ResolveWithCache(type);
+        if (typeDef?.BaseType == null) return null;
+
+        var baseTypeRef = typeDef.BaseType; // 泛型TypeDefinition的BaseType可能是GenericInstanceType
+
+        return type is not GenericInstanceType derivedInstance ?
+            baseTypeRef :
+            TryInflateGenericType(baseTypeRef, derivedInstance);
+    }
+
+    internal static IEnumerable<TypeReference> AllBaseTypes(this TypeReference? type, bool withBoxing)
+    {
+        if (type is null || type.IsValueType)
+            yield break;
+        do
+        {
+            type = type.BaseType();
+            if (type is null)
+                yield break;
+            yield return type;
+        } while (true);
+    }
+
+    public static TypeReference? FindCommonBaseType(TypeReference? a0, TypeReference? b0)
+    {
+        if(a0 is null || b0 is null) return null;
+
+        var a = a0;
+        var b = b0;
+        bool sa = false, sb = false;
+
+        while (true)
+        {
+            if (a == null && b == null) return null;
+            if (a != null && b != null && a.IsSameType(b)) return a;
+
+            a = a?.BaseType();
+            b = b?.BaseType();
+
+            if (a == null && !sa) { a = b0; sa = true; }
+            if (b == null && !sb) { b = a0; sb = true; }
+
+            if (sa && sb && a == null && b == null) return null;
+        }
+    }
+
+    private static bool IsAssignableFromCore(TypeReference? to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
     {
         var result = IsAssignableFromInternal(to, from, strict, guard);
-        if (from != null)
+        if (from != null && to != null)
         {
              _assignableCache.Put((TypeSig.Create(to), TypeSig.Create(from)), result);
         }
         return result;
     }
     
-    private static bool IsAssignableFromInternal(TypeReference to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
+    private static bool IsAssignableFromInternal(TypeReference? to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
     {
         while (true)
         {
             if (from == null) return false;
-
+            if (to == null) return false;
             to = to.StripType();
             from = from.StripType();
 
@@ -563,33 +627,12 @@ public static partial class CecilHelper
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsSameType(this TypeReference a, TypeReference b)
+    public static bool IsSameType(this TypeReference? a, TypeReference? b)
     {
+        if (b is null || a is null) return false;
         if (ReferenceEquals(a, b))
             return true;
         return TypeSig.Create(a).Equals(TypeSig.Create(b));
-    }
-
-
-    public static TypeReference? BaseType(this TypeReference? type)
-    {
-        if (type == null) return null;
-        type = type.StripType();
-
-        if (type is ArrayType)
-        {
-            var mod = type.Module ?? throw new InvalidOperationException("TypeReference.Module is null.");
-            return SystemArrayRef(mod);
-        }
-
-        var typeDef = ResolveWithCache(type);
-        if (typeDef?.BaseType == null) return null;
-
-        var baseTypeRef = typeDef.BaseType; // 泛型TypeDefinition的BaseType可能是GenericInstanceType
-
-        return type is not GenericInstanceType derivedInstance ?
-            baseTypeRef :
-            TryInflateGenericType(baseTypeRef, derivedInstance);
     }
 
     /// <summary>
@@ -656,7 +699,7 @@ public static partial class CecilHelper
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static TypeDefinition? ResolveWithCache(TypeReference? t)
+    internal static TypeDefinition? ResolveWithCache(TypeReference? t)
     {
         if (t is null)
             return null;

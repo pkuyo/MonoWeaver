@@ -1,165 +1,15 @@
-﻿using Mono.Cecil.Cil;
+﻿using Mono.Cecil;
+using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using MonoMod.Cil;
+using MonoWeaver.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Mono.Cecil;
-using MonoWeaver.Utils;
+using System.Runtime.CompilerServices;
 
 namespace MonoWeaver.CFG;
 
-[Flags]
-public enum VerificationType : uint 
-{
-    Unknown = 0,
-    
-    ByRef = 1 << 0,
-    Ptr = 1 << 1,
-    O = 1 << 2,      // object ref
-    ValueType = 1 << 3,
-    
-    I1 = 1 << 4,
-    I2 = 1 << 5,
-    I4 = 1 << 6,
-    I8 = 1 << 7,
-    I =  1 << 8,      // native int
-    R4 = 1 << 9,
-    R8 = 1 << 10,
-    
-    Null = 1 << 11 | O,
-    F = R4 | R8,
-    All = uint.MaxValue
-}
-
-internal class StackTypeRef 
-{
-    public StackTypeRef(VerificationType kind) => Kind = kind;
-
-    public StackTypeRef(TypeReference type)
-    {
-        type = type.StripType();
-        
-        var typeSystem = type.Module.TypeSystem;
-       
-        if (type is ByReferenceType refType)
-        {
-            var eleType = refType.ElementType;
-            TypeDefinition typeDef = eleType.Resolve() ?? throw new ResolveFailedException(eleType);
-            var enumType = typeDef.GetEnumUnderlyingType();
-            Kind |= VerificationType.ByRef;
-
-            if (enumType != null) eleType = enumType;
-            
-            if(typeSystem.Boolean == eleType || typeSystem.Byte == eleType || typeSystem.SByte == eleType)
-            {
-                Kind |= VerificationType.I1;
-                return;
-            }
-            if(typeSystem.Int16 == eleType || typeSystem.UInt16 == eleType || typeSystem.Char == eleType)
-            {
-                Kind |= VerificationType.I2;
-                return;
-            }
-            if(typeSystem.Int32 == eleType || typeSystem.UInt32 == eleType)
-            {
-                Kind |= VerificationType.I4;
-                return;
-            }
-            if (typeSystem.Int64 == eleType || typeSystem.UInt64 == eleType)
-            {
-                Kind |= VerificationType.I8;
-                return;
-            }
-            if (typeSystem.Single == eleType)
-            {
-                Kind |= VerificationType.R4;
-                return;
-            }
-            if (typeSystem.Double == eleType)
-            {
-                Kind |= VerificationType.R8;
-                return;
-            }
-            if (typeSystem.IntPtr == eleType || typeSystem.UIntPtr == eleType)
-            {
-                Kind |= VerificationType.I;
-                return;
-            }
-
-            Type = type; //对于ByRef的类型不能直接合
-        }
-        else if (type is PointerType)
-        {
-            Kind |= VerificationType.Ptr | VerificationType.I;
-            Type = type; //保留类型但可以转化为native int
-        }
-        else
-        {
-            TypeDefinition typeDef = type.Resolve() ?? throw new ResolveFailedException(type);
-            var cmpType = typeDef.GetEnumUnderlyingType() ?? type;
-            if(typeSystem.Boolean == cmpType ||
-               typeSystem.Int32 == cmpType || typeSystem.UInt32 == cmpType || 
-               typeSystem.Int16 == cmpType || typeSystem.UInt16 == cmpType ||
-               typeSystem.Byte == cmpType || typeSystem.Char == cmpType ||
-               typeSystem.SByte == cmpType)
-            {
-                Kind |= VerificationType.I4;
-                return;
-            }
-            if (typeSystem.Int64 == cmpType || typeSystem.UInt64 == cmpType)
-            {
-                Kind |= VerificationType.I8;
-                return;
-            }
-        
-            if (typeSystem.IntPtr == cmpType || typeSystem.UIntPtr == cmpType)
-            {
-                Kind |= VerificationType.I;
-                return;
-            }
-            if (typeSystem.Single == cmpType || typeSystem.Double == cmpType)
-            {
-                Kind |= VerificationType.F;
-                return;
-            }
-        }
-        if (type.IsValueType) Kind |= VerificationType.ValueType;
-        else  Kind |= VerificationType.O;
-        Type = type;
-    } 
-
-    public readonly VerificationType Kind;
-
-    public readonly TypeReference? Type;
-    
-    public static implicit operator StackTypeRef(TypeReference type) => new(type);
-    public static implicit operator StackTypeRef(VerificationType kind) => new(kind);
-
-
-    public StackTypeRef? GetCompatible(StackTypeRef other)
-    {
-        throw new NotImplementedException();
-    }
-
-    public bool CanConvertTo(StackTypeRef? right)
-    {
-        if (right is null)
-            return false;
-        if (((uint)Kind & 0xF) != ((uint)right.Kind & 0xF)) //类别不相等
-            return false;
-        
-        if (Kind == VerificationType.Null || right.Kind == VerificationType.Null) //已经确定类别一致则null一定可以转换
-            return true;
-        
-        if (right.Type is null) //无细分类别
-            return true; 
-        
-        if (Type is null) //细分类别不一致
-            return false;
-        throw new NotImplementedException();
-    }
-}
 
 public partial class ControlFlowGraph
 {
@@ -199,6 +49,8 @@ public partial class ControlFlowGraph
 
     private Dictionary<Instruction, BasicBlock> _blockMap = new();
 
+    private Dictionary<int, StackTypeRef> _valueId = new(); //为了可以删除
+
     private int _currentId = 1;
 
     
@@ -221,6 +73,7 @@ public partial class ControlFlowGraph
     {
         BuildBasicBlock();
         BuildEdge();
+        VerifyStack();
     }
 
     private void BuildBasicBlock()
@@ -288,50 +141,143 @@ public partial class ControlFlowGraph
             AddBasicBlock(leader);
         }
     }
+
     private void BuildEdge()
     {
         var root = new EvalStackNode();
+        var node = root;
         var module = _method.Module;
+        StackTypeRef[] buffer = new StackTypeRef[4];
+        StackTypeRef?[] funcBuffer = new StackTypeRef?[8];
+
         foreach (var block in _blocks)
         {
             var leader = block.Leader;
-            var stack = new Stack<TypeReference>();
+            var localStack = new Stack<StackTypeRef>();
+            StackTypeRef? retType = null;
             for (var inst = leader; inst != null; inst = inst.Next)
             {
                 var ts = module.TypeSystem;
-                StackTypeRef[] expectTypes;
                 var popAll = inst.OpCode.StackBehaviourPop == StackBehaviour.PopAll;
-
-                expectTypes = inst.OpCode.StackBehaviourPop switch
+                var pop = inst.OpCode.StackBehaviourPop switch
                 {
-                    StackBehaviour.Pop0 => [],
-
-                    StackBehaviour.Pop1 => FindExpectType_Pop1(inst),
-                    StackBehaviour.Popi   => [ts.Int32],
-                    StackBehaviour.Popref => FindExpectType_Popref(inst),
-
-                    StackBehaviour.Popi_popi   => [ts.Int32, ts.Int32],
-                    StackBehaviour.Popi_popi8  => [ts.Int32, ts.Int64],
-                    StackBehaviour.Popi_popr4  => [ts.Int32, ts.Single],
-                    StackBehaviour.Popi_popr8  => [ts.Int32, ts.Double],
-                    StackBehaviour.Popref_popi => FindExpectTypes_Popref_popi(inst),
-                    StackBehaviour.Popi_pop1 => FindExpectTypes_Popi_pop1(inst),
-                    StackBehaviour.Popref_pop1 => FindExpectTypes_Popref_pop1(inst),
-                    StackBehaviour.Pop1_pop1 => FindExpectTypes_Pop1_pop1(inst),
-                    
-                    StackBehaviour.Popi_popi_popi    => [ts.Int32, ts.Int32, ts.Int32],
-                    StackBehaviour.Popref_popi_popi or StackBehaviour.Popref_popi_popi8 or
-                    StackBehaviour.Popref_popi_popr4 or StackBehaviour.Popref_popi_popr8 or 
-                    StackBehaviour.Popref_popi_popref   => FindExpectTypes_Pop3(inst),
-                    
-                    StackBehaviour.Varpop => FindExpectTypes_VarPop(inst),
-
+                    StackBehaviour.Pop0 => 0,
+                    StackBehaviour.Pop1 or StackBehaviour.Popi or StackBehaviour.Popref => 1,
+                    StackBehaviour.Popi_popi or StackBehaviour.Popi_popi8 or
+                    StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
+                    StackBehaviour.Popref_popi or StackBehaviour.Popi_pop1 or
+                    StackBehaviour.Popref_pop1 or StackBehaviour.Pop1_pop1 => 2,
+                    StackBehaviour.Popref_popi_popi or
+                    StackBehaviour.Popref_popi_popi8 or
+                    StackBehaviour.Popref_popi_popr4 or
+                    StackBehaviour.Popref_popi_popr8 or
+                    StackBehaviour.Popref_popi_popref => 3,
+                    StackBehaviour.Varpop => 0,
                     _ => throw new ArgumentOutOfRangeException()
                 };
-                int push = 0;
+
+                var push = inst.OpCode.StackBehaviourPush switch
+                {
+                    StackBehaviour.Push0 => 0,
+                    StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushi8 or 
+                    StackBehaviour.Pushref or StackBehaviour.Pushr4 or StackBehaviour.Pushr8 => 1,
+                    StackBehaviour.Push1_push1 => 2,
+                    StackBehaviour.Varpush => 0,
+                    _ => throw new ArgumentOutOfRangeException()
+                };
+
+                for (int i = 0; i< pop; i++)
+                {
+                    buffer[i] = Pop(localStack, ref node, inst);
+                }
+
+                switch (inst.OpCode.StackBehaviourPop)
+                {
+                    case StackBehaviour.Pop0:
+                        break;
+
+                    case StackBehaviour.Pop1:
+                        retType = VerifyPop1(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Popi:
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        break;
+
+                    case StackBehaviour.Popref:
+                        retType = VerifyPopref(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Popi_popi:
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        VerifyType(buffer[1], ts.Int32, inst);
+                        break;
+
+                    case StackBehaviour.Popi_popi8:
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        VerifyType(buffer[1], ts.Int64, inst);
+                        break;
+
+                    case StackBehaviour.Popi_popr4:
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        VerifyType(buffer[1], ts.Single, inst);
+                        break;
+
+                    case StackBehaviour.Popi_popr8:
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        VerifyType(buffer[1], ts.Double, inst);
+                        break;
+
+                    case StackBehaviour.Popref_popi:
+                        retType = VerifyPopref_popi(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Popi_pop1:
+                        retType = VerifyPopi_pop1(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Popref_pop1:
+                        retType = VerifyPopref_pop1(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Pop1_pop1:
+                        retType = VerifyPop1_pop1(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Popi_popi_popi:
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        VerifyType(buffer[1], ts.Int32, inst);
+                        VerifyType(buffer[0], ts.Int32, inst);
+                        break;
+
+                    case StackBehaviour.Popref_popi_popi:
+                    case StackBehaviour.Popref_popi_popi8:
+                    case StackBehaviour.Popref_popi_popr4:
+                    case StackBehaviour.Popref_popi_popr8:
+                    case StackBehaviour.Popref_popi_popref:
+                        retType = VerifyPop3(inst, buffer);
+                        break;
+
+                    case StackBehaviour.Varpop:
+                        retType = FillVarPop(inst, ref funcBuffer, out var len);
+                        for(int i = len - 1; i >=0; i--)
+                        {
+                            var type = Pop(localStack, ref node, inst);
+                            VerifyType(type, funcBuffer[i], inst);
+                        }
+                        break;
+
+                    default:
+                        throw new ArgumentOutOfRangeException();
+                }
+
+                switch (inst.OpCode.StackBehaviourPush)
+                {
+                    //TODO: WIP
+                }
             }
 
-            static TypeReference? Pop(Stack<TypeReference> localStack, ref EvalStackNode node, Instruction instruction)
+            static StackTypeRef Pop(Stack<StackTypeRef> localStack, ref EvalStackNode node, Instruction instruction)
             {
                 if (localStack.Count != 0)
                     return localStack.Pop();
@@ -341,7 +287,7 @@ public partial class ControlFlowGraph
                 return node.Type;
             }
 
-            static void Append(Stack<TypeReference> localStack, ref EvalStackNode node,
+            static void Append(Stack<StackTypeRef> localStack, ref EvalStackNode node,
                 Instruction instruction, int maxDepth)
             {
                 while (localStack.Count != 0)
@@ -351,7 +297,14 @@ public partial class ControlFlowGraph
             }
         }
     }
+
     
+
+    private void VerifyStack()
+    {
+
+    }
+
     private BasicBlock AddBasicBlock(Instruction leader)
     {
         var block = new BasicBlock(_currentId++, leader);
@@ -364,95 +317,213 @@ public partial class ControlFlowGraph
 
 public partial class ControlFlowGraph
 {
-    private StackTypeRef[] FindExpectType_Pop1(Instruction inst)
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private StackTypeRef VerifyType(StackTypeRef type1, StackTypeRef? type2, Instruction inst)
+    {
+        throw new NotImplementedException();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private StackTypeRef VerifyValueType(StackTypeRef type1, Instruction inst)
+    {
+        throw new NotImplementedException();
+
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private StackTypeRef VerifyNum(StackTypeRef type1, Instruction inst)
+    {
+        throw new NotImplementedException();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private StackTypeRef VerifyInt(StackTypeRef type1, Instruction inst)
+    {
+        throw new NotImplementedException();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private StackTypeRef VerifyByRef(StackTypeRef type1, Instruction inst)
+    {
+        throw new NotImplementedException();
+    }
+
+    private StackTypeRef? VerifyPop1(Instruction inst, StackTypeRef[] stacks)
     {
         var module = _method.Module;
         switch (inst.OpCode.Code)
         {
-            case Code.Starg:
-            {
-                if (inst.Operand is not ushort index)
-                    throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
-                if (index >= _method.Parameters.Count + (_method.HasThis ? 1 : 0))
-                    throw new OperandOutOfRangeException(inst,
-                        $"Method parameters count: {_method.Parameters.Count + (_method.HasThis ? 1 : 0)}");
-                return [_method.Parameters[index].ParameterType];
-            }
-            case Code.Stloc:
-            {
-                if (inst.Operand is not ushort index)
-                    throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
-                if (index >= _method.Body.Variables.Count)
-                    throw new OperandOutOfRangeException(inst,
-                        $"Method local variables count: {_method.Body.Variables}");
-                return [_method.Body.Variables[index].VariableType];
-            }
-            case Code.Stsfld:
-            {
-                if (inst.Operand is not FieldReference field)
-                    throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
-                return [field.FieldType];
-            }
+            case Code.Box:
+                return VerifyValueType(stacks[0], inst);
+            case Code.Ckfinite:
+                return VerifyType(stacks[0], StackTypeRef.F, inst);
             case Code.Conv_I1:
             case Code.Conv_I2:
             case Code.Conv_I4:
+            case Code.Conv_I8:
+            case Code.Conv_I:
+            case Code.Conv_U1:
+            case Code.Conv_U2:
+            case Code.Conv_U4:
+            case Code.Conv_U8:
+            case Code.Conv_U:
+            case Code.Conv_R4:
+            case Code.Conv_R8:
+            case Code.Conv_R_Un:
             case Code.Conv_Ovf_I1:
             case Code.Conv_Ovf_I2:
             case Code.Conv_Ovf_I4:
-                break;
+            case Code.Conv_Ovf_I8:
+            case Code.Conv_Ovf_I:
+            case Code.Conv_Ovf_U1:
+            case Code.Conv_Ovf_U2:
+            case Code.Conv_Ovf_U4:
+            case Code.Conv_Ovf_U8:
+            case Code.Conv_Ovf_U:
+            case Code.Conv_Ovf_I1_Un:
+            case Code.Conv_Ovf_I2_Un:
+            case Code.Conv_Ovf_I4_Un:
+            case Code.Conv_Ovf_I8_Un:
+            case Code.Conv_Ovf_I_Un:
+            case Code.Conv_Ovf_U1_Un:
+            case Code.Conv_Ovf_U2_Un:
+            case Code.Conv_Ovf_U4_Un:
+            case Code.Conv_Ovf_U8_Un:
+            case Code.Conv_Ovf_U_Un:
+                return VerifyNum(stacks[0], inst);
+            case Code.Dup:
+                return stacks[0];
+            case Code.Neg:
+                return VerifyNum(stacks[0], inst);
+            case Code.Not:
+                return VerifyInt(stacks[0], inst);
+            case Code.Pop:
+                return null;
+            case Code.Refanytype:
+                return VerifyType(stacks[0], module.TypeSystem.TypedReference, inst);
+            case Code.Refanyval:
+                return VerifyByRef(stacks[0], inst);
+            case Code.Starg:
+                {
+                    if (inst.Operand is not ushort index)
+                        throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
+                    if (index >= _method.Parameters.Count + (_method.HasThis ? 1 : 0))
+                        throw new OperandOutOfRangeException(inst,
+                            $"Method parameters count: {_method.Parameters.Count + (_method.HasThis ? 1 : 0)}");
+                    stacks[0] = (_method.HasThis && index == 0) ? _method.DeclaringType
+                    : _method.Parameters[index - (_method.HasThis ? 1 : 0)].ParameterType;
+                    return null;
+                }
+            case Code.Stloc:
+                {
+                    if (inst.Operand is not ushort index)
+                        throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
+                    if (index >= _method.Body.Variables.Count)
+                        throw new OperandOutOfRangeException(inst,
+                            $"Method local variables count: {_method.Body.Variables.Count}");
+                    stacks[0] = _method.Body.Variables[index].VariableType;
+                    return null;
+                }
+            case Code.Stsfld:
+                {
+                    if (inst.Operand is not FieldReference field)
+                        throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
+                    stacks[0] = field.FieldType;
+                    return null;
+                }
+            default:
+                throw new ArgumentOutOfRangeException(); //TODO:
+        }
+    }
+
+    private StackTypeRef? VerifyPop1_pop1(Instruction inst, StackTypeRef[] stacks)
+    {
+        var module = _method.Module;
+        switch (inst.OpCode.Code)
+        {
+
         }
         throw new NotImplementedException();
-        
-    }
-    
-    private StackTypeRef[] FindExpectTypes_Pop1_pop1(Instruction inst)
-    {
-        throw new NotImplementedException();
-        
     }
 
-    private StackTypeRef[] FindExpectTypes_Popi_pop1(Instruction inst)
+    private StackTypeRef? VerifyPopi_pop1(Instruction inst, StackTypeRef[] stacks)
     {
-        throw new NotImplementedException();
-        
-    }
-    
-    private StackTypeRef[] FindExpectTypes_Popref_pop1(Instruction inst)
-    {
-        throw new NotImplementedException();
-        
-    }
-    private StackTypeRef[] FindExpectTypes_Pop3(Instruction inst)
-    {
+        var module = _method.Module;
+        switch (inst.OpCode.Code)
+        {
+
+        }
         throw new NotImplementedException();
     }
-    
-    private StackTypeRef[] FindExpectTypes_Popref_popi(Instruction inst)
+
+    private StackTypeRef? VerifyPopref_pop1(Instruction inst, StackTypeRef[] stacks)
     {
+        var module = _method.Module;
+        switch (inst.OpCode.Code)
+        {
+
+        }
         throw new NotImplementedException();
     }
-    
-    private StackTypeRef[] FindExpectType_Popref(Instruction inst)
+    private StackTypeRef? VerifyPop3(Instruction inst, StackTypeRef[] stacks)
     {
+        var module = _method.Module;
+        switch (inst.OpCode.Code)
+        {
+
+        }
         throw new NotImplementedException();
     }
-    
-    static StackTypeRef[] FindExpectTypes_VarPop(Instruction inst)
+
+    private StackTypeRef? VerifyPopref(Instruction inst, StackTypeRef[] stacks)
+    {
+        var module = _method.Module;
+        switch (inst.OpCode.Code)
+        {
+
+        }
+        throw new NotImplementedException();
+    }
+
+    private StackTypeRef? VerifyPopref_popi(Instruction inst, StackTypeRef[] stacks)
+    {
+        var module = _method.Module;
+        switch (inst.OpCode.Code)
+        {
+
+        }
+        throw new NotImplementedException();
+    }
+
+
+    private StackTypeRef? FillVarPop(Instruction inst, ref StackTypeRef?[] args, out int len)
     {
         if (inst.Operand is not IMethodSignature sig)
-            return [];
-
-        var paramTypes = sig.Parameters.Select(p => new StackTypeRef(p.ParameterType));
-
+        {
+            len = 0;
+            return null;
+        }
+        var paramLen = sig.Parameters.Count + (sig.HasThis ? 1 : 0);
+        len = paramLen;
+        if(args.Length < paramLen)
+        {
+            Array.Resize(ref args, paramLen);
+        }
+        int i = 0;
         if (sig.HasThis)
         {
             if (sig is MethodReference methodRef)
-                paramTypes = paramTypes.Prepend(methodRef.DeclaringType);
+                args[i++] = methodRef.DeclaringType;
             else
-                paramTypes = paramTypes.Prepend(VerificationType.All);
+                args[i++] = null;
         }
-
-        return paramTypes.ToArray();
+        foreach(var p in sig.Parameters)
+        {
+            args[i++] = p.ParameterType;
+        }
+        return (sig.ReturnType.Namespace == "System" && sig.ReturnType.Name == "Void") 
+            ? null : StackTypeRef.Create(sig.ReturnType);
     }
 
 }

@@ -12,12 +12,12 @@ public class EvalStackTransfer
 
 public class EvalStackNode
 {
-    public EvalStackNode(int depth = 0, TypeReference? type = null)
+    public EvalStackNode(int depth = 0, StackTypeRef? type = null)
     {
-        Type = type;
+        Type = type ?? StackTypeRef.Invalid;
     }
     
-    public TypeReference? Type;
+    public StackTypeRef Type;
     
     public EvalStackNode? Parent;
 
@@ -28,7 +28,7 @@ public class EvalStackNode
         node.Parent = this;
     }
     
-    public EvalStackNode AppendChild(TypeReference type)
+    public EvalStackNode AppendChild(StackTypeRef type)
     {
         var node = new EvalStackNode(Depth + 1, type)
         {
