@@ -27,7 +27,7 @@ namespace MonoWeaver.CFG
         F = R4 | R8,
     }
 
-    public class StackTypeRef
+    public class StackTypeRef : IEquatable<StackTypeRef>
     {
         public static readonly StackTypeRef I4 = new StackTypeRef(BuiltInType.I4);
         public static readonly StackTypeRef I8 = new StackTypeRef(BuiltInType.I8);
@@ -249,6 +249,28 @@ namespace MonoWeaver.CFG
                 return Create(builtIn);
 
             return null;
+        }
+
+   
+
+        public bool Equals(StackTypeRef? other)
+        {
+            if (other is null)
+                return false;
+            if (other.VerifyType != VerifyType)
+                return false;
+
+            if (BuiltInType == BuiltInType.Null && other.VerifyType == VerificationType.O)
+                return true;
+
+            if (VerifyType is VerificationType.ByRef or VerificationType.BuiltIn &&
+                BuiltInType != BuiltInType.None &&
+                BuiltInType == other.BuiltInType)
+            {
+                return true;
+            }
+            return Type!.IsSameType(other!.Type);
+            
         }
     }
 }

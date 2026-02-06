@@ -1,10 +1,22 @@
 ﻿using Mono.Cecil;
+using Mono.Cecil.Cil;
+using MonoMod.Cil;
 using MonoWeaver.CFG;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.Remoting.Metadata.W3cXsd2001;
+using GenericParameterAttributes = Mono.Cecil.GenericParameterAttributes;
+using MethodAttributes = Mono.Cecil.MethodAttributes;
+using COpCodes = Mono.Cecil.Cil.OpCodes;
+using TypeAttributes = Mono.Cecil.TypeAttributes;
+using OpCodes = System.Reflection.Emit.OpCodes;
+using MonoMod.Utils;
+
 
 namespace MonoWeaver.Utils;
 
@@ -378,7 +390,7 @@ public static partial class CecilHelper
         return false;
     }
 
-    public static void CollectAllInterfaces(TypeReference type, List<TypeReference> resultBuffer)
+    public static void CollectAllInterfaces(TypeReference? type, List<TypeReference> resultBuffer)
     {
         if (type == null) return;
 
@@ -748,5 +760,98 @@ public static partial class CecilHelper
             throw new ArgumentException($"Enum {typeDef.FullName} does not have a value field!");
         }
         return valueField.FieldType;
+    }
+
+    private static Func<object, Instruction>? _monoModresolveStrategy = null!;
+
+    private static void BuildMonoModresolveStrategy(Type type)
+    {
+
+        try
+        {
+            DynamicMethod method = new DynamicMethod("Target", typeof(Instruction), [typeof(object)]);
+            var il = method.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, type);
+            il.Emit(OpCodes.Ldfld, type.GetField("Target"));
+            il.Emit(OpCodes.Ret);
+            _monoModresolveStrategy = (Func<object, Instruction>)method.CreateDelegate(typeof(Func<object, Instruction>), null);
+        }
+        catch
+        {
+
+            if (!File.Exists(type.Assembly.Location))
+            {
+                throw new Exception(); //TODO 完善异常说明
+            }
+            var resolver = new DefaultAssemblyResolver();
+            resolver.AddSearchDirectory(type.Assembly.Location);
+
+            using AssemblyDefinition assDef = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("MonoWeaver.Monomod", new Version()),
+                "module", new ModuleParameters()
+                {
+                    Kind = ModuleKind.Dll,
+                    AssemblyResolver = resolver
+                });
+
+
+
+            var module = assDef.MainModule;
+            TypeDefinition typeDef = new TypeDefinition("MonoWeaver.Monomod", "Helper",
+                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class);
+            MethodDefinition mothodDef = new MethodDefinition("Target", MethodAttributes.Public | MethodAttributes.Static,
+                module.ImportReference(typeof(Instruction)));
+
+            mothodDef.Parameters.Add(new ParameterDefinition(module.ImportReference(type)));
+            var il = mothodDef.Body.GetILProcessor();
+            il.Emit(COpCodes.Ldarg_0);
+            il.Emit(COpCodes.Isinst, module.ImportReference(type));
+            il.Emit(COpCodes.Ldfld, module.ImportReference(type.GetField("Target")));
+            il.Emit(COpCodes.Ret);
+
+            using MemoryStream ms = new MemoryStream();
+            assDef.Write(ms);
+
+            var ass = Assembly.Load(ms.ToArray());
+
+            _monoModresolveStrategy =
+                (Func<object, Instruction>)Delegate.CreateDelegate(typeof(Func<object, Instruction>),
+                ass.ManifestModule.GetType("Helper").GetMethod("Target"));
+        }
+    }
+
+    internal static IEnumerable<Instruction> OperandToTargets(object operand)
+    {
+        if( operand is Instruction inst)
+            yield return inst;
+        else if(operand is Instruction[] insts)
+        {
+            foreach(var i in insts)
+                yield return i;
+        }
+        else
+        {
+            var type = operand.GetType();
+            if(type.IsArray)
+            {
+                var eleType = type.GetElementType();
+                var array = (Array)operand;
+                if(eleType.FullName == "MonoMod.Cil.ILLabel")
+                {
+                    if (_monoModresolveStrategy is null)
+                        BuildMonoModresolveStrategy(eleType);
+                    foreach (var i in array)
+                    {
+                        yield return _monoModresolveStrategy!(i);
+                    }
+                }
+            }
+            else if(type.FullName == "MonoMod.Cil.ILLabel")
+            {
+                if (_monoModresolveStrategy is null)
+                    BuildMonoModresolveStrategy(type);
+                yield return _monoModresolveStrategy!(operand);
+            }
+        }
     }
 }

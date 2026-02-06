@@ -1,37 +1,106 @@
 ﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
-using MonoMod.Cil;
 using MonoWeaver.Utils;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace MonoWeaver.CFG;
 
+//public class EvalStackTransfer
+//{
+//    public List<TypeReference> Pushed = new();
+//    public List<TypeReference> Popped = new();
+//}
+
+public enum BasicBlockType : byte
+{
+    Invalid = 0,
+    Normal = 1,
+    Try = 2,
+    Catch = 3,
+    Finally = 4,
+    Fault = 5,
+}
+
+public class EvalStackNode
+{
+    public EvalStackNode(int depth = 0, StackTypeRef? type = null)
+    {
+        Type = type ?? StackTypeRef.Invalid;
+        Depth = depth;
+    }
+
+    public StackTypeRef Type;
+
+    public EvalStackNode? Parent;
+
+    public List<EvalStackNode> Children = new List<EvalStackNode>();
+
+    public int Depth = 0;
+
+    public void Disconnect()
+    {
+        Parent?.RemoveChild(this);
+        Parent = null;
+    }
+
+    public void RemoveChild(EvalStackNode node)
+    {
+        Children.Remove(node);
+    }
+
+    public void AppendChild(EvalStackNode node)
+    {
+        node.Parent = this;
+    }
+
+    public EvalStackNode AppendChild(StackTypeRef type)
+    {
+        var node = new EvalStackNode(Depth + 1, type)
+        {
+            Parent = this
+        };
+        Children.Add(node);
+        return node;
+    }
+}
+
+
 
 public partial class ControlFlowGraph
 {
-    public sealed class BasicBlock(int id, Instruction start) : IComparable<BasicBlock>
+
+    public sealed class ExceptionBlock(ExceptionHandler eh)
+    {
+        public int TryStart;
+        public int TryEnd;
+        public int FilterStart;
+        public int HandlerStart;
+        public int HandlerEnd;
+
+        public ExceptionHandler ExceptionHandler = eh;
+    }
+    public sealed class BasicBlock(Instruction start, TypeReference? exceptionType = null) : IEquatable<BasicBlock>
     {
         public Instruction Leader  = start;
-        public ControlFlowEdge[]? edges = null;
+        public List<ControlFlowEdge> Edges = new();
 
-        public readonly int Id = id;
+        public TypeReference? ExceptionType = exceptionType;
 
-        public int CompareTo(BasicBlock other)
+        public bool Equals(BasicBlock other)
         {
-           return Id.CompareTo(other.Id);
+            return Leader.Equals(other.Leader);
         }
     }
 
-    public sealed class ControlFlowEdge
+    public sealed class ControlFlowEdge(BasicBlock from, BasicBlock to)
     {
-        public BasicBlock From;
-        public BasicBlock To;
+        public BasicBlock From = from;
+        public BasicBlock To = to;
 
-        public EvalStackTransfer? StackTransfer;
+        //public EvalStackTransfer? StackTransfer;
     }
 }
 
@@ -39,30 +108,25 @@ public partial class ControlFlowGraph
 {
 
     private readonly MethodDefinition _method;
-    private readonly bool _verify;
 
-    private EvalStackNode _stackPool;
+    private EvalStackNode _root = new();
+
+    Dictionary<(StackTypeRef type, EvalStackNode prev), EvalStackNode> _nodeIntern = new();
 
     private List<BasicBlock> _blocks = null!;
 
-    private List<ControlFlowEdge> _edges = null!;
-
     private Dictionary<Instruction, BasicBlock> _blockMap = new();
 
-    private Dictionary<int, StackTypeRef> _valueId = new(); //为了可以删除
-
-    private int _currentId = 1;
-
+    private List<ExceptionBlock> _eBlocks = null!;
     
 
-    public ControlFlowGraph(MethodDefinition method, bool verify = true)
+    public ControlFlowGraph(MethodDefinition method)
     {
-        if (!method.HasBody)
+        if (method.IsIL)
         {
-            throw new ArgumentException("Method must have body", nameof(method));
+            throw new ArgumentException("Method must be IL method", method.FullName);
         }
         _method = method;
-        _verify = verify;
         _method.Body.SimplifyMacros();
         BuildGraph();
     }
@@ -71,44 +135,33 @@ public partial class ControlFlowGraph
 
     private void BuildGraph()
     {
-        BuildBasicBlock();
-        BuildEdge();
-        VerifyStack();
+        InitBasicBlock();
+        BuildEdgeAndVerify();
     }
 
-    private void BuildBasicBlock()
+    private void InitBasicBlock()
     {
-        HashSet<Instruction> leaders = new HashSet<Instruction>(); //添加Block起始
         _blocks = new List<BasicBlock>();
         if (_method.Body.Instructions.Count > 0)
-            leaders.Add(_method.Body.Instructions[0]);
+            AddBasicBlock(_method.Body.Instructions[0]);
+
+        _eBlocks = new List<ExceptionBlock>(_method.Body.ExceptionHandlers.Count);
+
+        foreach (var eh in _method.Body.ExceptionHandlers) //由于未Apply的Instruction的Offset为0 不能直接用Offset来判断异常边界
+        {
+            _eBlocks.Add(BuildExceptionBlock(eh));
+        }
 
         foreach (var inst in _method.Body.Instructions)
         {
             if (inst is null) continue;
             if (inst.OpCode.FlowControl is FlowControl.Phi)
-                leaders.Add(inst);
+                AddBasicBlock(inst);
             else if (inst.OpCode.FlowControl is FlowControl.Branch
                      or FlowControl.Cond_Branch)
             {
-                switch (inst.Operand)
-                {
-                    case ILLabel lab:   //MonoMod Runtime Detour
-                        leaders.Add(lab.Target);
-                        break;
-
-                    case Instruction target:
-                        leaders.Add(target);
-                        break;
-
-                    case Instruction[] targets:           // switch in Cecil
-                        foreach (var t in targets) leaders.Add(t);
-                        break;
-
-                    case ILLabel[] labelTargets:
-                        foreach (var l in labelTargets) leaders.Add(l.Target);
-                        break;
-                }
+                foreach(var i in CecilHelper.OperandToTargets(inst.Operand))
+                    AddBasicBlock(i);
             }
 
             //终止指令的下一条指令也是起始
@@ -118,77 +171,130 @@ public partial class ControlFlowGraph
                 or FlowControl.Throw)
             {
                 if (inst.Next != null)
-                    leaders.Add(inst.Next);
+                    AddBasicBlock(inst.Next);
             }
 
             // JMP特殊处理
             if (inst.OpCode.Code == Code.Jmp && inst.Next != null)
-                leaders.Add(inst.Next);
+                AddBasicBlock(inst.Next);
         }
 
 
-        foreach (var eh in _method.Body.ExceptionHandlers)
-        {
-            if (eh.TryStart != null) leaders.Add(eh.TryStart);
-            if (eh.TryEnd != null) leaders.Add(eh.TryEnd);
-            if (eh.HandlerStart != null) leaders.Add(eh.HandlerStart);
-            if (eh.HandlerEnd != null) leaders.Add(eh.HandlerEnd);
-            if (eh.FilterStart != null) leaders.Add(eh.FilterStart);
-        }
+  
+    }
 
-        foreach (var leader in leaders)
+    private void BuildEdgeAndVerify()
+    {
+        var module = _method.Module;
+        var buffer = new StackTypeRef[4];
+        var funcBuffer = new StackTypeRef?[8];
+        var usedBlocks = new HashSet<BasicBlock>(_blocks.Count);
+        
+        foreach (var block in _blocks)
         {
-            AddBasicBlock(leader);
+            if (usedBlocks.Contains(block))
+                continue;
+            AnalyzeBlocksWorkflow(block, usedBlocks, buffer, funcBuffer);
         }
     }
 
-    private void BuildEdge()
+    private ExceptionBlock BuildExceptionBlock(ExceptionHandler eh)
     {
-        var root = new EvalStackNode();
-        var node = root;
-        var module = _method.Module;
-        StackTypeRef[] buffer = new StackTypeRef[4];
-        StackTypeRef?[] funcBuffer = new StackTypeRef?[8];
+        if (_method is null) throw new ArgumentNullException(nameof(_method));
+        if (eh is null) throw new ArgumentNullException(nameof(eh));
+        if (!_method.HasBody) throw new ArgumentException("Method has no body.", nameof(_method));
 
-        foreach (var block in _blocks)
+        var ins = _method.Body.Instructions;
+        if (ins is null) throw new ArgumentException("Method body has no instructions.", nameof(_method));
+
+        if (eh.TryStart is null) throw new ArgumentException("Invalid EH: TryStart is null.", nameof(eh));
+        if (eh.TryEnd is null) throw new ArgumentException("Invalid EH: TryEnd is null.", nameof(eh));
+        if (eh.HandlerStart is null) throw new ArgumentException("Invalid EH: HandlerStart is null.", nameof(eh));
+        if (eh.HandlerEnd is null) throw new ArgumentException("Invalid EH: HandlerEnd is null.", nameof(eh));
+        if (eh.HandlerType == ExceptionHandlerType.Filter && eh.FilterStart is null)
+            throw new ArgumentException("Invalid EH: FilterStart is null for Filter handler.", nameof(eh));
+
+        int? tryStart = null, tryEnd = null, handlerStart = null, handlerEnd = null, filterStart = null;
+
+        for (int i = 0; i < ins.Count; i++)
         {
+            var cur = ins[i];
+
+            if (cur == eh.TryStart) tryStart = i;
+            if (cur == eh.TryEnd) tryEnd = i;
+            if (cur == eh.HandlerStart) handlerStart = i;
+            if (cur == eh.HandlerEnd) handlerEnd = i;
+
+            if (eh.FilterStart != null && cur == eh.FilterStart)
+                filterStart = i;
+
+   
+            bool needFilter = eh.HandlerType == ExceptionHandlerType.Filter;
+            if (tryStart.HasValue && tryEnd.HasValue && handlerStart.HasValue && handlerEnd.HasValue
+                && (!needFilter || filterStart.HasValue))
+                break;
+        }
+
+  
+        if (!tryStart.HasValue) throw new ArgumentException("Invalid EH: TryStart is not in this method's instruction list.", nameof(eh));
+        if (!tryEnd.HasValue) throw new ArgumentException("Invalid EH: TryEnd is not in this method's instruction list.", nameof(eh));
+        if (!handlerStart.HasValue) throw new ArgumentException("Invalid EH: HandlerStart is not in this method's instruction list.", nameof(eh));
+        if (!handlerEnd.HasValue) throw new ArgumentException("Invalid EH: HandlerEnd is not in this method's instruction list.", nameof(eh));
+
+        if (eh.HandlerType == ExceptionHandlerType.Filter && !filterStart.HasValue)
+            throw new ArgumentException("Invalid EH: FilterStart is not in this method's instruction list.", nameof(eh));
+
+        var block = new ExceptionBlock(eh)
+        {
+            TryStart = tryStart.Value,
+            TryEnd = tryEnd.Value,
+            HandlerStart = handlerStart.Value,
+            HandlerEnd = handlerEnd.Value,
+            FilterStart = (eh.FilterStart is null) ? -1 : filterStart.GetValueOrDefault(-1)
+        };
+        return block;
+    }
+
+    private void AnalyzeBlocksWorkflow(BasicBlock entryBlock, 
+        HashSet<BasicBlock> usedBlocks,  StackTypeRef[] buffer, StackTypeRef?[] funcBuffer)
+    {
+        var localStack = new Stack<StackTypeRef>(_method.Body.MaxStackSize);
+        List<(BasicBlock block, EvalStackNode node)> bfsBlocks = [(entryBlock, _root)];
+        for(int i = 0; i < bfsBlocks.Count; i++)
+        {
+            var (block, node) = bfsBlocks[i];
+            usedBlocks.Add(block);
             var leader = block.Leader;
-            var localStack = new Stack<StackTypeRef>();
             StackTypeRef? retType = null;
             for (var inst = leader; inst != null; inst = inst.Next)
             {
-                var ts = module.TypeSystem;
-                var popAll = inst.OpCode.StackBehaviourPop == StackBehaviour.PopAll;
+                var ts = _method.Module.TypeSystem;
+                if(inst.OpCode.StackBehaviourPop == StackBehaviour.PopAll)
+                {
+                    localStack.Clear();
+                    node = _root;
+                }
                 var pop = inst.OpCode.StackBehaviourPop switch
                 {
                     StackBehaviour.Pop0 => 0,
                     StackBehaviour.Pop1 or StackBehaviour.Popi or StackBehaviour.Popref => 1,
                     StackBehaviour.Popi_popi or StackBehaviour.Popi_popi8 or
-                    StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
-                    StackBehaviour.Popref_popi or StackBehaviour.Popi_pop1 or
-                    StackBehaviour.Popref_pop1 or StackBehaviour.Pop1_pop1 => 2,
+                        StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
+                        StackBehaviour.Popref_popi or StackBehaviour.Popi_pop1 or
+                        StackBehaviour.Popref_pop1 or StackBehaviour.Pop1_pop1 => 2,
                     StackBehaviour.Popref_popi_popi or
-                    StackBehaviour.Popref_popi_popi8 or
-                    StackBehaviour.Popref_popi_popr4 or
-                    StackBehaviour.Popref_popi_popr8 or
-                    StackBehaviour.Popref_popi_popref => 3,
+                        StackBehaviour.Popref_popi_popi8 or
+                        StackBehaviour.Popref_popi_popr4 or
+                        StackBehaviour.Popref_popi_popr8 or
+                        StackBehaviour.Popref_popi_popref => 3,
                     StackBehaviour.Varpop => 0,
                     _ => throw new ArgumentOutOfRangeException()
                 };
 
-                var push = inst.OpCode.StackBehaviourPush switch
-                {
-                    StackBehaviour.Push0 => 0,
-                    StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushi8 or 
-                    StackBehaviour.Pushref or StackBehaviour.Pushr4 or StackBehaviour.Pushr8 => 1,
-                    StackBehaviour.Push1_push1 => 2,
-                    StackBehaviour.Varpush => 0,
-                    _ => throw new ArgumentOutOfRangeException()
-                };
 
-                for (int i = 0; i< pop; i++)
+                for (int j = 0; j< pop; j++)
                 {
-                    buffer[i] = Pop(localStack, ref node, inst);
+                    buffer[j] = EvalStackPop(localStack, ref node, inst);
                 }
 
                 switch (inst.OpCode.StackBehaviourPop)
@@ -260,10 +366,10 @@ public partial class ControlFlowGraph
 
                     case StackBehaviour.Varpop:
                         retType = FillVarPop(inst, ref funcBuffer, out var len);
-                        for(int i = len - 1; i >=0; i--)
+                        for(int j = len - 1; j >=0; j--)
                         {
-                            var type = Pop(localStack, ref node, inst);
-                            VerifyType(type, funcBuffer[i], inst);
+                            var type = EvalStackPop(localStack, ref node, inst);
+                            VerifyType(type, funcBuffer[j], inst);
                         }
                         break;
 
@@ -271,43 +377,91 @@ public partial class ControlFlowGraph
                         throw new ArgumentOutOfRangeException();
                 }
 
-                switch (inst.OpCode.StackBehaviourPush)
+                if (retType is null && inst.OpCode.StackBehaviourPush is not StackBehaviour.Push0 or StackBehaviour.Varpush)
                 {
-                    //TODO: WIP
+                    throw new Exception(); //TODO: 完善故障信息错误报告
                 }
-            }
-
-            static StackTypeRef Pop(Stack<StackTypeRef> localStack, ref EvalStackNode node, Instruction instruction)
-            {
-                if (localStack.Count != 0)
-                    return localStack.Pop();
-                if(node.Parent?.Type is null)
-                    throw new CFGException(CFGExceptionType.StackUnderflow, instruction);
-                node = node.Parent;
-                return node.Type;
-            }
-
-            static void Append(Stack<StackTypeRef> localStack, ref EvalStackNode node,
-                Instruction instruction, int maxDepth)
-            {
-                while (localStack.Count != 0)
-                    node = node.AppendChild(localStack.Pop());
-                if(node.Depth >= maxDepth)
-                    throw new CFGException(CFGExceptionType.StackOverflow, instruction);
+           
+                if (inst.OpCode.StackBehaviourPush is StackBehaviour.Push1_push1)
+                {
+                    EvalStackPush(localStack, ref node, retType!);
+                    EvalStackPush(localStack, ref node, retType!);
+                }
+                else
+                {
+                    EvalStackPush(localStack, ref node, retType!);
+                }
+                bool endBlock = false;
+                switch (inst.OpCode.FlowControl)
+                {
+                    case FlowControl.Next:
+                        break;
+                    case FlowControl.Branch:
+                        Append(localStack, ref node, inst);
+                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        {
+                            var targetBlock = _blockMap[target];
+                            bfsBlocks.Add((targetBlock, node));
+                            block.Edges.Add(new ControlFlowEdge(block, targetBlock));
+                        }
+                        endBlock = true;
+                        break;
+                    case FlowControl.Cond_Branch:
+                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        {
+                            var targetBlock = _blockMap[target];
+                            bfsBlocks.Add((targetBlock, node));
+                            block.Edges.Add(new ControlFlowEdge(block, targetBlock));
+                        }
+                        var next = _blockMap[inst.Next];
+                        bfsBlocks.Add((next, node));
+                        block.Edges.Add(new ControlFlowEdge(block, next));
+                        endBlock = true;    
+                        break;
+                }
+                if (endBlock)
+                    break;
             }
         }
     }
 
-    
-
-    private void VerifyStack()
+    private StackTypeRef EvalStackPop(Stack<StackTypeRef> localStack, ref EvalStackNode node, Instruction instruction)
     {
-
+        if (localStack.Count != 0)
+            return localStack.Pop();
+        if (node.Parent?.Type is null)
+            throw new CFGException(CFGExceptionType.StackUnderflow, instruction);
+        node = node.Parent;
+        return node.Type;
     }
+
+    private void EvalStackPush(Stack<StackTypeRef> localStack, ref EvalStackNode node, StackTypeRef type)
+    {
+        if (_nodeIntern.TryGetValue((type, node), out var child))
+            return;
+        localStack.Push(type);
+    }
+
+    private void Append(Stack<StackTypeRef> localStack, ref EvalStackNode node,
+        Instruction instruction)
+    {
+        while (localStack.Count != 0)
+            node = node.AppendChild(localStack.Pop());
+    }
+
+
+    private BasicBlock AddBasicBlock(Instruction leader, TypeReference? catchType)
+    {
+        var block = new BasicBlock(leader, catchType);
+        _blocks.Add(block);
+        _blockMap.Add(leader, block);
+        return block;
+    }
+
 
     private BasicBlock AddBasicBlock(Instruction leader)
     {
-        var block = new BasicBlock(_currentId++, leader);
+        var block = new BasicBlock(leader);
         _blocks.Add(block);
         _blockMap.Add(leader, block);
         return block;
@@ -345,6 +499,12 @@ public partial class ControlFlowGraph
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private StackTypeRef VerifyByRef(StackTypeRef type1, Instruction inst)
+    {
+        throw new NotImplementedException();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private StackTypeRef VerifyFloat(StackTypeRef type1, Instruction inst)
     {
         throw new NotImplementedException();
     }
