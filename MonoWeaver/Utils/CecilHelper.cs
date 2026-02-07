@@ -1,6 +1,5 @@
 ﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
-using MonoMod.Cil;
 using MonoWeaver.CFG;
 using System;
 using System.Collections.Generic;
@@ -9,13 +8,11 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
-using System.Runtime.Remoting.Metadata.W3cXsd2001;
 using GenericParameterAttributes = Mono.Cecil.GenericParameterAttributes;
 using MethodAttributes = Mono.Cecil.MethodAttributes;
 using COpCodes = Mono.Cecil.Cil.OpCodes;
 using TypeAttributes = Mono.Cecil.TypeAttributes;
 using OpCodes = System.Reflection.Emit.OpCodes;
-using MonoMod.Utils;
 
 
 namespace MonoWeaver.Utils;
@@ -31,10 +28,10 @@ public static partial class CecilHelper
     internal static class InterfaceTraversalCache
     {
         [ThreadStatic]
-        private static HashSet<TypeSig> _reusableSet;
+        private static HashSet<TypeSig>? _reusableSet;
 
         [ThreadStatic]
-        private static Stack<TypeReference> _reusableStack;
+        private static Stack<TypeReference>? _reusableStack;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static HashSet<TypeSig> GetClearedSet()

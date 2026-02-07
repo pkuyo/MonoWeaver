@@ -11,6 +11,14 @@ namespace MonoWeaver.CFG
         O = 3,
         ValueType = 4,
     }
+    
+    public enum StackTypeFlags
+    {
+        None = 0,
+        ReadOnly = 1 << 1,
+        PermanentHome = 1 << 2,
+        ThisPtr = 1 << 3,
+    }
 
     [Flags]
     public enum BuiltInType : ushort
@@ -88,7 +96,14 @@ namespace MonoWeaver.CFG
             return new StackTypeRef(type);
         }
 
-
+        private StackTypeRef(StackTypeRef boxedType, ModuleDefinition module)
+        {
+            if(!boxedType.IsValueType)
+               throw new ArgumentException("boxedType must be a value type"); 
+            BoxedType = boxedType;
+            VerifyType = VerificationType.O;
+            Type = module.TypeSystem.Object;
+        }
         private StackTypeRef(BuiltInType builtIn)
         {
             BuiltInType = builtIn;
@@ -164,15 +179,19 @@ namespace MonoWeaver.CFG
         public bool IsValueType => VerifyType is VerificationType.ValueType or VerificationType.BuiltIn;
 
         public bool IsBuiltInNum => VerifyType is VerificationType.BuiltIn;
+        public bool IsBoxedType => BoxedType != null;
+        
+        
 
         public readonly VerificationType VerifyType;
         public readonly BuiltInType BuiltInType;
 
         public readonly TypeReference? Type;
 
+        public readonly StackTypeRef? BoxedType;
+
         public static implicit operator StackTypeRef(TypeReference type) => Create(type);
-
-
+        public StackTypeRef Boxed(ModuleDefinition module) => new StackTypeRef(this, module);
 
         public bool CanConvertTo(StackTypeRef? right)
         {
