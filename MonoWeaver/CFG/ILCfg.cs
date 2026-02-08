@@ -3,12 +3,19 @@ using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using MonoWeaver.Utils;
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
+
 
 namespace MonoWeaver.CFG;
+
+
+[Flags]
+public enum VerifyOptions
+{
+    ExceptionHandler,
+    StackType,
+    LocalInit,
+}
 
 
 
@@ -18,13 +25,13 @@ namespace MonoWeaver.CFG;
 /// EH段
 /// </summary>
 /// <param name="eh"></param>
-public sealed class HandlerBlock(ExceptionHandler eh)
+public sealed class ExceptionBlock(ExceptionHandler eh)
 {
     public class Region
     {
         public int Start;
         public int End;
-        public HandlerBlock Clause = null!;
+        public ExceptionBlock Clause = null!;
         public Region? ParentRegion;
         public RegionKind Kind;
 
@@ -35,14 +42,6 @@ public sealed class HandlerBlock(ExceptionHandler eh)
             Kind = kind;
         }
 
-    }
-
-    public enum RegionKind
-    {
-        Normal = 0,
-        Try,
-        Handler,
-        Filter
     }
 
 
@@ -62,68 +61,29 @@ public sealed class HandlerBlock(ExceptionHandler eh)
     }
 }
 
-
-/// <summary>
-/// 评估栈DAG图节点
-/// </summary>
-public class EvalStackNode
+public enum RegionKind
 {
-    public EvalStackNode(int depth = 0, StackTypeRef? type = null)
-    {
-        Type = type ?? StackTypeRef.Invalid;
-        Depth = depth;
-    }
-
-    public StackTypeRef Type;
-
-    public EvalStackNode? Parent;
-
-    public List<EvalStackNode> Children = new ();
-
-    public int Depth;
-
-    public void Disconnect()
-    {
-        Parent?.RemoveChild(this);
-        Parent = null;
-    }
-
-    public void RemoveChild(EvalStackNode node)
-    {
-        Children.Remove(node);
-    }
-
-    public void AppendChild(EvalStackNode node)
-    {
-        node.Parent = this;
-    }
-
-    public EvalStackNode AppendChild(StackTypeRef type)
-    {
-        var node = new EvalStackNode(Depth + 1, type)
-        {
-            Parent = this
-        };
-        Children.Add(node);
-        return node;
-    }
+    Normal = 0,
+    Try,
+    Handler,
+    Filter
 }
 
 
-
-public partial class ControlFlowGraph
+public partial class ILCfg
 {
     /// <summary>
     /// CFG基本块
     /// </summary>
-    /// <param name="start"></param>
-    /// <param name="exceptionType"></param>
-    public sealed class BasicBlock(Instruction start, TypeReference? exceptionType = null) : IEquatable<BasicBlock>
+    public sealed class BasicBlock(Instruction start, ExceptionBlock.Region region) : IEquatable<BasicBlock>
     {
         public Instruction Leader  = start;
+        public EvalStackNode EntryNode = null!;
         public List<ControlFlowEdge> Edges = new();
 
-        public TypeReference? ExceptionType = exceptionType;
+        public RegionKind Kind = region.Kind;
+        public ExceptionBlock.Region Region = region;
+        public ulong[]? initLocals = null; //如果不需要initlocal分析则为null
 
         public bool Equals(BasicBlock other)
         {
@@ -134,8 +94,6 @@ public partial class ControlFlowGraph
     /// <summary>
     /// CFG边
     /// </summary>
-    /// <param name="from"></param>
-    /// <param name="to"></param>
     public sealed class ControlFlowEdge(BasicBlock from, BasicBlock to)
     {
         public BasicBlock From = from;
@@ -144,11 +102,9 @@ public partial class ControlFlowGraph
         //public EvalStackTransfer? StackTransfer;
     }
 }
-public partial class ControlFlowGraph
+public partial class ILCfg
 {
-
-
-    private bool BuildHandlerBlock(ExceptionHandler eh, Dictionary<Instruction, int> instDic, out HandlerBlock? block)
+    private bool BuildExceptionBlock(ExceptionHandler eh, Dictionary<Instruction, int> instDic, out ExceptionBlock? block)
     {
         block = null;
         if (eh.TryStart is null) return false;
@@ -177,12 +133,12 @@ public partial class ControlFlowGraph
 
 
 
-        block = new HandlerBlock(eh)
+        block = new ExceptionBlock(eh)
         {
-            ProtectedRegion = new HandlerBlock.Region(HandlerBlock.RegionKind.Try, tryStart, tryEnd),
-            HandlerRegion = new HandlerBlock.Region(HandlerBlock.RegionKind.Handler, handlerStart, handlerEnd),
+            ProtectedRegion = new ExceptionBlock.Region(RegionKind.Try, tryStart, tryEnd),
+            HandlerRegion = new ExceptionBlock.Region(RegionKind.Handler, handlerStart, handlerEnd),
             FilterRegion = eh.HandlerType == ExceptionHandlerType.Filter
-                ? new HandlerBlock.Region(HandlerBlock.RegionKind.Filter, filterStart, handlerStart)
+                ? new ExceptionBlock.Region(RegionKind.Filter, filterStart, handlerStart)
                 : null
         };
         return true;
@@ -190,21 +146,26 @@ public partial class ControlFlowGraph
 
 }
 
-public partial class ControlFlowGraph
+public partial class ILCfg
 {
 
     private readonly MethodDefinition _method;
 
-    private EvalStackNode _root = new();
+    private readonly EvalStackNode _root = new();
 
-    Dictionary<(StackTypeRef type, EvalStackNode prev), EvalStackNode> _nodeIntern = new();
-
-    private List<BasicBlock> _blocks = null!;
-
-    private Dictionary<Instruction, BasicBlock> _blockMap = new();
+    private readonly Dictionary<(StackTypeRef type, EvalStackNode prev), EvalStackNode> _nodeIntern = new();
+    private readonly Dictionary<Instruction, BasicBlock> _blockMap = new();
     
+    private List<BasicBlock> _blocks = null!;
+    private Dictionary<int, (RegionKind kind, TypeReference? type)> _regionFrames = null!;
+    
+    private List<ExceptionBlock> _exceptionBlocks = null!;
+    private List<ExceptionBlock.Region> _ehRegions = null!;
+    
+    private readonly bool _needInitAnalysis;
 
-    public ControlFlowGraph(MethodDefinition method)
+
+    public ILCfg(MethodDefinition method)
     {
         if (!method.IsIL)
         {
@@ -212,6 +173,7 @@ public partial class ControlFlowGraph
         }
         _method = method;
         _method.Body.SimplifyMacros();
+        _needInitAnalysis = !_method.Body.InitLocals;
         BuildGraph();
     }
 
@@ -230,11 +192,10 @@ public partial class ControlFlowGraph
     private void FirstPass()
     {
         _blocks = new List<BasicBlock>();
-        if (_method.Body.Instructions.Count > 0)
-            AddBasicBlock(_method.Body.Instructions[0]);
 
-        var hBlocks = new List<HandlerBlock>(_method.Body.ExceptionHandlers.Count);
-        var regions = new List<HandlerBlock.Region>(_method.Body.ExceptionHandlers.Count);
+        _exceptionBlocks = new List<ExceptionBlock>(_method.Body.ExceptionHandlers.Count);
+        _ehRegions = new List<ExceptionBlock.Region>(_method.Body.ExceptionHandlers.Count);
+        
         var instDictionary = new Dictionary<Instruction, int>(_method.Body.Instructions.Count);
         var instEhRegions = new int[_method.Body.Instructions.Count];
 
@@ -247,80 +208,92 @@ public partial class ControlFlowGraph
         //初始化EH并检查合法性
         foreach (var eh in _method.Body.ExceptionHandlers) //由于未Apply的Instruction的Offset为0 不能直接用Offset来判断异常边界
         {
-            if (BuildHandlerBlock(eh, instDictionary, out var hb))
+            if (BuildExceptionBlock(eh, instDictionary, out var hb))
             {
-                hb!.Id = hBlocks.Count;
+                hb!.Id = _exceptionBlocks.Count;
                 hb!.SetClause();
-                hBlocks.Add(hb!);
-                regions.Add(hb!.ProtectedRegion);
-                regions.Add(hb!.HandlerRegion);
+                _exceptionBlocks.Add(hb!);
+                _ehRegions.Add(hb!.ProtectedRegion);
+                _ehRegions.Add(hb!.HandlerRegion);
                 if(hb!.FilterRegion is not null)
-                    regions.Add(hb!.FilterRegion);
+                    _ehRegions.Add(hb!.FilterRegion);
             }
         }
 
-        regions.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start)
+        _ehRegions.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start)
                                          : b.End.CompareTo(a.End));
 
-        var stack = new Stack<HandlerBlock.Region>();
-        var regionFrame = new List<(int index, HandlerBlock.RegionKind kind, TypeReference? type)>(); //TODO:删除异常EH相关Region
-        for (int i = 0; i < regions.Count; i++)
+        var stack = new Stack<ExceptionBlock.Region>();
+        var regionFrameList = new List<(int index, RegionKind kind, TypeReference? type)>();
+        if (_ehRegions.Count == 0)
         {
-            var r = regions[i];
-            if(i == 0 && r.Start != 0)
+            regionFrameList.Add((0, RegionKind.Normal, null));
+        }
+        else
+        {
+            for (int i = 0; i < _ehRegions.Count; i++)
             {
-                regionFrame.Add((0, HandlerBlock.RegionKind.Normal, null));
-            }
+                var r = _ehRegions[i];
+                if (i == 0 && r.Start != 0) //如果不是开头为protected block
+                {
+                    regionFrameList.Add((0, RegionKind.Normal, null));
+                }
 
-            while (stack.Count > 0 && r.Start >= stack.Peek().End) //不相交
-            {
-                var start = stack.Peek().End;
-                stack.Pop();
-                if(stack.Count > 0)
+                while (stack.Count > 0 && r.Start >= stack.Peek().End) //不相交
+                {
+                    var start = stack.Peek().End;
+                    stack.Pop();
+                    if (stack.Count > 0)
+                    {
+                        var top = stack.Peek();
+                        regionFrameList.Add((start, top.Kind,
+                            top.Kind is RegionKind.Handler ? top.Clause.ExceptionHandler?.CatchType : null));
+                    }
+                    else
+                    {
+                        regionFrameList.Add((start, RegionKind.Normal, null));
+                    }
+                }
+
+                if (stack.Count > 0)
                 {
                     var top = stack.Peek();
-                    regionFrame.Add((start, top.Kind,
-                        top.Kind is HandlerBlock.RegionKind.Handler ? top.Clause.ExceptionHandler?.CatchType : null));
+
+                    // 交错的
+                    if (r.End > top.End) throw new Exception();
+
+                    // 重复区域仅能为Try块
+                    if (r.Start == top.Start && r.End == top.End &&
+                        !(r.Kind == RegionKind.Try && top.Kind == RegionKind.Try))
+                        throw new Exception();
+
+                    // filter块内不能嵌套
+                    if (top.Kind == RegionKind.Filter && top.Clause != r.Clause)
+                        throw new Exception();
+
+                    r.ParentRegion = (r.Start == top.Start && r.End == top.End) ? null : top;
                 }
-                else
-                {
-                    regionFrame.Add((start, HandlerBlock.RegionKind.Normal, null));
-                }
+                else r.ParentRegion = null;
+
+                stack.Push(r);
+                regionFrameList.Add((r.Start, r.Kind,
+                    r.Kind is RegionKind.Handler ? r.Clause.ExceptionHandler?.CatchType : null));
             }
-
-            if (stack.Count > 0)
-            {
-                var top = stack.Peek();
-
-                // 交错的
-                if (r.End > top.End) throw new Exception();
-
-                // 重复区域仅能为Try块
-                if (r.Start == top.Start && r.End == top.End &&
-                    !(r.Kind == HandlerBlock.RegionKind.Try && top.Kind == HandlerBlock.RegionKind.Try))
-                    throw new Exception();
-
-                // filter块内不能嵌套
-                if (top.Kind == HandlerBlock.RegionKind.Filter && top.Clause != r.Clause)
-                    throw new Exception();
-
-                r.ParentRegion = (r.Start == top.Start && r.End == top.End) ? null : top;
-            }
-            else r.ParentRegion = null;
-            stack.Push(r);
-            regionFrame.Add((r.Start, r.Kind, 
-                r.Kind is HandlerBlock.RegionKind.Handler ? r.Clause.ExceptionHandler?.CatchType : null));
         }
-        int frameIndex = 0;
 
+        _regionFrames = new(regionFrameList.Count);
+        foreach (var rf in regionFrameList)
+            _regionFrames.Add(rf.index, (rf.kind, rf.type));
+        
+        int frameIndex = 0;
         for (int i = 0; i < instEhRegions.Length; i++)
         {
-            if(frameIndex < regionFrame.Count - 1 && i >= regionFrame[frameIndex + 1].index)
+            if(frameIndex < regionFrameList.Count - 1 && i >= regionFrameList[frameIndex + 1].index)
                 frameIndex++;
             instEhRegions[i] = frameIndex;
         }
 
-        foreach (var hb in hBlocks)
+        foreach (var hb in _exceptionBlocks)
         {
             if (hb.HandlerRegion.ParentRegion != hb.ProtectedRegion.ParentRegion ||
                 (hb.FilterRegion != null && hb.FilterRegion.ParentRegion == hb.ProtectedRegion.ParentRegion))
@@ -328,13 +301,15 @@ public partial class ControlFlowGraph
             if (hb.HandlerRegion.ParentRegion != null && hb.HandlerRegion.ParentRegion.Clause.Id > hb.Id)
                 throw new Exception(); //不满足父区域必须在前
         }
-
-
+        
         //指令合法性检查
         Code? pPrefix = null;
         Code? prefix = null;
         int noCheck = 0;
-
+        
+        if (_method.Body.Instructions.Count > 0)
+            AddBasicBlock(_method.Body.Instructions[0], _ehRegions[instEhRegions[0]]);
+        
         for (int i = 0; i < _method.Body.Instructions.Count; i++)
         {
             var inst = _method.Body.Instructions[i];
@@ -343,7 +318,7 @@ public partial class ControlFlowGraph
             if (inst.OpCode.FlowControl is FlowControl.Phi)
                 AddBasicBlock(inst);
             */
-            else if (inst.OpCode.FlowControl is FlowControl.Branch
+            if (inst.OpCode.FlowControl is FlowControl.Branch
                      or FlowControl.Cond_Branch)
             {
                 foreach (var targetInst in CecilHelper.OperandToTargets(inst.Operand))
@@ -352,7 +327,7 @@ public partial class ControlFlowGraph
                         throw new Exception(); //无效目标位置
                     if (instEhRegions[index] != instEhRegions[i])
                         throw new Exception(); //跨异常边界跳转
-                    AddBasicBlock(targetInst);
+                    AddBasicBlock(targetInst, _ehRegions[instEhRegions[index]]);
                 }
             }
 
@@ -363,13 +338,12 @@ public partial class ControlFlowGraph
                 or FlowControl.Throw)
             {
                 if (inst.Next != null)
-                    AddBasicBlock(inst.Next);
+                    AddBasicBlock(inst.Next, _ehRegions[instEhRegions[i+1]]);
             }
 
             // JMP特殊处理
             if (inst.OpCode.Code == Code.Jmp && inst.Next != null)
-                AddBasicBlock(inst.Next);
-
+                AddBasicBlock(inst.Next, _ehRegions[instEhRegions[i+1]]);
 
             //处理前缀合法
             if (prefix != null) 
@@ -395,7 +369,7 @@ public partial class ControlFlowGraph
                             if (inst.OpCode.Code is not Code.Callvirt)
                                 throw new Exception();
                             break;
-                        case Code.Volatile when pPrefix != Code.Unaligned:
+                        case Code.Volatile when pPrefix != Code.Unaligned: 
                             if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
                                 Code.Ldind_R4 or Code.Ldind_R8 or Code.Ldind_U1 or Code.Ldind_U2 or Code.Ldind_U4 or Code.Ldind_Ref or
                                 Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
@@ -405,7 +379,7 @@ public partial class ControlFlowGraph
                                 throw new Exception();
                             break;
                         case Code.Unaligned:
-                        case Code.Volatile:
+                        case Code.Volatile: //包含双前缀
                             if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
                                 Code.Ldind_R4 or Code.Ldind_R8 or Code.Ldind_U1 or Code.Ldind_U2 or Code.Ldind_U4 or Code.Ldind_Ref or
                                 Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
@@ -461,68 +435,13 @@ public partial class ControlFlowGraph
                 }
             }
 
-            // 验证调用指令的可解析性，合法性由mono cecil处理
+            // 前缀与特殊指令约束
             switch (inst.OpCode.Code)
             {
-                case Code.Call or Code.Callvirt or Code.Jmp or Code.Ldftn or Code.Newobj or Code.Ldvirtftn:
-                    {
-                        if (inst.Operand is not MethodReference mf)
-                            throw new InvalidInstructionException(typeof(MethodReference), inst.Operand?.GetType(), inst);
-
-                        if (mf.Resolve() == null)
-                            throw new Exception();
-                        break;
-                    }
-                case Code.Ldfld or Code.Ldflda or Code.Stfld:
-                    {
-                        if (inst.Operand is not FieldReference field)
-                            throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
-                        if (field.Resolve() is not { } fd)
-                            throw new Exception();
-                        if (fd.Attributes.HasFlag(FieldAttributes.Static))
-                            throw new Exception();
-                        break;
-                    }
-                case Code.Ldsflda or Code.Ldsfld or Code.Stsfld:
-                    {
-                        if (inst.Operand is not FieldReference field)
-                            throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
-                        if (field.Resolve() is not { } fd)
-                            throw new Exception();
-                        if (!fd.Attributes.HasFlag(FieldAttributes.Static))
-                            throw new Exception();
-                        break;
-                    }
-                case Code.Ldtoken:
-                    {
-                        if (inst.Operand is not MemberReference member)
-                            throw new InvalidInstructionException(typeof(MemberReference), inst.Operand?.GetType(), inst);
-                        /*
-                        if (member.Resolve() is not { } fd)
-                            throw new Exception();
-                        */
-                        break;
-                    }
-                case Code.Isinst or Code.Newarr or Code.Ldobj or Code.Stobj or Code.Unbox or Code.Unbox_Any or Code.Castclass
-                        or Code.Initobj or Code.Cpobj or Code.Sizeof or Code.Ldelema or Code.Ldelem_Any or Code.Stelem_Any 
-                        or Code.Mkrefany or Code.Refanyval:
-                    {
-                        if (inst.Operand is not TypeReference type)
-                            throw new InvalidInstructionException(typeof(TypeReference), inst.Operand?.GetType(), inst);
-                        while (type is TypeSpecification)
-                        {
-                            type = (type as TypeSpecification)!.ElementType;
-                        }
-                        if (type.Resolve() is not { } fd)
-                            throw new Exception();
-                        break;
-                    }
                 case Code.Tail or Code.Constrained or Code.Volatile or Code.Unaligned or Code.Readonly:
                     {
                         if (prefix != null)
-                        {
                             pPrefix = prefix;
-                        }
                         prefix = inst.OpCode.Code;
                         break;
                     }
@@ -536,45 +455,117 @@ public partial class ControlFlowGraph
                     }
                 case Code.Ret:
                     {
-                        if (regions[instEhRegions[i]].Kind is not HandlerBlock.RegionKind.Normal)
+                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Normal)
                             throw new Exception(); //异常边界内不能有返回
                         break;
                     }
                 case Code.Rethrow:
                     {
-                        if (regions[instEhRegions[i]].Kind is not HandlerBlock.RegionKind.Handler ||
-                            regions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Catch)
+                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
+                            _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Catch)
                             throw new Exception(); //不可rethrow
                         break;
                     }
                 case Code.Endfilter:
                     {
-                        if (regions[instEhRegions[i]].Kind is not HandlerBlock.RegionKind.Handler ||
-                            regions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Filter)
+                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
+                            _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Filter)
                             throw new Exception(); 
                         break;
                     }
                 case Code.Endfinally:
                     {
-                        if (regions[instEhRegions[i]].Kind is not HandlerBlock.RegionKind.Handler ||
-                            regions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Finally)
+                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
+                            _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Finally)
                             throw new Exception(); 
                         break;
                     }
                 case Code.Leave:
                     {
-                        if (regions[instEhRegions[i]].Kind is HandlerBlock.RegionKind.Normal)
+                        if (_ehRegions[instEhRegions[i]].Kind is RegionKind.Normal)
                             throw new Exception(); //不可leave
                         break;
                     }
             }
 
+            // 验证调用指令的可解析性
+            switch (inst.OpCode.OperandType)
+            {
+                case OperandType.InlineMethod:
+                    {
+                        if (inst.Operand is not MethodReference mf)
+                            throw new InvalidInstructionException(typeof(MethodReference), inst.Operand?.GetType(), inst);
+
+                        if (mf.Resolve() == null)
+                            throw new Exception();
+                        break;
+                    }
+                case OperandType.InlineField:
+                    {
+                        
+                        if (inst.Operand is not FieldReference field)
+                            throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
+                        if (field.Resolve() is not { } fd)
+                            throw new Exception();
+                        if (fd.Attributes.HasFlag(FieldAttributes.Static) != (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
+                            throw new Exception();
+                        break;
+                    }
+                case OperandType.InlineTok:
+                    {
+                        if (inst.Operand is not MemberReference member)
+                            throw new InvalidInstructionException(typeof(MemberReference), inst.Operand?.GetType(), inst);
+                        /*
+                        if (member.Resolve() is not { } fd)
+                            throw new Exception();
+                        */
+                        break;
+                    }
+                case OperandType.InlineType:
+                    {
+                        if (inst.Operand is not TypeReference type)
+                            throw new InvalidInstructionException(typeof(TypeReference), inst.Operand?.GetType(), inst);
+                        while (type is TypeSpecification)
+                        {
+                            type = (type as TypeSpecification)!.ElementType;
+                        }
+                        if (type.Resolve() is not { } fd)
+                            throw new Exception();
+                        break;
+                    }
+                case OperandType.InlineVar:
+                    {
+                        if (inst.Operand is not VariableReference re)
+                            throw new InvalidInstructionException(typeof(VariableReference), inst.Operand?.GetType(), inst);
+                        if(re.Index < 0 || re.Index > _method.Body.Variables.Count)
+                            throw new Exception(); //参数越界
+                        break;
+                    }
+                case OperandType.InlineArg:
+                {
+                    if (inst.Operand is not ParameterReference re)
+                        throw new InvalidInstructionException(typeof(ParameterReference), inst.Operand?.GetType(), inst);
+                    if(re.Index < 0 || re.Index > _method.Parameters.Count)
+                        throw new Exception(); //参数越界
+                    break;
+                }
+                default:
+                    //其他非法情况会在Mono.Cecil处报错
+                    break;
+            }
+
         }
+    }
+    
+    private void AddBasicBlock(Instruction leader, ExceptionBlock.Region region)
+    {
+        var block = new BasicBlock(leader, region);
+        _blocks.Add(block);
+        _blockMap.Add(leader, block);
     }
 
     private void ControlFlowPass()
     {
-        var module = _method.Module;
         var buffer = new StackTypeRef[4];
         var funcBuffer = new StackTypeRef?[8];
         var usedBlocks = new HashSet<BasicBlock>(_blocks.Count);
@@ -583,19 +574,36 @@ public partial class ControlFlowGraph
         {
             if (usedBlocks.Contains(block))
                 continue;
-            AnalyzeBlocksWorkflow(block, usedBlocks, buffer, funcBuffer);
+            AnalyzeBlocksControlFlow(block, usedBlocks, buffer, funcBuffer);
         }
     }
 
-    private void AnalyzeBlocksWorkflow(BasicBlock entryBlock, 
+    private void AnalyzeBlocksControlFlow(BasicBlock entryBlock, 
         HashSet<BasicBlock> usedBlocks,  StackTypeRef[] buffer, StackTypeRef?[] funcBuffer)
     {
         var localStack = new Stack<StackTypeRef>(_method.Body.MaxStackSize);
-        List<(BasicBlock block, EvalStackNode node)> bfsBlocks = [(entryBlock, _root)];
+        var entryStackNode = _root;
+        
+        if(entryBlock.Kind is RegionKind.Filter)
+            AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, StackTypeRef.Create(_method.Module.TypeSystem.Object));
+        else if (entryBlock.Kind is RegionKind.Handler)
+            AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, entryBlock.Region.Clause.ExceptionHandler.CatchType);
+        
+        List<(BasicBlock block, EvalStackNode node)> bfsBlocks =
+            [(entryBlock, entryStackNode)];
+
+
         for(int i = 0; i < bfsBlocks.Count; i++)
         {
             var (block, node) = bfsBlocks[i];
             usedBlocks.Add(block);
+            block.EntryNode = node;
+            
+            if (_needInitAnalysis)
+            {
+                //TODO:   
+            }
+            
             var leader = block.Leader;
             StackTypeRef? retType = null;
             for (var inst = leader; inst != null; inst = inst.Next)
@@ -626,7 +634,7 @@ public partial class ControlFlowGraph
 
                 for (int j = 0; j< pop; j++)
                 {
-                    buffer[j] = EvalStackPop(localStack, ref node, inst);
+                    buffer[j] = AnalyzeCF_EvalStackPop(localStack, ref node);
                 }
 
                 switch (inst.OpCode.StackBehaviourPop)
@@ -635,7 +643,7 @@ public partial class ControlFlowGraph
                         break;
 
                     case StackBehaviour.Pop1:
-                        retType = VerifyPop1(inst, buffer);
+                        retType = VerifyPop1(inst, buffer, _needInitAnalysis);
                         break;
 
                     case StackBehaviour.Popi:
@@ -700,7 +708,7 @@ public partial class ControlFlowGraph
                         retType = FillVarPop(inst, ref funcBuffer, out var len);
                         for(int j = len - 1; j >=0; j--)
                         {
-                            var type = EvalStackPop(localStack, ref node, inst);
+                            var type = AnalyzeCF_EvalStackPop(localStack, ref node);
                             VerifyType(type, funcBuffer[j], inst);
                         }
                         break;
@@ -711,25 +719,44 @@ public partial class ControlFlowGraph
 
                 if (retType is null && inst.OpCode.StackBehaviourPush is not StackBehaviour.Push0 and not StackBehaviour.Varpush)
                 {
-                    throw new Exception(); //TODO: 完善故障信息错误报告
+                    throw new Exception();
                 }
            
                 if (inst.OpCode.StackBehaviourPush is StackBehaviour.Push1_push1)
                 {
-                    EvalStackPush(localStack, ref node, retType!);
-                    EvalStackPush(localStack, ref node, retType!);
+                    AnalyzeCF_EvalStackPush(localStack, ref node, retType!);
+                    AnalyzeCF_EvalStackPush(localStack, ref node, retType!);
                 }
                 else
                 {
-                    EvalStackPush(localStack, ref node, retType!);
+                    AnalyzeCF_EvalStackPush(localStack, ref node, retType!);
                 }
                 bool endBlock = false;
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:
+                        if (_regionFrames.TryGetValue(i, out var tuple))
+                        {
+                            switch (tuple.kind)
+                            {
+                                case RegionKind.Handler:
+                                case RegionKind.Filter:
+                                    throw new Exception();  //不允许fall-through
+                                case RegionKind.Try:
+                                    AnalyzeCF_AppendStack(localStack, ref node);
+                                    var tryEntry = _blockMap[inst.Next];
+                                    block.Edges.Add(new ControlFlowEdge(block, tryEntry));
+                                    if (_needInitAnalysis)
+                                    {
+                                        //TODO:
+                                    }
+                                    endBlock = true;
+                                    break;
+                            }
+                        }
                         break;
                     case FlowControl.Branch:
-                        Append(localStack, ref node, inst);
+                        AnalyzeCF_AppendStack(localStack, ref node);
                         foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
                         {
                             var targetBlock = _blockMap[target];
@@ -739,6 +766,7 @@ public partial class ControlFlowGraph
                         endBlock = true;
                         break;
                     case FlowControl.Cond_Branch:
+                        AnalyzeCF_AppendStack(localStack, ref node);
                         foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
                         {
                             var targetBlock = _blockMap[target];
@@ -757,265 +785,94 @@ public partial class ControlFlowGraph
         }
     }
 
-    private StackTypeRef EvalStackPop(Stack<StackTypeRef> localStack, ref EvalStackNode node, Instruction instruction)
+    /// <summary>
+    /// 判断是否已经处理过，处理过则进行合并判别，如果合并后有路径变更则重新计算cf，否则不添加
+    /// </summary>
+    private void AnalyzeCF_AddNextBlock(BasicBlock block,  
+        List<(BasicBlock block, EvalStackNode node)> bfsBlocks,
+        EvalStackNode currentNode,
+        HashSet<BasicBlock> usedBlocks)
+    {
+        if (usedBlocks.Contains(block))
+        {
+            var lastNode = block.EntryNode;
+            var curNode = currentNode;
+            if (curNode.Depth != lastNode.Depth)
+                throw new Exception(); //合流堆栈不平衡
+            List<StackTypeRef> nodes = new List<StackTypeRef>(lastNode.Depth);
+            bool noChanged = true;
+            while (curNode != _root)
+            {
+                if (curNode.Type.CanConvertTo(lastNode.Type))
+                {
+                    nodes.Add(curNode.Type);
+                  
+                }
+                else
+                {
+                    var merged = curNode.Type.Intersect(lastNode.Type);
+                    noChanged = false;
+                    nodes.Add(merged ?? throw new Exception() /*合流类型推断失败*/);
+                }
+                curNode  = curNode.Parent!;
+                lastNode = lastNode.Parent!;
+            }
+            var newNode = curNode;
+            
+            if (!noChanged) //存在堆栈变更
+            {
+                newNode = _root;
+                for (int i = nodes.Count - 1; i >= 0; i--)
+                {
+                    if (_nodeIntern.TryGetValue((nodes[i], newNode), out var child))
+                        newNode = child;
+                    else
+                        newNode = newNode.AppendChild(nodes[i]);
+                }
+            }
+            
+            //TODO：合并initlocals
+
+            if (!noChanged)
+            {
+                block.EntryNode = newNode;
+                bfsBlocks.Add((block, newNode));
+            }
+           
+        }
+        else
+        {
+            bfsBlocks.Add((block, currentNode));
+        }
+    }
+
+    private StackTypeRef AnalyzeCF_EvalStackPop(Stack<StackTypeRef> localStack,
+        ref EvalStackNode node)
     {
         if (localStack.Count != 0)
             return localStack.Pop();
         if (node.Parent?.Type is null)
-            throw new CFGException(CFGExceptionType.StackUnderflow, instruction);
+            throw new Exception();
         node = node.Parent;
         return node.Type;
     }
 
-    private void EvalStackPush(Stack<StackTypeRef> localStack, ref EvalStackNode node, StackTypeRef type)
+    private void AnalyzeCF_EvalStackPush(Stack<StackTypeRef> localStack,
+        ref EvalStackNode node, StackTypeRef type)
     {
         if (_nodeIntern.TryGetValue((type, node), out var child))
+        {
+            node = child;
             return;
+        }
         localStack.Push(type);
     }
 
-    private void Append(Stack<StackTypeRef> localStack, ref EvalStackNode node,
-        Instruction instruction)
+    private void AnalyzeCF_AppendStack(Stack<StackTypeRef> localStack, 
+        ref EvalStackNode node)
     {
         while (localStack.Count != 0)
             node = node.AppendChild(localStack.Pop());
     }
-
-
-    private BasicBlock AddBasicBlock(Instruction leader, TypeReference? catchType)
-    {
-        var block = new BasicBlock(leader, catchType);
-        _blocks.Add(block);
-        _blockMap.Add(leader, block);
-        return block;
-    }
-
-
-    private BasicBlock AddBasicBlock(Instruction leader)
-    {
-        var block = new BasicBlock(leader);
-        _blocks.Add(block);
-        _blockMap.Add(leader, block);
-        return block;
-    }
-
-}
-
-public partial class ControlFlowGraph
-{
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackTypeRef VerifyType(StackTypeRef type1, StackTypeRef? type2, Instruction inst)
-    {
-        throw new NotImplementedException();
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackTypeRef VerifyValueType(StackTypeRef type1, Instruction inst)
-    {
-        throw new NotImplementedException();
-
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackTypeRef VerifyNum(StackTypeRef type1, Instruction inst)
-    {
-        throw new NotImplementedException();
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackTypeRef VerifyInt(StackTypeRef type1, Instruction inst)
-    {
-        throw new NotImplementedException();
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackTypeRef VerifyByRef(StackTypeRef type1, Instruction inst)
-    {
-        throw new NotImplementedException();
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackTypeRef VerifyFloat(StackTypeRef type1, Instruction inst)
-    {
-        throw new NotImplementedException();
-    }
-
-    private StackTypeRef? VerifyPop1(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-            case Code.Box:
-                return VerifyValueType(stacks[0], inst);
-            case Code.Ckfinite:
-                return VerifyType(stacks[0], StackTypeRef.F, inst);
-            case Code.Conv_I1:
-            case Code.Conv_I2:
-            case Code.Conv_I4:
-            case Code.Conv_I8:
-            case Code.Conv_I:
-            case Code.Conv_U1:
-            case Code.Conv_U2:
-            case Code.Conv_U4:
-            case Code.Conv_U8:
-            case Code.Conv_U:
-            case Code.Conv_R4:
-            case Code.Conv_R8:
-            case Code.Conv_R_Un:
-            case Code.Conv_Ovf_I1:
-            case Code.Conv_Ovf_I2:
-            case Code.Conv_Ovf_I4:
-            case Code.Conv_Ovf_I8:
-            case Code.Conv_Ovf_I:
-            case Code.Conv_Ovf_U1:
-            case Code.Conv_Ovf_U2:
-            case Code.Conv_Ovf_U4:
-            case Code.Conv_Ovf_U8:
-            case Code.Conv_Ovf_U:
-            case Code.Conv_Ovf_I1_Un:
-            case Code.Conv_Ovf_I2_Un:
-            case Code.Conv_Ovf_I4_Un:
-            case Code.Conv_Ovf_I8_Un:
-            case Code.Conv_Ovf_I_Un:
-            case Code.Conv_Ovf_U1_Un:
-            case Code.Conv_Ovf_U2_Un:
-            case Code.Conv_Ovf_U4_Un:
-            case Code.Conv_Ovf_U8_Un:
-            case Code.Conv_Ovf_U_Un:
-                return VerifyNum(stacks[0], inst);
-            case Code.Dup:
-                return stacks[0];
-            case Code.Neg:
-                return VerifyNum(stacks[0], inst);
-            case Code.Not:
-                return VerifyInt(stacks[0], inst);
-            case Code.Pop:
-                return null;
-            case Code.Refanytype:
-                return VerifyType(stacks[0], module.TypeSystem.TypedReference, inst);
-            case Code.Refanyval:
-                return VerifyByRef(stacks[0], inst);
-            case Code.Starg:
-                {
-                    if (inst.Operand is not ushort index)
-                        throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
-                    if (index >= _method.Parameters.Count + (_method.HasThis ? 1 : 0))
-                        throw new OperandOutOfRangeException(inst,
-                            $"Method parameters count: {_method.Parameters.Count + (_method.HasThis ? 1 : 0)}");
-                    stacks[0] = (_method.HasThis && index == 0) ? _method.DeclaringType
-                    : _method.Parameters[index - (_method.HasThis ? 1 : 0)].ParameterType;
-                    return null;
-                }
-            case Code.Stloc:
-                {
-                    if (inst.Operand is not ushort index)
-                        throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
-                    if (index >= _method.Body.Variables.Count)
-                        throw new OperandOutOfRangeException(inst,
-                            $"Method local variables count: {_method.Body.Variables.Count}");
-                    stacks[0] = _method.Body.Variables[index].VariableType;
-                    return null;
-                }
-            case Code.Stsfld:
-                {
-                    if (inst.Operand is not FieldReference field)
-                        throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
-                    stacks[0] = field.FieldType;
-                    return null;
-                }
-            default:
-                throw new ArgumentOutOfRangeException(); //TODO:
-        }
-    }
-
-    private StackTypeRef? VerifyPop1_pop1(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-
-        }
-        throw new NotImplementedException();
-    }
-
-    private StackTypeRef? VerifyPopi_pop1(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-
-        }
-        throw new NotImplementedException();
-    }
-
-    private StackTypeRef? VerifyPopref_pop1(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-
-        }
-        throw new NotImplementedException();
-    }
-    private StackTypeRef? VerifyPop3(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-
-        }
-        throw new NotImplementedException();
-    }
-
-    private StackTypeRef? VerifyPopref(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-
-        }
-        throw new NotImplementedException();
-    }
-
-    private StackTypeRef? VerifyPopref_popi(Instruction inst, StackTypeRef[] stacks)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-
-        }
-        throw new NotImplementedException();
-    }
-
-
-    private StackTypeRef? FillVarPop(Instruction inst, ref StackTypeRef?[] args, out int len)
-    {
-        if (inst.Operand is not IMethodSignature sig)
-        {
-            len = 0;
-            return null;
-        }
-        var paramLen = sig.Parameters.Count + (sig.HasThis ? 1 : 0);
-        len = paramLen;
-        if(args.Length < paramLen)
-        {
-            Array.Resize(ref args, paramLen);
-        }
-        int i = 0;
-        if (sig.HasThis)
-        {
-            if (sig is MethodReference methodRef)
-                args[i++] = methodRef.DeclaringType;
-            else
-                args[i++] = null;
-        }
-        foreach(var p in sig.Parameters)
-        {
-            args[i++] = p.ParameterType;
-        }
-        return (sig.ReturnType.Namespace == "System" && sig.ReturnType.Name == "Void") 
-            ? null : StackTypeRef.Create(sig.ReturnType);
-    }
-
+    
 }

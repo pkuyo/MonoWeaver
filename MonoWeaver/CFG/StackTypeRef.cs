@@ -3,6 +3,38 @@ using MonoWeaver.Utils;
 using System;
 namespace MonoWeaver.CFG
 {
+    /// <summary>
+    /// 评估栈DAG图节点
+    /// </summary>
+    public class EvalStackNode
+    {
+        public EvalStackNode(int depth = 0, StackTypeRef? type = null)
+        {
+            Type = type ?? StackTypeRef.Invalid;
+            Depth = depth;
+        }
+
+        public StackTypeRef Type;
+
+        public EvalStackNode? Parent;
+
+        public int Depth;
+
+        public void Disconnect()
+        {
+            Parent = null;
+        }
+
+        public EvalStackNode AppendChild(StackTypeRef type)
+        {
+            var node = new EvalStackNode(Depth + 1, type)
+            {
+                Parent = this
+            };
+            return node;
+        }
+    }
+    
     public enum VerificationType : byte
     {
         Invalid = 0,
