@@ -151,9 +151,9 @@ public partial class ILCfg
 
     private readonly MethodDefinition _method;
 
-    private readonly EvalStackNode _root = new();
+    private readonly EvalStackNode _root = new(StackType.Invalid);
 
-    private readonly Dictionary<(StackTypeRef type, EvalStackNode prev), EvalStackNode> _nodeIntern = new();
+    private readonly Dictionary<(StackType type, EvalStackNode prev), EvalStackNode> _nodeIntern = new();
     private readonly Dictionary<Instruction, BasicBlock> _blockMap = new();
     
     private List<BasicBlock> _blocks = null!;
@@ -566,8 +566,8 @@ public partial class ILCfg
 
     private void ControlFlowPass()
     {
-        var buffer = new StackTypeRef[4];
-        var funcBuffer = new StackTypeRef?[8];
+        var buffer = new StackType[4];
+        var funcBuffer = new StackType[8];
         var usedBlocks = new HashSet<BasicBlock>(_blocks.Count);
         
         foreach (var block in _blocks)
@@ -579,13 +579,13 @@ public partial class ILCfg
     }
 
     private void AnalyzeBlocksControlFlow(BasicBlock entryBlock, 
-        HashSet<BasicBlock> usedBlocks,  StackTypeRef[] buffer, StackTypeRef?[] funcBuffer)
+        HashSet<BasicBlock> usedBlocks,  StackType[] buffer, StackType[] funcBuffer)
     {
-        var localStack = new Stack<StackTypeRef>(_method.Body.MaxStackSize);
+        var localStack = new Stack<StackType>(_method.Body.MaxStackSize);
         var entryStackNode = _root;
         
         if(entryBlock.Kind is RegionKind.Filter)
-            AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, StackTypeRef.Create(_method.Module.TypeSystem.Object));
+            AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, StackType.Create(_method.Module.TypeSystem.Object));
         else if (entryBlock.Kind is RegionKind.Handler)
             AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, entryBlock.Region.Clause.ExceptionHandler.CatchType);
         
@@ -598,14 +598,14 @@ public partial class ILCfg
             var (block, node) = bfsBlocks[i];
             usedBlocks.Add(block);
             block.EntryNode = node;
-            
+           
             if (_needInitAnalysis)
             {
                 //TODO:   
             }
             
             var leader = block.Leader;
-            StackTypeRef? retType = null;
+            StackType retType = StackType.Invalid;
             for (var inst = leader; inst != null; inst = inst.Next)
             {
                 var ts = _method.Module.TypeSystem;
@@ -717,19 +717,19 @@ public partial class ILCfg
                         throw new ArgumentOutOfRangeException();
                 }
 
-                if (retType is null && inst.OpCode.StackBehaviourPush is not StackBehaviour.Push0 and not StackBehaviour.Varpush)
+                if (inst.OpCode.StackBehaviourPush is not StackBehaviour.Push0 and not StackBehaviour.Varpush)
                 {
                     throw new Exception();
                 }
            
                 if (inst.OpCode.StackBehaviourPush is StackBehaviour.Push1_push1)
                 {
-                    AnalyzeCF_EvalStackPush(localStack, ref node, retType!);
-                    AnalyzeCF_EvalStackPush(localStack, ref node, retType!);
+                    AnalyzeCF_EvalStackPush(localStack, ref node, retType);
+                    AnalyzeCF_EvalStackPush(localStack, ref node, retType);
                 }
                 else
                 {
-                    AnalyzeCF_EvalStackPush(localStack, ref node, retType!);
+                    AnalyzeCF_EvalStackPush(localStack, ref node, retType);
                 }
                 bool endBlock = false;
                 switch (inst.OpCode.FlowControl)
@@ -799,11 +799,11 @@ public partial class ILCfg
             var curNode = currentNode;
             if (curNode.Depth != lastNode.Depth)
                 throw new Exception(); //合流堆栈不平衡
-            List<StackTypeRef> nodes = new List<StackTypeRef>(lastNode.Depth);
+            List<StackType> nodes = new List<StackType>(lastNode.Depth);
             bool noChanged = true;
             while (curNode != _root)
             {
-                if (curNode.Type.CanConvertTo(lastNode.Type))
+                if (curNode.Type.StackValueEqualsTo(lastNode.Type))
                 {
                     nodes.Add(curNode.Type);
                   
@@ -811,8 +811,10 @@ public partial class ILCfg
                 else
                 {
                     var merged = curNode.Type.Intersect(lastNode.Type);
+                    if (merged == StackType.Invalid)
+                        throw new Exception(); //合流类型推断失败
                     noChanged = false;
-                    nodes.Add(merged ?? throw new Exception() /*合流类型推断失败*/);
+                    nodes.Add(merged);
                 }
                 curNode  = curNode.Parent!;
                 lastNode = lastNode.Parent!;
@@ -846,7 +848,7 @@ public partial class ILCfg
         }
     }
 
-    private StackTypeRef AnalyzeCF_EvalStackPop(Stack<StackTypeRef> localStack,
+    private StackType AnalyzeCF_EvalStackPop(Stack<StackType> localStack,
         ref EvalStackNode node)
     {
         if (localStack.Count != 0)
@@ -857,8 +859,8 @@ public partial class ILCfg
         return node.Type;
     }
 
-    private void AnalyzeCF_EvalStackPush(Stack<StackTypeRef> localStack,
-        ref EvalStackNode node, StackTypeRef type)
+    private void AnalyzeCF_EvalStackPush(Stack<StackType> localStack,
+        ref EvalStackNode node, StackType type)
     {
         if (_nodeIntern.TryGetValue((type, node), out var child))
         {
@@ -868,7 +870,7 @@ public partial class ILCfg
         localStack.Push(type);
     }
 
-    private void AnalyzeCF_AppendStack(Stack<StackTypeRef> localStack, 
+    private void AnalyzeCF_AppendStack(Stack<StackType> localStack, 
         ref EvalStackNode node)
     {
         while (localStack.Count != 0)

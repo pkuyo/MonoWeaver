@@ -22,7 +22,8 @@ public static partial class CecilHelper
     private static readonly Dictionary<ModuleDefinition, TypeDefinition> _arrayDefs = new();
     private static readonly Dictionary<ModuleDefinition, TypeReference[]> _arrayInfs = new();
 
-    private static readonly LruCache<(TypeSig from, TypeSig to), bool> _assignableCache = new(16384);
+    private static readonly LruCache<(TypeSig from, TypeSig to), bool> _assignableCache = new(8192);
+    private static readonly LruCache<TypeReference, TypeSig> _typeSigCache = new(8192);
     private static readonly LruCache<(int metaToken, Hash128 hash), TypeDefinition> _typeCache = new(8192);
 
     internal static class InterfaceTraversalCache
@@ -100,7 +101,9 @@ public static partial class CecilHelper
 
         public static TypeSig Create(TypeReference t)
         {
-   
+            if (_typeSigCache.TryGetValue(t, out TypeSig typeSig))
+                return typeSig;
+
             if (t is GenericParameter gp)
             {
 
@@ -112,10 +115,12 @@ public static partial class CecilHelper
                     return new TypeSig(ResolveWithCache(mr.DeclaringType)?.Module?.Mvid ?? mr.DeclaringType?.Module?.Mvid ?? Guid.Empty,
                         HashUtils.GetMethodHash(mr), gp.Type, gp.Position);
 
-                return new TypeSig(Guid.Empty, HashUtils.GetTypeHash(gp), gp.Type, gp.Position);
+                typeSig = new TypeSig(Guid.Empty, HashUtils.GetTypeHash(gp), gp.Type, gp.Position);
             }
 
-            return new TypeSig(ResolveWithCache(t)?.Module?.Mvid ?? t.Module?.Mvid ?? Guid.Empty, HashUtils.GetTypeHash(t));
+            typeSig = new TypeSig(ResolveWithCache(t)?.Module?.Mvid ?? t.Module?.Mvid ?? Guid.Empty, HashUtils.GetTypeHash(t));
+            _typeSigCache.Put(t, typeSig);
+            return typeSig;
         }
 
         public bool Equals(TypeSig other)
@@ -228,7 +233,7 @@ public static partial class CecilHelper
         while (true)
         {
             if (a == null && b == null) return null;
-            if (a != null && b != null && a.IsSameType(b)) return a;
+            if (a != null && b != null && a.IsSameWith(b)) return a;
 
             a = a?.BaseType();
             b = b?.BaseType();
@@ -310,7 +315,7 @@ public static partial class CecilHelper
             if (from is ByReferenceType fromRef)
             {
                 if (to is ByReferenceType toRef)
-                    return fromRef.ElementType.IsSameType(toRef.ElementType);
+                    return fromRef.ElementType.IsSameWith(toRef.ElementType);
                 return false;
             }
 
@@ -318,7 +323,7 @@ public static partial class CecilHelper
             if (from is PointerType fromPtr)
             {
                 if (to is PointerType toPtr)
-                    return fromPtr.ElementType.IsSameType(toPtr.ElementType);
+                    return fromPtr.ElementType.IsSameWith(toPtr.ElementType);
                 return false;
             }
 
@@ -335,7 +340,7 @@ public static partial class CecilHelper
             if (to is GenericInstanceType toGi && from is GenericInstanceType fromGi)
             {
                 //处理逆变/协变
-                if (IsSameType(toGi.ElementType, fromGi.ElementType) &&
+                if (IsSameWith(toGi.ElementType, fromGi.ElementType) &&
                     GenericArgsAssignableWithVariance(toGi, fromGi, strict, guard, from.IsArray))
                 {
                     return true;
@@ -347,7 +352,7 @@ public static partial class CecilHelper
             //nullable
             if (toDef?.Name == "Nullable`1" && toDef.Namespace == "System" && to is GenericInstanceType instTo)
             {
-                return IsSameType(instTo.GenericArguments[0], from);
+                return IsSameWith(instTo.GenericArguments[0], from);
             }
 
             //接口
@@ -373,12 +378,12 @@ public static partial class CecilHelper
         foreach (var iface in list)
         {
             var iface2 = iface;
-            if (IsSameType(iface2, toInterface)) return true;
+            if (IsSameWith(iface2, toInterface)) return true;
 
             // 处理逆变/协变
             if (toInterface is GenericInstanceType toGi &&
                 iface2 is GenericInstanceType fromGi &&
-                IsSameType(toGi.ElementType, fromGi.ElementType) &&
+                IsSameWith(toGi.ElementType, fromGi.ElementType) &&
                 GenericArgsAssignableWithVariance(toGi, fromGi, strict, guard, from.IsArray))
             {
                 return true;
@@ -532,14 +537,14 @@ public static partial class CecilHelper
             switch (variance)
             {
                 case GenericParameterAttributes.Covariant: //协变
-                    if ((!DefinitelyRef(tArg) || !DefinitelyRef(sArg)) && !IsSameType(tArg, sArg))
+                    if ((!DefinitelyRef(tArg) || !DefinitelyRef(sArg)) && !IsSameWith(tArg, sArg))
                         return false;
                     if (!IsAssignableFromCore(tArg, sArg, strict, guard))
                         return false;
                     break;
 
                 case GenericParameterAttributes.Contravariant: //逆变
-                    if ((!DefinitelyRef(tArg) || !DefinitelyRef(sArg)) && !IsSameType(tArg, sArg))
+                    if ((!DefinitelyRef(tArg) || !DefinitelyRef(sArg)) && !IsSameWith(tArg, sArg))
                         return false;
                          
                     if (!IsAssignableFromCore(sArg, tArg, strict, guard)) 
@@ -547,7 +552,7 @@ public static partial class CecilHelper
                     break;
 
                 default: // 常规
-                    if (!IsSameType(tArg, sArg)) return false;
+                    if (!IsSameWith(tArg, sArg)) return false;
                     break;
             }
         }
@@ -604,7 +609,7 @@ public static partial class CecilHelper
             {
                 return IsAssignableFromCore(toElem, fromElem, strict, guard);
             }
-            return IsSameType(toElem, fromElem);
+            return IsSameWith(toElem, fromElem);
         }
         return false;
     }
@@ -636,7 +641,7 @@ public static partial class CecilHelper
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsSameType(this TypeReference? a, TypeReference? b)
+    public static bool IsSameWith(this TypeReference? a, TypeReference? b)
     {
         if (b is null || a is null) return false;
         if (ReferenceEquals(a, b))
@@ -666,7 +671,7 @@ public static partial class CecilHelper
 
         if (typeToInflate is GenericParameter gp)
         {
-            if (gp.Owner is TypeReference ownerRef && IsSameType(ownerRef, context.ElementType) &&
+            if (gp.Owner is TypeReference ownerRef && IsSameWith(ownerRef, context.ElementType) &&
                 context.GenericArguments.Count > gp.Position) //来源一致获取泛型参数
             {
                 return context.GenericArguments[gp.Position];
@@ -735,7 +740,7 @@ public static partial class CecilHelper
                 case RequiredModifierType rmt: t = rmt.ElementType; continue;
                 case PinnedType pt: t = pt.ElementType; continue;
                 case SentinelType st: t = st.ElementType; continue;
-                default: return t; //这里不处理byref ptr等在il堆栈内不等价的类型
+                default: return t; //这里不处理byref等在il堆栈内不等价的类型
             }
         }
     }
