@@ -3,6 +3,7 @@ using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using MonoWeaver.Utils;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 
 
@@ -12,9 +13,12 @@ namespace MonoWeaver.CFG;
 [Flags]
 public enum VerifyOptions
 {
-    ExceptionHandler,
-    StackType,
-    LocalInit,
+    ExceptionHandler = 1,
+    Instructions = 1 << 1,
+    LocalInit = 1 << 2,
+    StackBalance = 1 << 3,
+    StackTypes = 1 << 4,
+    ByrefEscape = 1 << 5,
 }
 
 
@@ -78,12 +82,16 @@ public partial class ILCfg
     public sealed class BasicBlock(Instruction start, ExceptionBlock.Region region) : IEquatable<BasicBlock>
     {
         public Instruction Leader  = start;
-        public EvalStackNode EntryNode = null!;
+        public EvalStackNode? EntryNode = null!;
         public List<ControlFlowEdge> Edges = new();
+        public int _entryStackDepth = 0;
 
         public RegionKind Kind = region.Kind;
         public ExceptionBlock.Region Region = region;
-        public ulong[]? initLocals = null; //如果不需要initlocal分析则为null
+
+        public int EntryStackDepth => EntryNode?.Depth ?? _entryStackDepth;
+
+        public BitArray? initLocals = null; //如果不需要initlocal分析则为null
 
         public bool Equals(BasicBlock other)
         {
@@ -161,8 +169,20 @@ public partial class ILCfg
     
     private List<ExceptionBlock> _exceptionBlocks = null!;
     private List<ExceptionBlock.Region> _ehRegions = null!;
-    
+
     private readonly bool _needInitAnalysis;
+
+    private VerifyOptions _verifyOptions;
+
+    public bool VerifyExceptionHandler => _verifyOptions.HasFlag(VerifyOptions.ExceptionHandler);
+
+    public bool VerifyStackType => _verifyOptions.HasFlag(VerifyOptions.StackTypes);
+
+    public bool VerifyStackBalance => _verifyOptions.HasFlag(VerifyOptions.StackBalance);
+
+    public bool VerifyInstructions => _verifyOptions.HasFlag(VerifyOptions.Instructions);
+
+    public bool VerifyLocalInit => _verifyOptions.HasFlag(VerifyOptions.LocalInit) && _needInitAnalysis;
 
 
     public ILCfg(MethodDefinition method)
@@ -182,7 +202,17 @@ public partial class ILCfg
     private void BuildGraph()
     {
         FirstPass();
-        ControlFlowPass();
+        if (VerifyStackBalance)
+        {
+            if (VerifyStackType)
+            {
+                ControlFlowPass();
+            }
+            else
+            {
+                LightControlFlowPass();
+            }
+        }
     }
 
 
@@ -283,7 +313,9 @@ public partial class ILCfg
 
         _regionFrames = new(regionFrameList.Count);
         foreach (var rf in regionFrameList)
+        {
             _regionFrames.Add(rf.index, (rf.kind, rf.type));
+        }
         
         int frameIndex = 0;
         for (int i = 0; i < instEhRegions.Length; i++)
@@ -301,15 +333,15 @@ public partial class ILCfg
             if (hb.HandlerRegion.ParentRegion != null && hb.HandlerRegion.ParentRegion.Clause.Id > hb.Id)
                 throw new Exception(); //不满足父区域必须在前
         }
-        
-        //指令合法性检查
+
+        //添加基本块
         Code? pPrefix = null;
         Code? prefix = null;
         int noCheck = 0;
-        
         if (_method.Body.Instructions.Count > 0)
+        {
             AddBasicBlock(_method.Body.Instructions[0], _ehRegions[instEhRegions[0]]);
-        
+        }
         for (int i = 0; i < _method.Body.Instructions.Count; i++)
         {
             var inst = _method.Body.Instructions[i];
@@ -338,222 +370,230 @@ public partial class ILCfg
                 or FlowControl.Throw)
             {
                 if (inst.Next != null)
-                    AddBasicBlock(inst.Next, _ehRegions[instEhRegions[i+1]]);
+                {
+                    AddBasicBlock(inst.Next, _ehRegions[instEhRegions[i + 1]]);
+                }
             }
 
             // JMP特殊处理
             if (inst.OpCode.Code == Code.Jmp && inst.Next != null)
-                AddBasicBlock(inst.Next, _ehRegions[instEhRegions[i+1]]);
-
-            //处理前缀合法
-            if (prefix != null) 
             {
-                if (inst.OpCode.Code is Code.Constrained or Code.Volatile)
-                {
-                    if (prefix.Value == inst.OpCode.Code)
-                        throw new Exception(); //连续前缀
-                    if (prefix.Value is not Code.Constrained and not Code.Volatile)
-                        throw new Exception(); //非法前缀
-                }
-                else 
-                {
-                    switch (prefix.Value)
-                    {
-                        case Code.Tail:
-                            if (!(inst.OpCode.Code is Code.Call or Code.Callvirt or Code.Calli))
-                                throw new Exception();
-                            if(inst.Next is null || inst.Next.OpCode.FlowControl != FlowControl.Return)
-                                throw new Exception();
-                            break;
-                        case Code.Constrained:
-                            if (inst.OpCode.Code is not Code.Callvirt)
-                                throw new Exception();
-                            break;
-                        case Code.Volatile when pPrefix != Code.Unaligned: 
-                            if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
-                                Code.Ldind_R4 or Code.Ldind_R8 or Code.Ldind_U1 or Code.Ldind_U2 or Code.Ldind_U4 or Code.Ldind_Ref or
-                                Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
-                                Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
-                                Code.Ldfld or Code.Ldsfld or Code.Ldobj or Code.Stfld or Code.Stsfld or Code.Stobj or
-                                Code.Initblk or Code.Cpblk))
-                                throw new Exception();
-                            break;
-                        case Code.Unaligned:
-                        case Code.Volatile: //包含双前缀
-                            if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
-                                Code.Ldind_R4 or Code.Ldind_R8 or Code.Ldind_U1 or Code.Ldind_U2 or Code.Ldind_U4 or Code.Ldind_Ref or
-                                Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
-                                Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
-                                Code.Ldfld or Code.Ldobj or Code.Stfld or Code.Stobj or
-                                Code.Initblk or Code.Cpblk))
-                                throw new Exception();
-                            break;
-                        case Code.Readonly:
-                            if (inst.OpCode.Code is not Code.Ldelema)
-                                throw new Exception();
-                            break;
-                        case Code.No:
-                            if(noCheck == 0)
-                                 throw new Exception();
-                            if((noCheck & 1) != 0)
-                            {
-                                if(inst.OpCode.Code is Code.Castclass or Code.Unbox or Code.Ldelema or Code.Stelem_Any or 
-                                    Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 or Code.Stelem_I8 or Code.Stelem_I or
-                                    Code.Stelem_R4 or Code.Stelem_R8 or Code.Stelem_Ref)
-                                {
-                                    break;
-                                }
-                            }
-                            if((noCheck & 2) != 0)
-                            {
-                                if (inst.OpCode.Code is
-                                    Code.Ldelem_I1 or Code.Ldelem_I2 or Code.Ldelem_I4 or Code.Ldelem_I8 or Code.Ldelem_I or Code.Ldelem_Any or
-                                    Code.Ldelem_R4 or Code.Ldelem_R8 or Code.Ldelem_U1 or Code.Ldelem_U2 or Code.Ldelem_U4 or Code.Ldelem_Ref or
-                                    Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 or Code.Stelem_I8 or Code.Stelem_I or
-                                    Code.Stelem_R4 or Code.Stelem_R8 or Code.Stelem_Any or Code.Stelem_Ref)
-                                {
-                                    break;
-                                }
-                            }
-                            if((noCheck & 4) != 0)
-                            {
-                                if (inst.OpCode.Code is Code.Ldfld or Code.Callvirt or Code.Ldvirtftn or
-                                    Code.Ldelem_I1 or Code.Ldelem_I2 or Code.Ldelem_I4 or Code.Ldelem_I8 or Code.Ldelem_I or Code.Ldelem_Any or
-                                    Code.Ldelem_R4 or Code.Ldelem_R8 or Code.Ldelem_U1 or Code.Ldelem_U2 or Code.Ldelem_U4 or Code.Ldelem_Ref or
-                                    Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 or Code.Stelem_I8 or Code.Stelem_I or
-                                    Code.Stelem_R4 or Code.Stelem_R8 or Code.Stelem_Any or Code.Stelem_Ref)
-                                {
-                                    break;
-                                }
-                            }   
-                            throw new Exception();
-
-                    }
-                    prefix = null;
-                    pPrefix = null;
-                    noCheck = 0;
-                }
+                AddBasicBlock(inst.Next, _ehRegions[instEhRegions[i + 1]]);
             }
 
-            // 前缀与特殊指令约束
-            switch (inst.OpCode.Code)
+            //指令合法性检查
+            if (VerifyInstructions)
             {
-                case Code.Tail or Code.Constrained or Code.Volatile or Code.Unaligned or Code.Readonly:
+                //处理前缀合法
+                if (prefix != null)
+                {
+                    if (inst.OpCode.Code is Code.Constrained or Code.Volatile)
                     {
-                        if (prefix != null)
-                            pPrefix = prefix;
-                        prefix = inst.OpCode.Code;
-                        break;
+                        if (prefix.Value == inst.OpCode.Code)
+                            throw new Exception(); //连续前缀
+                        if (prefix.Value is not Code.Constrained and not Code.Volatile)
+                            throw new Exception(); //非法前缀
                     }
-                case Code.No:
-                     {
-                        prefix = inst.OpCode.Code;
-                        if (inst.Operand is not byte b)
-                            throw new Exception();
-                        noCheck = b;
-                        break;
-                    }
-                case Code.Ret:
+                    else
                     {
-                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Normal)
-                            throw new Exception(); //异常边界内不能有返回
-                        break;
-                    }
-                case Code.Rethrow:
-                    {
-                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
-                            _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Catch)
-                            throw new Exception(); //不可rethrow
-                        break;
-                    }
-                case Code.Endfilter:
-                    {
-                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
-                            _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Filter)
-                            throw new Exception(); 
-                        break;
-                    }
-                case Code.Endfinally:
-                    {
-                        if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
-                            _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Finally)
-                            throw new Exception(); 
-                        break;
-                    }
-                case Code.Leave:
-                    {
-                        if (_ehRegions[instEhRegions[i]].Kind is RegionKind.Normal)
-                            throw new Exception(); //不可leave
-                        break;
-                    }
-            }
-
-            // 验证调用指令的可解析性
-            switch (inst.OpCode.OperandType)
-            {
-                case OperandType.InlineMethod:
-                    {
-                        if (inst.Operand is not MethodReference mf)
-                            throw new InvalidInstructionException(typeof(MethodReference), inst.Operand?.GetType(), inst);
-
-                        if (mf.Resolve() == null)
-                            throw new Exception();
-                        break;
-                    }
-                case OperandType.InlineField:
-                    {
-                        
-                        if (inst.Operand is not FieldReference field)
-                            throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
-                        if (field.Resolve() is not { } fd)
-                            throw new Exception();
-                        if (fd.Attributes.HasFlag(FieldAttributes.Static) != (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
-                            throw new Exception();
-                        break;
-                    }
-                case OperandType.InlineTok:
-                    {
-                        if (inst.Operand is not MemberReference member)
-                            throw new InvalidInstructionException(typeof(MemberReference), inst.Operand?.GetType(), inst);
-                        /*
-                        if (member.Resolve() is not { } fd)
-                            throw new Exception();
-                        */
-                        break;
-                    }
-                case OperandType.InlineType:
-                    {
-                        if (inst.Operand is not TypeReference type)
-                            throw new InvalidInstructionException(typeof(TypeReference), inst.Operand?.GetType(), inst);
-                        while (type is TypeSpecification)
+                        switch (prefix.Value)
                         {
-                            type = (type as TypeSpecification)!.ElementType;
-                        }
-                        if (type.Resolve() is not { } fd)
-                            throw new Exception();
-                        break;
-                    }
-                case OperandType.InlineVar:
-                    {
-                        if (inst.Operand is not VariableReference re)
-                            throw new InvalidInstructionException(typeof(VariableReference), inst.Operand?.GetType(), inst);
-                        if(re.Index < 0 || re.Index > _method.Body.Variables.Count)
-                            throw new Exception(); //参数越界
-                        break;
-                    }
-                case OperandType.InlineArg:
-                {
-                    if (inst.Operand is not ParameterReference re)
-                        throw new InvalidInstructionException(typeof(ParameterReference), inst.Operand?.GetType(), inst);
-                    if(re.Index < 0 || re.Index > _method.Parameters.Count)
-                        throw new Exception(); //参数越界
-                    break;
-                }
-                default:
-                    //其他非法情况会在Mono.Cecil处报错
-                    break;
-            }
+                            case Code.Tail:
+                                if (!(inst.OpCode.Code is Code.Call or Code.Callvirt or Code.Calli))
+                                    throw new Exception();
+                                if (inst.Next is null || inst.Next.OpCode.FlowControl != FlowControl.Return)
+                                    throw new Exception();
+                                break;
+                            case Code.Constrained:
+                                if (inst.OpCode.Code is not Code.Callvirt)
+                                    throw new Exception();
+                                break;
+                            case Code.Volatile when pPrefix != Code.Unaligned:
+                                if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
+                                    Code.Ldind_R4 or Code.Ldind_R8 or Code.Ldind_U1 or Code.Ldind_U2 or Code.Ldind_U4 or Code.Ldind_Ref or
+                                    Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
+                                    Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
+                                    Code.Ldfld or Code.Ldsfld or Code.Ldobj or Code.Stfld or Code.Stsfld or Code.Stobj or
+                                    Code.Initblk or Code.Cpblk))
+                                    throw new Exception();
+                                break;
+                            case Code.Unaligned:
+                            case Code.Volatile: //包含双前缀
+                                if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
+                                    Code.Ldind_R4 or Code.Ldind_R8 or Code.Ldind_U1 or Code.Ldind_U2 or Code.Ldind_U4 or Code.Ldind_Ref or
+                                    Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
+                                    Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
+                                    Code.Ldfld or Code.Ldobj or Code.Stfld or Code.Stobj or
+                                    Code.Initblk or Code.Cpblk))
+                                    throw new Exception();
+                                break;
+                            case Code.Readonly:
+                                if (inst.OpCode.Code is not Code.Ldelema)
+                                    throw new Exception();
+                                break;
+                            case Code.No:
+                                if (noCheck == 0)
+                                    throw new Exception();
+                                if ((noCheck & 1) != 0)
+                                {
+                                    if (inst.OpCode.Code is Code.Castclass or Code.Unbox or Code.Ldelema or Code.Stelem_Any or
+                                        Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 or Code.Stelem_I8 or Code.Stelem_I or
+                                        Code.Stelem_R4 or Code.Stelem_R8 or Code.Stelem_Ref)
+                                    {
+                                        break;
+                                    }
+                                }
+                                if ((noCheck & 2) != 0)
+                                {
+                                    if (inst.OpCode.Code is
+                                        Code.Ldelem_I1 or Code.Ldelem_I2 or Code.Ldelem_I4 or Code.Ldelem_I8 or Code.Ldelem_I or Code.Ldelem_Any or
+                                        Code.Ldelem_R4 or Code.Ldelem_R8 or Code.Ldelem_U1 or Code.Ldelem_U2 or Code.Ldelem_U4 or Code.Ldelem_Ref or
+                                        Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 or Code.Stelem_I8 or Code.Stelem_I or
+                                        Code.Stelem_R4 or Code.Stelem_R8 or Code.Stelem_Any or Code.Stelem_Ref)
+                                    {
+                                        break;
+                                    }
+                                }
+                                if ((noCheck & 4) != 0)
+                                {
+                                    if (inst.OpCode.Code is Code.Ldfld or Code.Callvirt or Code.Ldvirtftn or
+                                        Code.Ldelem_I1 or Code.Ldelem_I2 or Code.Ldelem_I4 or Code.Ldelem_I8 or Code.Ldelem_I or Code.Ldelem_Any or
+                                        Code.Ldelem_R4 or Code.Ldelem_R8 or Code.Ldelem_U1 or Code.Ldelem_U2 or Code.Ldelem_U4 or Code.Ldelem_Ref or
+                                        Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 or Code.Stelem_I8 or Code.Stelem_I or
+                                        Code.Stelem_R4 or Code.Stelem_R8 or Code.Stelem_Any or Code.Stelem_Ref)
+                                    {
+                                        break;
+                                    }
+                                }
+                                throw new Exception();
 
+                        }
+                        prefix = null;
+                        pPrefix = null;
+                        noCheck = 0;
+                    }
+                }
+
+                // 前缀与特殊指令约束
+                switch (inst.OpCode.Code)
+                {
+                    case Code.Tail or Code.Constrained or Code.Volatile or Code.Unaligned or Code.Readonly:
+                        {
+                            if (prefix != null)
+                                pPrefix = prefix;
+                            prefix = inst.OpCode.Code;
+                            break;
+                        }
+                    case Code.No:
+                        {
+                            prefix = inst.OpCode.Code;
+                            if (inst.Operand is not byte b)
+                                throw new Exception();
+                            noCheck = b;
+                            break;
+                        }
+                    case Code.Ret:
+                        {
+                            if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Normal)
+                                throw new Exception(); //异常边界内不能有返回
+                            break;
+                        }
+                    case Code.Rethrow:
+                        {
+                            if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Catch)
+                                throw new Exception(); //不可rethrow
+                            break;
+                        }
+                    case Code.Endfilter:
+                        {
+                            if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Filter)
+                                throw new Exception();
+                            break;
+                        }
+                    case Code.Endfinally:
+                        {
+                            if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Finally)
+                                throw new Exception();
+                            break;
+                        }
+                    case Code.Leave:
+                        {
+                            if (_ehRegions[instEhRegions[i]].Kind is RegionKind.Normal)
+                                throw new Exception(); //不可leave
+                            break;
+                        }
+                }
+
+                // 验证调用指令的可解析性
+                switch (inst.OpCode.OperandType)
+                {
+                    case OperandType.InlineMethod:
+                        {
+                            if (inst.Operand is not MethodReference mf)
+                                throw new InvalidInstructionException(typeof(MethodReference), inst.Operand?.GetType(), inst);
+
+                            if (mf.Resolve() == null)
+                                throw new Exception();
+                            break;
+                        }
+                    case OperandType.InlineField:
+                        {
+
+                            if (inst.Operand is not FieldReference field)
+                                throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
+                            if (field.Resolve() is not { } fd)
+                                throw new Exception();
+                            if (fd.Attributes.HasFlag(FieldAttributes.Static) != (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
+                                throw new Exception();
+                            break;
+                        }
+                    case OperandType.InlineTok:
+                        {
+                            if (inst.Operand is not MemberReference member)
+                                throw new InvalidInstructionException(typeof(MemberReference), inst.Operand?.GetType(), inst);
+                            /*
+                            if (member.Resolve() is not { } fd)
+                                throw new Exception();
+                            */
+                            break;
+                        }
+                    case OperandType.InlineType:
+                        {
+                            if (inst.Operand is not TypeReference type)
+                                throw new InvalidInstructionException(typeof(TypeReference), inst.Operand?.GetType(), inst);
+                            while (type is TypeSpecification)
+                            {
+                                type = (type as TypeSpecification)!.ElementType;
+                            }
+                            if (type.Resolve() is not { } fd)
+                                throw new Exception();
+                            break;
+                        }
+                    case OperandType.InlineVar:
+                        {
+                            if (inst.Operand is not VariableReference re)
+                                throw new InvalidInstructionException(typeof(VariableReference), inst.Operand?.GetType(), inst);
+                            if (re.Index < 0 || re.Index > _method.Body.Variables.Count)
+                                throw new Exception(); //参数越界
+                            break;
+                        }
+                    case OperandType.InlineArg:
+                        {
+                            if (inst.Operand is not ParameterReference re)
+                                throw new InvalidInstructionException(typeof(ParameterReference), inst.Operand?.GetType(), inst);
+                            if (re.Index < 0 || re.Index > _method.Parameters.Count)
+                                throw new Exception(); //参数越界
+                            break;
+                        }
+                    default:
+                        //其他非法情况会在Mono.Cecil处报错
+                        break;
+                }
+
+            }
         }
     }
     
@@ -564,6 +604,129 @@ public partial class ILCfg
         _blockMap.Add(leader, block);
     }
 
+    private void LightControlFlowPass()
+    {
+        var usedBlocks = new HashSet<BasicBlock>(_blocks.Count);
+
+        foreach (var block in _blocks)
+        {
+            if (usedBlocks.Contains(block))  continue;
+            LightAnalyzeBlocksControlFlow(block, usedBlocks);
+        }
+    }
+
+    private void LightAnalyzeBlocksControlFlow(BasicBlock entryBlock, HashSet<BasicBlock> usedBlocks)
+    {
+        int entryHeight = 0;
+        if (entryBlock.Kind is RegionKind.Filter ||
+            (entryBlock.Kind is RegionKind.Handler && entryBlock.Region.Clause.ExceptionHandler.CatchType is not null)) //对于filter和handler插入异常对象
+        {
+            entryHeight = 1;
+        }
+        List<(BasicBlock block, int initStackHeight)> bfsBlocks =
+            [(entryBlock, entryHeight)];
+        for (int i = 0; i < bfsBlocks.Count; i++)
+        {
+            var (block, stackHeight) = bfsBlocks[i];
+            if(VerifyLocalInit)
+            {
+                block.initLocals = new BitArray(_method.Body.Variables.Count);
+            }
+            usedBlocks.Add(block);
+            var leader = block.Leader;
+            for (var inst = leader; inst != null; inst = inst.Next)
+            {
+                var ts = _method.Module.TypeSystem;
+                if (inst.OpCode.StackBehaviourPop == StackBehaviour.PopAll)
+                {
+                    stackHeight = 0;
+                }
+                var pop = inst.OpCode.StackBehaviourPop switch
+                {
+                    StackBehaviour.Pop0 => 0,
+                    StackBehaviour.Pop1 or StackBehaviour.Popi or StackBehaviour.Popref => 1,
+                    StackBehaviour.Popi_popi or StackBehaviour.Popi_popi8 or
+                        StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
+                        StackBehaviour.Popref_popi or StackBehaviour.Popi_pop1 or
+                        StackBehaviour.Popref_pop1 or StackBehaviour.Pop1_pop1 => 2,
+                    StackBehaviour.Popref_popi_popi or
+                        StackBehaviour.Popref_popi_popi8 or
+                        StackBehaviour.Popref_popi_popr4 or
+                        StackBehaviour.Popref_popi_popr8 or
+                        StackBehaviour.Popref_popi_popref => 3,
+                    StackBehaviour.Varpop => VarPopCount(inst),
+                    _ => throw new ArgumentOutOfRangeException()
+                };
+                stackHeight -= pop;
+                if (stackHeight < 0)
+                {
+                    throw new Exception(); //下溢
+                }
+                var push = inst.OpCode.StackBehaviourPush switch
+                {
+                    StackBehaviour.Push0 => 0,
+                    StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushref or StackBehaviour.Pushr8 => 1,
+                    StackBehaviour.Push1_push1 => 2,
+                    StackBehaviour.Varpush => VarPushCount(inst),
+                    _ => throw new ArgumentOutOfRangeException()
+                };
+                stackHeight += push;
+                if (stackHeight > _method.Body.MaxStackSize)
+                {
+                    throw new Exception(); //上溢
+                }
+                if (VerifyLocalInit)
+                {
+                    AnalyzeCF_CalcInitLocal(inst, block.initLocals!);
+                }
+
+                bool endBlock = false;
+                switch (inst.OpCode.FlowControl)
+                {
+                    case FlowControl.Next:
+                        if (_regionFrames.TryGetValue(i, out var tuple))
+                        {
+                            switch (tuple.kind)
+                            {
+                                case RegionKind.Handler:
+                                case RegionKind.Filter:
+                                    throw new Exception();  //不允许fall-through
+                                case RegionKind.Try:
+                                    var tryEntry = _blockMap[inst.Next];
+                                    block.Edges.Add(new ControlFlowEdge(block, tryEntry));
+                                    endBlock = true;
+                                    break;
+                            }
+                        }
+                        break;
+                    case FlowControl.Branch:
+                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        {
+                            var targetBlock = _blockMap[target];
+                            bfsBlocks.Add((targetBlock, stackHeight));
+                            block.Edges.Add(new ControlFlowEdge(block, targetBlock));
+                        }
+                        endBlock = true;
+                        break;
+                    case FlowControl.Cond_Branch:
+                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        {
+                            var targetBlock = _blockMap[target];
+                            bfsBlocks.Add((targetBlock, stackHeight));
+                            block.Edges.Add(new ControlFlowEdge(block, targetBlock));
+                        }
+                        var next = _blockMap[inst.Next];
+                        bfsBlocks.Add((next, stackHeight));
+                        block.Edges.Add(new ControlFlowEdge(block, next));
+                        endBlock = true;
+                        break;
+                }
+                if (endBlock)
+                    break;
+            }
+        }
+    }
+
     private void ControlFlowPass()
     {
         var buffer = new StackType[4];
@@ -572,8 +735,7 @@ public partial class ILCfg
         
         foreach (var block in _blocks)
         {
-            if (usedBlocks.Contains(block))
-                continue;
+            if (usedBlocks.Contains(block)) continue;
             AnalyzeBlocksControlFlow(block, usedBlocks, buffer, funcBuffer);
         }
     }
@@ -583,11 +745,15 @@ public partial class ILCfg
     {
         var localStack = new Stack<StackType>(_method.Body.MaxStackSize);
         var entryStackNode = _root;
-        
-        if(entryBlock.Kind is RegionKind.Filter)
+
+        if (entryBlock.Kind is RegionKind.Filter) //对于filter和handler插入异常对象
+        {
             AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, StackType.Create(_method.Module.TypeSystem.Object));
-        else if (entryBlock.Kind is RegionKind.Handler)
+        }
+        else if (entryBlock.Kind is RegionKind.Handler && entryBlock.Region.Clause.ExceptionHandler.CatchType is not null)
+        {
             AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, entryBlock.Region.Clause.ExceptionHandler.CatchType);
+        }
         
         List<(BasicBlock block, EvalStackNode node)> bfsBlocks =
             [(entryBlock, entryStackNode)];
@@ -599,11 +765,6 @@ public partial class ILCfg
             usedBlocks.Add(block);
             block.EntryNode = node;
            
-            if (_needInitAnalysis)
-            {
-                //TODO:   
-            }
-            
             var leader = block.Leader;
             StackType retType = StackType.Invalid;
             for (var inst = leader; inst != null; inst = inst.Next)
@@ -643,7 +804,7 @@ public partial class ILCfg
                         break;
 
                     case StackBehaviour.Pop1:
-                        retType = VerifyPop1(inst, buffer, _needInitAnalysis);
+                        retType = VerifyPop1(inst, buffer);
                         break;
 
                     case StackBehaviour.Popi:
@@ -705,7 +866,7 @@ public partial class ILCfg
                         break;
 
                     case StackBehaviour.Varpop:
-                        retType = FillVarPop(inst, ref funcBuffer, out var len);
+                        retType = VerifyVarPop(inst, ref funcBuffer, out var len);
                         for(int j = len - 1; j >=0; j--)
                         {
                             var type = AnalyzeCF_EvalStackPop(localStack, ref node);
@@ -731,6 +892,11 @@ public partial class ILCfg
                 {
                     AnalyzeCF_EvalStackPush(localStack, ref node, retType);
                 }
+                if (VerifyLocalInit)
+                {
+                    AnalyzeCF_CalcInitLocal(inst, block.initLocals!);
+                }
+
                 bool endBlock = false;
                 switch (inst.OpCode.FlowControl)
                 {
@@ -744,12 +910,9 @@ public partial class ILCfg
                                     throw new Exception();  //不允许fall-through
                                 case RegionKind.Try:
                                     AnalyzeCF_AppendStack(localStack, ref node);
-                                    var tryEntry = _blockMap[inst.Next];
-                                    block.Edges.Add(new ControlFlowEdge(block, tryEntry));
-                                    if (_needInitAnalysis)
-                                    {
-                                        //TODO:
-                                    }
+                                    var targetBlock = _blockMap[inst.Next];
+                                    block.Edges.Add(new ControlFlowEdge(block, targetBlock));
+                                    AnalyzeCF_AddNextBlock(targetBlock, bfsBlocks, node, usedBlocks);
                                     endBlock = true;
                                     break;
                             }
@@ -760,7 +923,7 @@ public partial class ILCfg
                         foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
                         {
                             var targetBlock = _blockMap[target];
-                            bfsBlocks.Add((targetBlock, node));
+                            AnalyzeCF_AddNextBlock(targetBlock, bfsBlocks, node, usedBlocks);
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }
                         endBlock = true;
@@ -770,11 +933,11 @@ public partial class ILCfg
                         foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
                         {
                             var targetBlock = _blockMap[target];
-                            bfsBlocks.Add((targetBlock, node));
+                            AnalyzeCF_AddNextBlock(targetBlock, bfsBlocks, node, usedBlocks);
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }
                         var next = _blockMap[inst.Next];
-                        bfsBlocks.Add((next, node));
+                        AnalyzeCF_AddNextBlock(next, bfsBlocks, node, usedBlocks);
                         block.Edges.Add(new ControlFlowEdge(block, next));
                         endBlock = true;    
                         break;
@@ -782,6 +945,21 @@ public partial class ILCfg
                 if (endBlock)
                     break;
             }
+        }
+    }
+
+    //校验local是否被初始化，进入该函数需确保VerifyInitLocal为true
+    private void AnalyzeCF_CalcInitLocal(Instruction inst, BitArray array)
+    {
+        if (inst.OpCode.Code is Code.Stloc)
+        {
+            array[((VariableDefinition)(inst.Operand)).Index] = true;
+        }
+
+        if (inst.OpCode.Code is Code.Ldloc or Code.Ldloca && !array[((VariableDefinition)(inst.Operand)).Index])
+        {
+            //TODO:给出报警
+            //Ldlocda进行最保守估计，不追踪
         }
     }
 
@@ -797,7 +975,7 @@ public partial class ILCfg
         {
             var lastNode = block.EntryNode;
             var curNode = currentNode;
-            if (curNode.Depth != lastNode.Depth)
+            if (curNode.Depth != lastNode!.Depth) //启用检测堆栈类型则EntryNode一定不为null
                 throw new Exception(); //合流堆栈不平衡
             List<StackType> nodes = new List<StackType>(lastNode.Depth);
             bool noChanged = true;

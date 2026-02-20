@@ -1,13 +1,32 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using Mono.Cecil;
+﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Runtime.CompilerServices;
 
 namespace MonoWeaver.CFG;
 
 public partial class ILCfg
 {
+    private int VarPopCount(Instruction inst)
+    {
+        if (inst.Operand is not IMethodSignature sig)
+        {
+            throw new Exception();
+        }
+        return sig.Parameters.Count + (sig.HasThis ? 1 : 0); ;
+    }
+
+    private int VarPushCount(Instruction inst)
+    {
+        if (inst.Operand is not IMethodSignature sig)
+        {
+            throw new Exception();
+        }
+        return (sig.ReturnType.Name == "Void" && sig.ReturnType.Namespace == "System") ? 0 : 1;
+    }
+
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private StackType VerifyType(StackType type1, StackType? type2, Instruction inst)
@@ -46,7 +65,7 @@ public partial class ILCfg
         throw new NotImplementedException();
     }
 
-    private StackType VerifyPop1(Instruction inst, StackType[] stacks, bool initAnalysis)
+    private StackType VerifyPop1(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
         switch (inst.OpCode.Code)
@@ -117,10 +136,6 @@ public partial class ILCfg
                     if (inst.Operand is not VariableReference reference)
                         throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
                     VerifyType(stacks[0], reference.VariableType, inst);
-                    if (initAnalysis)
-                    {
-                        //TODO:
-                    }
                     return StackType.Invalid;
                 }
             case Code.Stsfld:
@@ -194,13 +209,13 @@ public partial class ILCfg
         throw new NotImplementedException();
     }
 
+  
 
-    private StackType FillVarPop(Instruction inst, ref StackType[] args, out int len)
+    private StackType VerifyVarPop(Instruction inst, ref StackType[] args, out int len)
     {
         if (inst.Operand is not IMethodSignature sig)
         {
-            len = 0;
-            return StackType.Invalid;
+            throw new Exception();
         }
         var paramLen = sig.Parameters.Count + (sig.HasThis ? 1 : 0);
         len = paramLen;
@@ -214,7 +229,7 @@ public partial class ILCfg
             if (sig is MethodReference methodRef)
                 args[i++] = methodRef.DeclaringType;
             else
-                args[i++] = null;
+                args[i++] = StackType.Invalid;
         }
         foreach(var p in sig.Parameters)
         {
