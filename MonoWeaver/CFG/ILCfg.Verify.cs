@@ -9,6 +9,15 @@ namespace MonoWeaver.CFG;
 
 public partial class ILCfg
 {
+
+    private IMemberDefinition? ResolveWithDiagnostic(MemberReference memberReference)
+    {
+        if (memberReference.Resolve() is { } re)
+            return re;
+        ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference));
+        return null;
+    }
+    
     private int VarPopCount(Instruction inst)
     {
         if (inst.Operand is not IMethodSignature sig)
@@ -122,11 +131,19 @@ public partial class ILCfg
                 return VerifyByRef(stacks[0], inst);
             case Code.Starg:
                 {
-                    if (inst.Operand is not ushort index)
-                        throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
+                    if (inst.Operand is not ParameterReference pr)
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(ParameterReference),
+                            inst.Operand?.GetType() ?? typeof(void), inst));
+                        return StackType.Invalid;
+                    }
+
+                    var index = pr.Index;
                     if (index >= _method.Parameters.Count + (_method.HasThis ? 1 : 0))
-                        throw new OperandOutOfRangeException(inst,
-                            $"Method parameters count: {_method.Parameters.Count + (_method.HasThis ? 1 : 0)}");
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+                    }
+
                     VerifyType(stacks[0], (_method.HasThis && index == 0) ? _method.DeclaringType
                     : _method.Parameters[index - (_method.HasThis ? 1 : 0)].ParameterType, inst);
                     return StackType.Invalid; 
@@ -134,14 +151,22 @@ public partial class ILCfg
             case Code.Stloc:
                 {
                     if (inst.Operand is not VariableReference reference)
-                        throw new InvalidInstructionException(typeof(ushort), inst.Operand?.GetType(), inst);
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(VariableReference),
+                            inst.Operand?.GetType() ?? typeof(void), inst));
+                        return StackType.Invalid;
+                    }
                     VerifyType(stacks[0], reference.VariableType, inst);
                     return StackType.Invalid;
                 }
             case Code.Stsfld:
                 {
                     if (inst.Operand is not FieldReference field)
-                        throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(FieldReference),
+                            inst.Operand?.GetType() ?? typeof(void), inst));
+                        return StackType.Invalid;
+                    }
                     stacks[0] = field.FieldType;
                     return StackType.Invalid;
                 }

@@ -13,7 +13,6 @@ namespace MonoWeaver.CFG;
 [Flags]
 public enum VerifyOptions
 {
-    ExceptionHandler = 1,
     Instructions = 1 << 1,
     LocalInit = 1 << 2,
     StackBalance = 1 << 3,
@@ -22,8 +21,6 @@ public enum VerifyOptions
 }
 
 
-
-//TODO: throw new Exception();相关后续需要调整 改为记录错误信息并给据故障等级判断是否中止分析
 
 /// <summary>
 /// EH段
@@ -172,9 +169,9 @@ public partial class ILCfg
 
     private readonly bool _needInitAnalysis;
 
-    private VerifyOptions _verifyOptions;
+    private readonly VerifyOptions _verifyOptions;
 
-    public bool VerifyExceptionHandler => _verifyOptions.HasFlag(VerifyOptions.ExceptionHandler);
+    private bool _abortVerification;
 
     public bool VerifyStackType => _verifyOptions.HasFlag(VerifyOptions.StackTypes);
 
@@ -231,7 +228,14 @@ public partial class ILCfg
 
         for(int i = 0; i < _method.Body.Instructions.Count; i++)
         {
-            instDictionary.Add(_method.Body.Instructions[i], i);
+            if (_method.Body.Instructions[i] is null)
+            {
+                ReportDiagnostic(CFGDiagnostic.NullInstruction(i));
+            }
+            else
+            {
+                instDictionary.Add(_method.Body.Instructions[i], i);
+            }
         }
 
 
@@ -248,7 +252,14 @@ public partial class ILCfg
                 if(hb!.FilterRegion is not null)
                     _ehRegions.Add(hb!.FilterRegion);
             }
+            else
+            {
+                ReportDiagnostic(CFGDiagnostic.EhHandlerInvalid(eh)); //eh段有错误
+            }
         }
+        
+        if (_abortVerification)
+            return;
 
         _ehRegions.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start)
                                          : b.End.CompareTo(a.End));
@@ -290,16 +301,25 @@ public partial class ILCfg
                     var top = stack.Peek();
 
                     // 交错的
-                    if (r.End > top.End) throw new Exception();
+                    if (r.End > top.End)
+                    {
+                        ReportDiagnostic(CFGDiagnostic.EhRegionInvalid(CFGExceptionType.EhRegionOverlap, r, top)); 
+                    }
 
                     // 重复区域仅能为Try块
                     if (r.Start == top.Start && r.End == top.End &&
                         !(r.Kind == RegionKind.Try && top.Kind == RegionKind.Try))
-                        throw new Exception();
+                    {
+                        ReportDiagnostic(CFGDiagnostic.EhRegionInvalid(CFGExceptionType.EhRegionNonTryDuplication, 
+                            r, top)); 
+                    }
 
                     // filter块内不能嵌套
                     if (top.Kind == RegionKind.Filter && top.Clause != r.Clause)
-                        throw new Exception();
+                    {
+                        ReportDiagnostic(CFGDiagnostic.EhRegionInvalid(CFGExceptionType.EhNestedInFilter, 
+                            r, top)); 
+                    }
 
                     r.ParentRegion = (r.Start == top.Start && r.End == top.End) ? null : top;
                 }
@@ -311,6 +331,9 @@ public partial class ILCfg
             }
         }
 
+        if (_abortVerification)
+            return;
+        
         _regionFrames = new(regionFrameList.Count);
         foreach (var rf in regionFrameList)
         {
@@ -329,10 +352,22 @@ public partial class ILCfg
         {
             if (hb.HandlerRegion.ParentRegion != hb.ProtectedRegion.ParentRegion ||
                 (hb.FilterRegion != null && hb.FilterRegion.ParentRegion == hb.ProtectedRegion.ParentRegion))
-                throw new Exception(); //不满足嵌套均在一个区间
+            {
+                //不满足嵌套均在一个区间
+                ReportDiagnostic(CFGDiagnostic.EhRegionInvalid(CFGExceptionType.TryAndHandlerNotInSameEnclosingRegion, 
+                    hb.ProtectedRegion, hb.HandlerRegion)); 
+            }
+
             if (hb.HandlerRegion.ParentRegion != null && hb.HandlerRegion.ParentRegion.Clause.Id > hb.Id)
-                throw new Exception(); //不满足父区域必须在前
+            {
+                //不满足父区域必须在前
+                ReportDiagnostic(CFGDiagnostic.EhRegionInvalid(CFGExceptionType.InvalidEhTableOrdering, 
+                    hb.ProtectedRegion, hb.HandlerRegion)); 
+            }
         }
+        
+        if (_abortVerification)
+            return;
 
         //添加基本块
         Code? pPrefix = null;
@@ -345,7 +380,6 @@ public partial class ILCfg
         for (int i = 0; i < _method.Body.Instructions.Count; i++)
         {
             var inst = _method.Body.Instructions[i];
-            if (inst is null) throw new Exception();
             /*
             if (inst.OpCode.FlowControl is FlowControl.Phi)
                 AddBasicBlock(inst);
@@ -389,24 +423,39 @@ public partial class ILCfg
                 {
                     if (inst.OpCode.Code is Code.Constrained or Code.Volatile)
                     {
-                        if (prefix.Value == inst.OpCode.Code)
-                            throw new Exception(); //连续前缀
-                        if (prefix.Value is not Code.Constrained and not Code.Volatile)
-                            throw new Exception(); //非法前缀
+
+
+                        if (prefix.Value == inst.OpCode.Code ||
+                            (prefix.Value is not Code.Constrained and not Code.Volatile))
+                        {
+                            //非法前缀
+                            ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                inst, prefix.Value));
+                        }
                     }
                     else
                     {
                         switch (prefix.Value)
                         {
                             case Code.Tail:
-                                if (!(inst.OpCode.Code is Code.Call or Code.Callvirt or Code.Calli))
-                                    throw new Exception();
+                                if (inst.OpCode.Code is not (Code.Call or Code.Callvirt or Code.Calli))
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                        inst, prefix.Value));
+                                }
+
                                 if (inst.Next is null || inst.Next.OpCode.FlowControl != FlowControl.Return)
-                                    throw new Exception();
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                        inst, prefix.Value));
+                                }
                                 break;
                             case Code.Constrained:
                                 if (inst.OpCode.Code is not Code.Callvirt)
-                                    throw new Exception();
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                        inst, prefix.Value));
+                                }
                                 break;
                             case Code.Volatile when pPrefix != Code.Unaligned:
                                 if (!(inst.OpCode.Code is Code.Ldind_I1 or Code.Ldind_I2 or Code.Ldind_I4 or Code.Ldind_I8 or Code.Ldind_I or
@@ -415,7 +464,10 @@ public partial class ILCfg
                                     Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
                                     Code.Ldfld or Code.Ldsfld or Code.Ldobj or Code.Stfld or Code.Stsfld or Code.Stobj or
                                     Code.Initblk or Code.Cpblk))
-                                    throw new Exception();
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                        inst, prefix.Value));
+                                }
                                 break;
                             case Code.Unaligned:
                             case Code.Volatile: //包含双前缀
@@ -425,15 +477,19 @@ public partial class ILCfg
                                     Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
                                     Code.Ldfld or Code.Ldobj or Code.Stfld or Code.Stobj or
                                     Code.Initblk or Code.Cpblk))
-                                    throw new Exception();
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                        inst, prefix.Value));
+                                }
                                 break;
                             case Code.Readonly:
                                 if (inst.OpCode.Code is not Code.Ldelema)
-                                    throw new Exception();
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                        inst, prefix.Value));
+                                }
                                 break;
                             case Code.No:
-                                if (noCheck == 0)
-                                    throw new Exception();
                                 if ((noCheck & 1) != 0)
                                 {
                                     if (inst.OpCode.Code is Code.Castclass or Code.Unbox or Code.Ldelema or Code.Stelem_Any or
@@ -465,8 +521,9 @@ public partial class ILCfg
                                         break;
                                     }
                                 }
-                                throw new Exception();
-
+                                ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                                    inst, prefix.Value));
+                                break;
                         }
                         prefix = null;
                         pPrefix = null;
@@ -495,97 +552,152 @@ public partial class ILCfg
                     case Code.Ret:
                         {
                             if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Normal)
-                                throw new Exception(); //异常边界内不能有返回
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
+                                    inst, DiagnosticSeverity.Error, "Invalid 'ret' inside EH block."));
+                            }
                             break;
                         }
                     case Code.Rethrow:
                         {
                             if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
-                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Catch)
-                                throw new Exception(); //不可rethrow
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
+                                    .Catch)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
+                                    inst, DiagnosticSeverity.Error, "Invalid 'rethrow' outside EH region."));
+                                //不可rethrow
+                            }
+
                             break;
                         }
                     case Code.Endfilter:
                         {
                             if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
-                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Filter)
-                                throw new Exception();
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
+                                    .Filter)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
+                                    inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside filter region."));
+                            }
                             break;
                         }
                     case Code.Endfinally:
                         {
                             if (_ehRegions[instEhRegions[i]].Kind is not RegionKind.Handler ||
-                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType.Finally)
-                                throw new Exception();
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
+                                    .Finally)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
+                                    inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside finally region."));
+                            }
                             break;
                         }
                     case Code.Leave:
                         {
-                            if (_ehRegions[instEhRegions[i]].Kind is RegionKind.Normal)
-                                throw new Exception(); //不可leave
+                            if (_ehRegions[instEhRegions[i]].Kind is RegionKind.Normal ||
+                                _ehRegions[instEhRegions[i]].Clause.ExceptionHandler.HandlerType 
+                                    is ExceptionHandlerType.Finally or ExceptionHandlerType.Fault or ExceptionHandlerType.Filter)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
+                                    inst, DiagnosticSeverity.Error, "Invalid 'leave' outside try/catch region."));
+                            }
                             break;
                         }
                 }
 
-                // 验证调用指令的可解析性
+                // 验证调用指令的可解析性 对于inlineBr在前面AddBasicBlock处理了
                 switch (inst.OpCode.OperandType)
                 {
                     case OperandType.InlineMethod:
                         {
                             if (inst.Operand is not MethodReference mf)
-                                throw new InvalidInstructionException(typeof(MethodReference), inst.Operand?.GetType(), inst);
-
-                            if (mf.Resolve() == null)
-                                throw new Exception();
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MethodReference),
+                                    inst.Operand?.GetType() ?? typeof(void), inst));
+                            }
+                            else
+                            {
+                                ResolveWithDiagnostic(mf);
+                            }
                             break;
                         }
                     case OperandType.InlineField:
                         {
 
                             if (inst.Operand is not FieldReference field)
-                                throw new InvalidInstructionException(typeof(FieldReference), inst.Operand?.GetType(), inst);
-                            if (field.Resolve() is not { } fd)
-                                throw new Exception();
-                            if (fd.Attributes.HasFlag(FieldAttributes.Static) != (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
-                                throw new Exception();
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(FieldReference),
+                                    inst.Operand?.GetType() ?? typeof(void), inst));
+                            }
+                            else if (ResolveWithDiagnostic(field) is FieldDefinition fd)
+                            {
+                                if (fd.Attributes.HasFlag(FieldAttributes.Static) !=
+                                    (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InconsistentFieldAccess, inst,
+                                        DiagnosticSeverity.Error, "Field static attribute does not match the access opcode."));
+                                }
+                            }
                             break;
                         }
                     case OperandType.InlineTok:
                         {
                             if (inst.Operand is not MemberReference member)
-                                throw new InvalidInstructionException(typeof(MemberReference), inst.Operand?.GetType(), inst);
-                            /*
-                            if (member.Resolve() is not { } fd)
-                                throw new Exception();
-                            */
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MemberReference),
+                                    inst.Operand?.GetType() ?? typeof(void), inst));
+                            }
+                            else
+                            {
+                                ResolveWithDiagnostic(member);
+                            }
                             break;
                         }
                     case OperandType.InlineType:
                         {
                             if (inst.Operand is not TypeReference type)
-                                throw new InvalidInstructionException(typeof(TypeReference), inst.Operand?.GetType(), inst);
-                            while (type is TypeSpecification)
                             {
-                                type = (type as TypeSpecification)!.ElementType;
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MemberReference),
+                                    inst.Operand?.GetType() ?? typeof(void), inst));
                             }
-                            if (type.Resolve() is not { } fd)
-                                throw new Exception();
+                            else
+                            {
+                                ResolveWithDiagnostic(type);
+                            }
                             break;
                         }
                     case OperandType.InlineVar:
                         {
                             if (inst.Operand is not VariableReference re)
-                                throw new InvalidInstructionException(typeof(VariableReference), inst.Operand?.GetType(), inst);
-                            if (re.Index < 0 || re.Index > _method.Body.Variables.Count)
-                                throw new Exception(); //参数越界
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(VariableReference),
+                                    inst.Operand?.GetType() ?? typeof(void), inst));
+                            }
+                            else
+                            {
+                                if (re.Index < 0 || re.Index > _method.Body.Variables.Count)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+                                }
+                            } 
                             break;
+                            
                         }
                     case OperandType.InlineArg:
                         {
                             if (inst.Operand is not ParameterReference re)
-                                throw new InvalidInstructionException(typeof(ParameterReference), inst.Operand?.GetType(), inst);
-                            if (re.Index < 0 || re.Index > _method.Parameters.Count)
-                                throw new Exception(); //参数越界
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(ParameterReference),
+                                    inst.Operand?.GetType() ?? typeof(void), inst));
+                            }
+                            else
+                            {
+                                if (re.Index < 0 || re.Index > _method.Parameters.Count)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+                                }
+                            }
                             break;
                         }
                     default:
@@ -660,7 +772,8 @@ public partial class ILCfg
                 stackHeight -= pop;
                 if (stackHeight < 0)
                 {
-                    throw new Exception(); //下溢
+                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.StackUnderflow, inst,
+                        DiagnosticSeverity.Fatal));
                 }
                 var push = inst.OpCode.StackBehaviourPush switch
                 {
@@ -673,7 +786,8 @@ public partial class ILCfg
                 stackHeight += push;
                 if (stackHeight > _method.Body.MaxStackSize)
                 {
-                    throw new Exception(); //上溢
+                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.StackOverflow, inst,
+                        DiagnosticSeverity.Fatal));
                 }
                 if (VerifyLocalInit)
                 {
@@ -690,7 +804,8 @@ public partial class ILCfg
                             {
                                 case RegionKind.Handler:
                                 case RegionKind.Filter:
-                                    throw new Exception();  //不允许fall-through
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidFallThrough, inst));
+                                    break;
                                 case RegionKind.Try:
                                     var tryEntry = _blockMap[inst.Next];
                                     block.Edges.Add(new ControlFlowEdge(block, tryEntry));
@@ -704,6 +819,7 @@ public partial class ILCfg
                         {
                             var targetBlock = _blockMap[target];
                             bfsBlocks.Add((targetBlock, stackHeight));
+                            //TODO:堆栈合并不平衡错误
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }
                         endBlock = true;
@@ -907,12 +1023,13 @@ public partial class ILCfg
                             {
                                 case RegionKind.Handler:
                                 case RegionKind.Filter:
-                                    throw new Exception();  //不允许fall-through
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidFallThrough, inst));
+                                    break;
                                 case RegionKind.Try:
                                     AnalyzeCF_AppendStack(localStack, ref node);
                                     var targetBlock = _blockMap[inst.Next];
                                     block.Edges.Add(new ControlFlowEdge(block, targetBlock));
-                                    AnalyzeCF_AddNextBlock(targetBlock, bfsBlocks, node, usedBlocks);
+                                    AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, usedBlocks);
                                     endBlock = true;
                                     break;
                             }
@@ -923,7 +1040,7 @@ public partial class ILCfg
                         foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
                         {
                             var targetBlock = _blockMap[target];
-                            AnalyzeCF_AddNextBlock(targetBlock, bfsBlocks, node, usedBlocks);
+                            AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, usedBlocks);
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }
                         endBlock = true;
@@ -933,11 +1050,11 @@ public partial class ILCfg
                         foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
                         {
                             var targetBlock = _blockMap[target];
-                            AnalyzeCF_AddNextBlock(targetBlock, bfsBlocks, node, usedBlocks);
+                            AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, usedBlocks);
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }
                         var next = _blockMap[inst.Next];
-                        AnalyzeCF_AddNextBlock(next, bfsBlocks, node, usedBlocks);
+                        AnalyzeCF_AddNextBlock(block, next, bfsBlocks, node, usedBlocks);
                         block.Edges.Add(new ControlFlowEdge(block, next));
                         endBlock = true;    
                         break;
@@ -958,22 +1075,23 @@ public partial class ILCfg
 
         if (inst.OpCode.Code is Code.Ldloc or Code.Ldloca && !array[((VariableDefinition)(inst.Operand)).Index])
         {
-            //TODO:给出报警
             //Ldlocda进行最保守估计，不追踪
+            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitializedLocal, inst,
+                inst.OpCode.Code is Code.Ldloc ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning));
         }
     }
 
     /// <summary>
     /// 判断是否已经处理过，处理过则进行合并判别，如果合并后有路径变更则重新计算cf，否则不添加
     /// </summary>
-    private void AnalyzeCF_AddNextBlock(BasicBlock block,  
+    private void AnalyzeCF_AddNextBlock(BasicBlock from, BasicBlock to,
         List<(BasicBlock block, EvalStackNode node)> bfsBlocks,
         EvalStackNode currentNode,
         HashSet<BasicBlock> usedBlocks)
     {
-        if (usedBlocks.Contains(block))
+        if (usedBlocks.Contains(to))
         {
-            var lastNode = block.EntryNode;
+            var lastNode = to.EntryNode;
             var curNode = currentNode;
             if (curNode.Depth != lastNode!.Depth) //启用检测堆栈类型则EntryNode一定不为null
                 throw new Exception(); //合流堆栈不平衡
@@ -990,13 +1108,17 @@ public partial class ILCfg
                 {
                     var merged = curNode.Type.Intersect(lastNode.Type);
                     if (merged == StackType.Invalid)
-                        throw new Exception(); //合流类型推断失败
+                    {
+                        ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(from, to));
+                        break;
+                    }
                     noChanged = false;
                     nodes.Add(merged);
                 }
                 curNode  = curNode.Parent!;
                 lastNode = lastNode.Parent!;
             }
+       
             var newNode = curNode;
             
             if (!noChanged) //存在堆栈变更
@@ -1015,14 +1137,14 @@ public partial class ILCfg
 
             if (!noChanged)
             {
-                block.EntryNode = newNode;
-                bfsBlocks.Add((block, newNode));
+                to.EntryNode = newNode;
+                bfsBlocks.Add((to, newNode));
             }
            
         }
         else
         {
-            bfsBlocks.Add((block, currentNode));
+            bfsBlocks.Add((to, currentNode));
         }
     }
 

@@ -747,7 +747,7 @@ public static partial class CecilHelper
 
     public static TypeReference? GetEnumType(this TypeReference typeRef)
     {
-        TypeDefinition typeDef = ResolveWithCache(typeRef) ?? throw new ResolveFailedException(typeRef);
+        TypeDefinition? typeDef = ResolveWithCache(typeRef);
 
         if (typeDef is not { IsEnum: true })
         {
