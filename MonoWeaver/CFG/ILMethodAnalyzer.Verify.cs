@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 
 namespace MonoWeaver.CFG;
 
-public partial class ILCfg
+public partial class ILMethodAnalyzer
 {
 
     private IMemberDefinition? ResolveWithDiagnostic(MemberReference memberReference)
@@ -38,7 +38,7 @@ public partial class ILCfg
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackType VerifyType(StackType type1, StackType? type2, Instruction inst)
+    private StackType VerifyType(StackType type1, StackType type2, Instruction inst)
     {
         throw new NotImplementedException();
     }

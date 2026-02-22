@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -16,6 +17,7 @@ public enum CFGExceptionType
     InvalidOpCode,
     InvalidOperand,
     
+    //EH段相关
     EhRegionOverlap,
     EhRegionNonTryDuplication,
     EhNestedInFilter,
@@ -32,6 +34,8 @@ public enum CFGExceptionType
     UninitializedLocal,
     IncompatibleMergeTypes,
     IncompatibleMergeDepth,
+    InvalidBrTarget,
+    BrTargetCrossEhRegion,
     OutOfRange,
     
     ResolveFailed,
@@ -44,7 +48,14 @@ public enum DiagnosticSeverity
     Warning,
     Error,
     Fatal,
-    Internal,
+}
+
+public enum AbortStrategy : byte
+{
+    NoAbort = 0,
+    AbortNextBlock = 1,
+    AbortNextStep = 2,
+    AbortImminently = 0xFF
 }
 
 
@@ -58,9 +69,9 @@ public sealed record OperandOutOfRangeContext(Instruction Instruction) : ICFGCon
 public sealed record NullInstContext(int Index) : ICFGContext;
 public sealed record HandlerContext(ExceptionHandler Handler) : ICFGContext;
 
-public sealed record MergeBlockContext(ILCfg.BasicBlock from, ILCfg.BasicBlock to) : ICFGContext;
+public sealed record MergeBlockContext(ILMethodAnalyzer.BasicBlock from, ILMethodAnalyzer.BasicBlock to) : ICFGContext;
 public sealed record ResolveContext(MemberReference reference) : ICFGContext;
-public sealed record EhRegionContext(ExceptionBlock.Region Region1, ExceptionBlock.Region Region2) : ICFGContext;
+public sealed record EhRegionContext(EHandler.Region Region1, EHandler.Region Region2) : ICFGContext;
 
 public sealed record CFGDiagnostic(
     CFGExceptionType Type,
@@ -118,9 +129,9 @@ public sealed record CFGDiagnostic(
             message ?? $"Type mismatch: expect {expect.FullName}, got {current?.FullName ?? "<null>"}",
             new TypeMismatchContext(inst, expect, current));
     
-    public static CFGDiagnostic IncompatibleMerge(ILCfg.BasicBlock from, ILCfg.BasicBlock to,
-        DiagnosticSeverity severity = DiagnosticSeverity.Fatal, string? message = null)
-        => new(CFGExceptionType.IncompatibleMergeTypes, severity,
+    public static CFGDiagnostic IncompatibleMerge(CFGExceptionType exceptionType, ILMethodAnalyzer.BasicBlock from, ILMethodAnalyzer.BasicBlock to,
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => new(exceptionType, severity,
             message ?? $"Incompatible basic block merge",
             new MergeBlockContext(from, to));
     
@@ -145,38 +156,79 @@ public sealed record CFGDiagnostic(
 
 
     public static CFGDiagnostic NullInstruction(int index,
-        DiagnosticSeverity severity = DiagnosticSeverity.Fatal, string? message = null)
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
         => new(CFGExceptionType.InstructionNull, severity,
             message ?? "Instruction is null",
             new NullInstContext(index));
     
-    public static CFGDiagnostic EhRegionInvalid(CFGExceptionType type, ExceptionBlock.Region region1, ExceptionBlock.Region region2, 
-        DiagnosticSeverity severity = DiagnosticSeverity.Fatal, string? message = null)
+    public static CFGDiagnostic EhRegionInvalid(CFGExceptionType type, EHandler.Region region1, EHandler.Region region2, 
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
         => new(type, severity,
             message ?? "EHRegion is Invalid",
             new EhRegionContext(region1, region2));
     
     public static CFGDiagnostic EhHandlerInvalid(ExceptionHandler handler, 
-        DiagnosticSeverity severity = DiagnosticSeverity.Fatal, string? message = null)
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
         => new(CFGExceptionType.ExceptionHandlerInvalid, severity,
             message ?? "ExceptionHandler is Invalid",
             new HandlerContext(handler));
     
     public static CFGDiagnostic ResolveFailed(MemberReference memberReference, 
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
-        => new(CFGExceptionType.ExceptionHandlerInvalid, severity,
+        => new(CFGExceptionType.ResolveFailed, severity,
             message ?? "MemberReference cannot be resolved to MemberDefinition",
             new ResolveContext(memberReference));
 }
 
 
-public partial class ILCfg
+public partial class ILMethodAnalyzer
 {
-    private readonly List<CFGDiagnostic> _diagnostics = new();
-
-    private int _maxErrorCount = 10;
-    private void ReportDiagnostic(CFGDiagnostic diag)
+    public sealed class CfgVerifyException(ILMethodAnalyzer methodAnalyzer) : Exception($"Verify Method:{methodAnalyzer._method.FullName}, " +
+                                                                  $"Fatal:{methodAnalyzer.Diagnostics.Count(i => i.Severity == DiagnosticSeverity.Fatal)}, " +
+                                                                  $"Error:{methodAnalyzer.Diagnostics.Count(i => i.Severity == DiagnosticSeverity.Error)}, " +
+                                                                  $"Waring:{methodAnalyzer.Diagnostics.Count(i => i.Severity == DiagnosticSeverity.Warning)}")
     {
-        _diagnostics.Add(diag);
+        public List<CFGDiagnostic> Diagnostics { get; } = methodAnalyzer.Diagnostics;
+
+        public MethodDefinition Method { get; } = methodAnalyzer._method;
+    }
+
+    public List<CFGDiagnostic> Diagnostics { get; } = new();
+
+    public int MaxErrorCount { get; init; } = 10;
+    
+    private int _currentErrorCount;
+    
+    private void ReportDiagnostic(CFGDiagnostic diag, AbortStrategy abortStrategy = AbortStrategy.AbortNextStep)
+    {
+        Diagnostics.Add(diag);
+        _currentErrorCount += diag.Severity is DiagnosticSeverity.Error ? 1 : 0;
+        if (_currentErrorCount > MaxErrorCount || 
+            diag.Severity is DiagnosticSeverity.Fatal ||
+            abortStrategy == AbortStrategy.AbortImminently)
+        {
+            throw new CfgVerifyException(this);
+        }
+
+        if ((int)abortStrategy > (int)_abortVerificationStrategy && diag.Severity != DiagnosticSeverity.Warning)
+        {
+            _abortVerificationStrategy = abortStrategy;
+        }
+    }
+
+    public void ThrowIfHasErrors()
+    {
+        if (Diagnostics.Count > 0)
+        {
+            throw new CfgVerifyException(this);
+        }
+    }
+    
+    private void ThrowIfNeedAbort(AbortStrategy abortStrategy)
+    {
+        if ((int)abortStrategy <= (int)_abortVerificationStrategy)
+        {
+            throw new CfgVerifyException(this);
+        }
     }
 }

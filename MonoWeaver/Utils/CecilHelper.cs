@@ -59,7 +59,7 @@ public static partial class CecilHelper
 
 public static partial class CecilHelper
 {
-
+    
     public readonly struct TypeSig : IEquatable<TypeSig>
     {
         private readonly KeyKind _kind;
@@ -174,6 +174,9 @@ public static partial class CecilHelper
             GenericParameter = 1
         }
     }
+    
+    public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Default) 
+        => new ILMethodAnalyzer(method, options);
 
     public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
     => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
@@ -766,7 +769,7 @@ public static partial class CecilHelper
 
     private static Func<object, Instruction>? _monoModresolveStrategy = null!;
 
-    private static void BuildMonoModresolveStrategy(Type type)
+    private static void BuildMonoModResolveStrategy(Type type)
     {
 
         try
@@ -841,7 +844,7 @@ public static partial class CecilHelper
                 if(eleType.FullName == "MonoMod.Cil.ILLabel")
                 {
                     if (_monoModresolveStrategy is null)
-                        BuildMonoModresolveStrategy(eleType);
+                        BuildMonoModResolveStrategy(eleType);
                     foreach (var i in array)
                     {
                         yield return _monoModresolveStrategy!(i);
@@ -851,7 +854,7 @@ public static partial class CecilHelper
             else if(type.FullName == "MonoMod.Cil.ILLabel")
             {
                 if (_monoModresolveStrategy is null)
-                    BuildMonoModresolveStrategy(type);
+                    BuildMonoModResolveStrategy(type);
                 yield return _monoModresolveStrategy!(operand);
             }
         }
