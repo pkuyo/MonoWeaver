@@ -630,7 +630,7 @@ public static class CecilMutator
             HandlerStart = ih0,
             HandlerEnd = afterInnerHandler
         };
-        m.Body.ExceptionHandlers.Add(inner);
         m.Body.ExceptionHandlers.Add(outer);
+        m.Body.ExceptionHandlers.Add(inner);
     }
 }

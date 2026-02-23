@@ -20,7 +20,7 @@ public static class MutationStubs
     public static void M_IncompatibleMergeDepth(bool cond) { }
     public static void M_InvalidBrTarget() { }
     public static void M_BrTargetCrossEhRegion() { }
-    public static void M_ArguementOutOfRange() { }
+    public static void M_OutOfRange() { }
 }
 
 

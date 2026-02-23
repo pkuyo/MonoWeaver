@@ -99,6 +99,12 @@ public sealed record CFGDiagnostic(
                   .Append(" current=").Append(tm.Current?.FullName ?? "<null>");
                 break;
 
+            case InvalidOperandContext io:
+                sb.Append(" @ IL_").Append(io.Instruction.Offset.ToString("X4"))
+                  .Append(" expect=").Append(io.Expect.FullName)
+                  .Append(" current=").Append(io.Current.FullName);
+                break;
+
             case OperandOutOfRangeContext oc:
                 sb.Append(" @ IL_").Append(oc.Instruction.Offset.ToString("X4"));
                 break;
@@ -109,6 +115,10 @@ public sealed record CFGDiagnostic(
 
             case HandlerContext hc:
                 sb.Append(" handler=").Append(hc.Handler?.HandlerType.ToString());
+                break;
+
+            case MergeBlockContext bc:
+                sb.Append(" from=").Append(bc.from).Append(" to=").Append(bc.to);
                 break;
 
             case ResolveContext rc:
@@ -192,6 +202,7 @@ public partial class ILMethodAnalyzer
         public List<CFGDiagnostic> Diagnostics { get; } = methodAnalyzer.Diagnostics;
 
         public MethodDefinition Method { get; } = methodAnalyzer._method;
+
     }
 
     public List<CFGDiagnostic> Diagnostics { get; } = new();
@@ -217,12 +228,13 @@ public partial class ILMethodAnalyzer
         }
     }
 
-    public void ThrowIfHasErrors()
+    public ILMethodAnalyzer ThrowIfHasErrors()
     {
         if (Diagnostics.Count > 0)
         {
             throw new CfgVerifyException(this);
         }
+        return this;
     }
     
     private void ThrowIfNeedAbort(AbortStrategy abortStrategy)

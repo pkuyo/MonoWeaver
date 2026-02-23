@@ -38,7 +38,9 @@ public partial class ILMethodAnalyzer
     {
         if (inst.Operand is not IMethodSignature sig)
         {
-            throw new Exception();
+            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst), 
+                AbortStrategy.AbortImminently);
+            return 0;
         }
         return (sig.ReturnType.Name == "Void" && sig.ReturnType.Namespace == "System") ? 0 : 1;
     }
