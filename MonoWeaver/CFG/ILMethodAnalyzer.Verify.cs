@@ -22,9 +22,16 @@ public partial class ILMethodAnalyzer
     {
         if (inst.Operand is not IMethodSignature sig)
         {
-            throw new Exception();
+            if(inst.OpCode.Code is Code.Ret)
+            {
+                return _method.ReturnType.Name == "Void" && _method.ReturnType.Namespace == "System"
+                    ? 0 : 1;
+            }
+            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst), 
+                AbortStrategy.AbortImminently);
+            return 0;
         }
-        return sig.Parameters.Count + (sig.HasThis ? 1 : 0); ;
+        return sig.Parameters.Count + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0);
     }
 
     private int VarPushCount(Instruction inst)
@@ -139,9 +146,10 @@ public partial class ILMethodAnalyzer
                     }
 
                     var index = pr.Index;
-                    if (index >= _method.Parameters.Count + (_method.HasThis ? 1 : 0))
+                    if (index >= _method.Parameters.Count || index < 0)
                     {
-                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+                        if (index != -1 || !_method.HasThis)
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
                     }
 
                     VerifyType(stacks[0], (_method.HasThis && index == 0) ? _method.DeclaringType
@@ -249,7 +257,7 @@ public partial class ILMethodAnalyzer
             Array.Resize(ref args, paramLen);
         }
         int i = 0;
-        if (sig.HasThis)
+        if (sig.HasThis && (inst.OpCode.Code is not Code.Newobj))
         {
             if (sig is MethodReference methodRef)
                 args[i++] = methodRef.DeclaringType;

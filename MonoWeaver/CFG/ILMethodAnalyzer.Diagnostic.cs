@@ -36,6 +36,7 @@ public enum CFGExceptionType
     IncompatibleMergeDepth,
     InvalidBrTarget,
     BrTargetCrossEhRegion,
+    LeaveTargetSameEhRegion,
     OutOfRange,
     
     ResolveFailed,
