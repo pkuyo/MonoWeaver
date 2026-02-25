@@ -179,6 +179,9 @@ public static partial class CecilHelper
     public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Default) 
         => new ILMethodAnalyzer(method, options);
 
+    public static ILMethodAnalyzer Analyze(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Default)
+    => new ILMethodAnalyzer(body.Method, options);
+
     public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
     => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
 
@@ -226,6 +229,12 @@ public static partial class CecilHelper
         } while (true);
     }
 
+    /// <summary>
+    /// 查找共有基类
+    /// </summary>
+    /// <param name="a0"></param>
+    /// <param name="b0"></param>
+    /// <returns></returns>
     public static TypeReference? FindCommonBaseType(TypeReference? a0, TypeReference? b0)
     {
         if(a0 is null || b0 is null) return null;

@@ -8,7 +8,7 @@ using static MonoWeaver.Utils.CecilHelper;
 namespace MonoWeaver.CFG
 {
     /// <summary>
-    /// 评估栈DAG图节点
+    /// 评估栈节点
     /// </summary>
     public class EvalStackNode
     {

@@ -58,7 +58,7 @@ public static class Program
             CFGExceptionType.BrTargetCrossEhRegion,
             CFGExceptionType.OutOfRange
         ];
-        // 演示：对某个 stub 做一次 mutation 后 analyze
+ 
         var stubs = module.Types.First(t => t.FullName.EndsWith("MutationStubs"));
         foreach (var test in tests)
         {
@@ -89,7 +89,7 @@ public static class Program
 
         try
         {
-            il.Body.Method.Analyze(VerifyOptions.Light).ThrowIfHasErrors();
+            il.Body.Analyze(VerifyOptions.Light).ThrowIfHasErrors();
         }
         catch (ILMethodAnalyzer.CfgVerifyException e)
         {
