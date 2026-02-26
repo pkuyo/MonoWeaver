@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MonoMod" Version="21.11.1.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MonoWeaver\MonoWeaver.csproj" />
+  </ItemGroup>
+
+</Project>

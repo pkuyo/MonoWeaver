@@ -13,7 +13,6 @@ public static class Program
     {
         var path = Assembly.GetExecutingAssembly().Location;
         Console.WriteLine($"Self assembly: {path}");
-        //TestHook(null);
         var asm = AssemblyDefinition.ReadAssembly(path);
         var module = asm.MainModule;
 
@@ -78,22 +77,6 @@ public static class Program
                 Console.Write("  Analyze errors: ");
                 Console.WriteLine(string.Join("\n  ", e.Diagnostics));
             }
-        }
-    }
-
-    private static void TestHook(ILContext il)
-    {
-        var c = new ILCursor(il);
-        c.GotoNext(i => i.MatchAdd());
-        c.Emit(OpCodes.Ldloc_0, 0);
-
-        try
-        {
-            il.Body.Analyze(VerifyOptions.Light).ThrowIfHasErrors();
-        }
-        catch (ILMethodAnalyzer.CfgVerifyException e)
-        {
-            Console.WriteLine(e.ToString());
         }
     }
 }

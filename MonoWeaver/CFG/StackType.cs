@@ -1,8 +1,6 @@
 ﻿using Mono.Cecil;
 using MonoWeaver.Utils;
 using System;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Runtime.CompilerServices;
 using static MonoWeaver.Utils.CecilHelper;
 namespace MonoWeaver.CFG

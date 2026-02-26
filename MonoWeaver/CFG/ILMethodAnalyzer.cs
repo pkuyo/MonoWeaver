@@ -19,11 +19,9 @@ public enum VerifyOptions
     StackBalance = 1 << 3,
     StackTypes = 1 << 4 | StackBalance, //TODO:WIP
     ByrefEscape = 1 << 5, //TODO:待实现
-    Default = Instructions | LocalInit | StackTypes | ByrefEscape,
+    Full = Instructions | LocalInit | StackTypes | ByrefEscape,
     Light = StackBalance | Instructions
 }
-
-
 
 /// <summary>
 /// 符合c#的EH段
@@ -130,8 +128,6 @@ public partial class ILMethodAnalyzer
     {
         public BasicBlock From = from;
         public BasicBlock To = to;
-
-        //public EvalStackTransfer? StackTransfer;
     }
 }
 public partial class ILMethodAnalyzer
@@ -193,9 +189,9 @@ public partial class ILMethodAnalyzer
     private List<EHandler> _exceptionHandlers = null!;
     private List<EHFrame> _regionFrames = null!;
 
-    private readonly bool _needInitAnalysis;
+    private bool _needInitAnalysis;
 
-    private readonly VerifyOptions _verifyOptions;
+    private VerifyOptions _verifyOptions;
 
     private AbortStrategy _abortVerificationStrategy;
 
@@ -208,8 +204,10 @@ public partial class ILMethodAnalyzer
 
     public bool VerifyLocalInit => _verifyOptions.HasFlag(VerifyOptions.LocalInit) && _needInitAnalysis;
 
+ 
 
-    public ILMethodAnalyzer(MethodDefinition method, VerifyOptions verifyOptions = VerifyOptions.Default)
+
+    public ILMethodAnalyzer(MethodDefinition method, VerifyOptions verifyOptions = VerifyOptions.Light)
     {
         if (!method.IsIL)
         {
@@ -220,12 +218,33 @@ public partial class ILMethodAnalyzer
         _method = method;
         _method.Body.SimplifyMacros();
         _needInitAnalysis = !_method.Body.InitLocals;
-        BuildGraph();
+        VerifyMethod();
+    }
+
+    public ILMethodAnalyzer ReAnalyze(VerifyOptions verifyOptions = VerifyOptions.Light)
+    {
+        _verifyOptions = verifyOptions;
+        _needInitAnalysis = !_method.Body.InitLocals;
+        _instDictionary.Clear();
+        _exceptionHandlers.Clear();
+        _regionFrames.Clear();
+        _blockMap.Clear();
+        _nodeIntern.Clear();
+        _blocks.Clear();
+        _method.Body.SimplifyMacros();
+        Diagnostics.Clear();
+        _currentErrorCount = 0;
+        VerifyMethod();
+        return this;
+    }
+
+    public ILCFGraph ToGraph()
+    {
+        return new ILCFGraph(this);
     }
 
 
-
-    private void BuildGraph()
+    private void VerifyMethod()
     {
         FirstPass();
         if (VerifyStackBalance)
@@ -240,6 +259,8 @@ public partial class ILMethodAnalyzer
             }
         }
     }
+
+
 
 
     /// <summary>
@@ -273,11 +294,11 @@ public partial class ILMethodAnalyzer
 
         var totalMethodRegion = EHandler.CreateMethodRegion(_method.Body.Instructions.Count);
         ehRegions = new List<EHandler.Region>(_method.Body.ExceptionHandlers.Count);
-        _exceptionHandlers = new List<EHandler>(_method.Body.ExceptionHandlers.Count + 1);
+        _exceptionHandlers ??= new List<EHandler>(_method.Body.ExceptionHandlers.Count + 1);
         _exceptionHandlers.Add(totalMethodRegion);
         ehRegions.Add(totalMethodRegion.ProtectedRegion); //添加一个默认的区间，简化后续处理
 
-        _instDictionary = new Dictionary<Instruction, int>(_method.Body.Instructions.Count);
+        _instDictionary ??= new Dictionary<Instruction, int>(_method.Body.Instructions.Count);
 
         
         for(int i = 0; i < _method.Body.Instructions.Count; i++)
@@ -832,7 +853,7 @@ public partial class ILMethodAnalyzer
 
     private void LightControlFlowPass()
     {
-        var usedBlocks = new HashSet<BasicBlock>(_blocks.Count);
+        var usedBlocks = new HashSet<BasicBlock>();
 
         foreach (var block in _blocks)
         {
@@ -964,7 +985,7 @@ public partial class ILMethodAnalyzer
     {
         var buffer = new StackType[4];
         var funcBuffer = new StackType[8];
-        var usedBlocks = new HashSet<BasicBlock>(_blocks.Count);
+        var usedBlocks = new HashSet<BasicBlock>();
         
         foreach (var block in _blocks)
         {

@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="MonoWeaver.Demo/MonoWeaver.Fuzz.csproj" Id="eae7ab85-4da0-45cc-9e7d-ca1cdbb05738" />
+  <Project Path="MonoWeaver.MonoMod/MonoWeaver.MonoMod.csproj" Id="0cb8602b-f602-4340-9ceb-6249be607aa8" />
   <Project Path="MonoWeaver.Test/MonoWeaver.Test.csproj" Id="fde8d0a5-9601-492d-9a17-83893ca4c790" />
   <Project Path="MonoWeaver/MonoWeaver.csproj" />
 </Solution>

@@ -8,12 +8,12 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
+using COpCodes = Mono.Cecil.Cil.OpCodes;
 using GenericParameterAttributes = Mono.Cecil.GenericParameterAttributes;
 using MethodAttributes = Mono.Cecil.MethodAttributes;
-using COpCodes = Mono.Cecil.Cil.OpCodes;
-using TypeAttributes = Mono.Cecil.TypeAttributes;
 using OpCodes = System.Reflection.Emit.OpCodes;
 using StackBehaviour = Mono.Cecil.Cil.StackBehaviour;
+using TypeAttributes = Mono.Cecil.TypeAttributes;
 
 
 namespace MonoWeaver.Utils;
@@ -26,6 +26,7 @@ public static partial class CecilHelper
     private static readonly LruCache<(TypeSig from, TypeSig to), bool> _assignableCache = new(8192);
     private static readonly LruCache<TypeReference, TypeSig> _typeSigCache = new(8192);
     private static readonly LruCache<(int metaToken, Hash128 hash), TypeDefinition> _typeCache = new(8192);
+
 
     internal static class InterfaceTraversalCache
     {
@@ -175,12 +176,16 @@ public static partial class CecilHelper
             GenericParameter = 1
         }
     }
+
     
-    public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Default) 
+    public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full) 
         => new ILMethodAnalyzer(method, options);
 
-    public static ILMethodAnalyzer Analyze(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Default)
+    public static ILMethodAnalyzer Analyze(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Full)
     => new ILMethodAnalyzer(body.Method, options);
+
+
+ 
 
     public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
     => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
@@ -809,59 +814,45 @@ public static partial class CecilHelper
 
     private static void BuildMonoModResolveStrategy(Type type)
     {
-
-        try
+        if (!File.Exists(type.Assembly.Location))
         {
-            DynamicMethod method = new DynamicMethod("Target", typeof(Instruction), [typeof(object)]);
-            var il = method.GetILGenerator();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, type);
-            il.Emit(OpCodes.Ldfld, type.GetField("Target"));
-            il.Emit(OpCodes.Ret);
-            _monoModresolveStrategy = (Func<object, Instruction>)method.CreateDelegate(typeof(Func<object, Instruction>), null);
+            throw new Exception(); //TODO 完善异常说明
         }
-        catch
-        {
+        var resolver = new DefaultAssemblyResolver();
+        resolver.AddSearchDirectory(type.Assembly.Location);
 
-            if (!File.Exists(type.Assembly.Location))
+        using AssemblyDefinition assDef = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("MonoWeaver.Monomod", new Version()),
+            "module", new ModuleParameters()
             {
-                throw new Exception(); //TODO 完善异常说明
-            }
-            var resolver = new DefaultAssemblyResolver();
-            resolver.AddSearchDirectory(type.Assembly.Location);
-
-            using AssemblyDefinition assDef = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("MonoWeaver.Monomod", new Version()),
-                "module", new ModuleParameters()
-                {
-                    Kind = ModuleKind.Dll,
-                    AssemblyResolver = resolver
-                });
+                Kind = ModuleKind.Dll,
+                AssemblyResolver = resolver
+            });
 
 
 
-            var module = assDef.MainModule;
-            TypeDefinition typeDef = new TypeDefinition("MonoWeaver.Monomod", "Helper",
-                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class);
-            MethodDefinition mothodDef = new MethodDefinition("Target", MethodAttributes.Public | MethodAttributes.Static,
-                module.ImportReference(typeof(Instruction)));
+        var module = assDef.MainModule;
+        TypeDefinition typeDef = new TypeDefinition("MonoWeaver.Monomod", "Helper",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class);
+        MethodDefinition mothodDef = new MethodDefinition("Target", MethodAttributes.Public | MethodAttributes.Static,
+            module.ImportReference(typeof(Instruction)));
 
-            mothodDef.Parameters.Add(new ParameterDefinition(module.ImportReference(type)));
-            var il = mothodDef.Body.GetILProcessor();
-            il.Emit(COpCodes.Ldarg_0);
-            il.Emit(COpCodes.Isinst, module.ImportReference(type));
-            il.Emit(COpCodes.Ldfld, module.ImportReference(type.GetField("Target")));
-            il.Emit(COpCodes.Ret);
+        mothodDef.Parameters.Add(new ParameterDefinition(module.ImportReference(type)));
+        var il = mothodDef.Body.GetILProcessor();
+        il.Emit(COpCodes.Ldarg_0);
+        il.Emit(COpCodes.Isinst, module.ImportReference(type));
+        il.Emit(COpCodes.Ldfld, module.ImportReference(type.GetField("Target")));
+        il.Emit(COpCodes.Ret);
 
-            using MemoryStream ms = new MemoryStream();
-            assDef.Write(ms);
+        using MemoryStream ms = new MemoryStream();
+        assDef.Write(ms);
 
-            var ass = Assembly.Load(ms.ToArray());
+        var ass = Assembly.Load(ms.ToArray());
 
-            _monoModresolveStrategy =
-                (Func<object, Instruction>)Delegate.CreateDelegate(typeof(Func<object, Instruction>),
-                ass.ManifestModule.GetType("Helper").GetMethod("Target"));
-        }
+        _monoModresolveStrategy =
+            (Func<object, Instruction>)Delegate.CreateDelegate(typeof(Func<object, Instruction>),
+            ass.ManifestModule.GetType("Helper").GetMethod("Target"));
     }
+    
 
     internal static IEnumerable<Instruction> OperandToTargets(object operand)
     {
