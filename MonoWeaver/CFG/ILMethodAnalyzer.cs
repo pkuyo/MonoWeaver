@@ -176,7 +176,7 @@ public partial class ILMethodAnalyzer
 
 public partial class ILMethodAnalyzer
 {
-    private readonly MethodDefinition _method;
+    internal readonly MethodDefinition _method;
 
     private Dictionary<Instruction, int> _instDictionary = null!;
 
@@ -184,9 +184,11 @@ public partial class ILMethodAnalyzer
     
     private readonly Dictionary<(StackType type, EvalStackNode prev), EvalStackNode> _nodeIntern = new();
     private readonly Dictionary<Instruction, BasicBlock> _blockMap = new();
-    private List<BasicBlock> _blocks = null!;
 
-    private List<EHandler> _exceptionHandlers = null!;
+    internal List<BasicBlock> _blocks = null!;
+
+    internal List<EHandler> _exceptionHandlers = null!;
+
     private List<EHFrame> _regionFrames = null!;
 
     private bool _needInitAnalysis;
@@ -204,7 +206,7 @@ public partial class ILMethodAnalyzer
 
     public bool VerifyLocalInit => _verifyOptions.HasFlag(VerifyOptions.LocalInit) && _needInitAnalysis;
 
- 
+    public MethodDefinition Method => _method;
 
 
     public ILMethodAnalyzer(MethodDefinition method, VerifyOptions verifyOptions = VerifyOptions.Light)
@@ -898,11 +900,16 @@ public partial class ILMethodAnalyzer
                 }
                 else
                 {
-                    var pop = inst.OpCode.StackBehaviourPop.PopCount() switch
+                    var pop = -1;
+                    try
                     {
-                        -1 => VarPopCount(inst),
-                        var tmpPop => tmpPop
-                    };
+                        pop = inst.PopCount(_method);
+                    }
+                    catch
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst),
+                            AbortStrategy.AbortImminently);
+                    }
                     stackHeight -= pop;
                     if (stackHeight < 0)
                     {
@@ -911,11 +918,16 @@ public partial class ILMethodAnalyzer
                     }
                 }
 
-                var push = inst.OpCode.StackBehaviourPush.PushCount() switch
+                var push = -1;
+                try
                 {
-                    -1 => VarPushCount(inst),
-                    var tmpPush => tmpPush
-                };
+                    push = inst.PushCount();
+                }
+                catch
+                {
+                    ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst),
+                        AbortStrategy.AbortImminently);
+                }
                 stackHeight += push;
                 if (stackHeight > _method.Body.MaxStackSize)
                 {

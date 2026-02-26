@@ -107,7 +107,8 @@ namespace MonoWeaver.Detour
     {
         //TODO: 内包含一个ILCursor，包装ILCursor所有函数
 
-        private ILCursor InnerCursor { get; set; }
+        public ILCursor InnerCursor { get; set; }
+
 
     }
 }

@@ -17,33 +17,6 @@ public partial class ILMethodAnalyzer
         ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference));
         return null;
     }
-    
-    private int VarPopCount(Instruction inst)
-    {
-        if (inst.Operand is not IMethodSignature sig)
-        {
-            if(inst.OpCode.Code is Code.Ret)
-            {
-                return _method.ReturnType.Name == "Void" && _method.ReturnType.Namespace == "System"
-                    ? 0 : 1;
-            }
-            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst), 
-                AbortStrategy.AbortImminently);
-            return 0;
-        }
-        return sig.Parameters.Count + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0);
-    }
-
-    private int VarPushCount(Instruction inst)
-    {
-        if (inst.Operand is not IMethodSignature sig)
-        {
-            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst), 
-                AbortStrategy.AbortImminently);
-            return 0;
-        }
-        return (sig.ReturnType.Name == "Void" && sig.ReturnType.Namespace == "System") ? 0 : 1;
-    }
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
