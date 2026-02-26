@@ -83,11 +83,11 @@ namespace MonoWeaver.Detour
         }
 
 
-        public IEnumerable<ILCFGraph.BasicBlock> PredBlocks()
+        public IEnumerable<ILCFGraph.Block> PredBlocks()
         {
             throw new NotImplementedException();
         }
-        public IEnumerable<ILCFGraph.BasicBlock> SuccBlocks()
+        public IEnumerable<ILCFGraph.Block> SuccBlocks()
         {
             throw new NotImplementedException();
         }
@@ -98,7 +98,7 @@ namespace MonoWeaver.Detour
         }
 
 
-        public ILCFGraph.BasicBlock CurrentBlock { get; }
+        public ILCFGraph.Block CurrentBlock { get; }
 
 
     }

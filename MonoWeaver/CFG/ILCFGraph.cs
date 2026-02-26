@@ -283,11 +283,28 @@ namespace MonoWeaver.CFG
 
             var normal = newInst.OpCode.FlowControl is FlowControl.Next or FlowControl.Call &&
                 (newInst.Previous is null || newInst.Previous.OpCode.Code != Code.Tail);
-            if (nextBlock != null && before == nextBlock.Leader.Previous) //基本块末尾, 插入指令为新block
+            if (before == nextBlock?.Leader?.Previous) //基本块末尾, 插入指令为新block
             {
-                //TODO
+                var newBlock = new Block(newInst, region, StackDepthAt(newInst), _analyzer._method.Body);
+                if (!normal) nextBlock._stackDepthDirty = true;
+                if(nextBlock != null)  newBlock.AddEdge(nextBlock);
+                _blocks.Insert(index + 1, newBlock);
+                BuildBlockEdge(newBlock, newInst);
             }
-            //TODO
+            else
+            {
+                if (!normal) //基本块拆分
+                {
+                    var newBlock = new Block(newInst, region, StackDepthAt(newInst), _analyzer._method.Body);
+                    newBlock.Edges = block.Edges;
+                    _blocks.Insert(index + 1, newBlock);
+                    foreach (var edge in block.Edges)
+                    {
+                        edge.From = newBlock;
+                    }
+                    BuildBlockEdge(block, newInst);
+                }
+            }
         }
 
 
@@ -325,7 +342,7 @@ namespace MonoWeaver.CFG
             }
             else if(!normal) //基本块拆分
             {
-                var newBlock = new Block(newInst, region, StackDepthAt(pos), _analyzer._method.Body);
+                var newBlock = new Block(newInst.Next, region, StackDepthAt(pos), _analyzer._method.Body);
                 newBlock.Edges = block.Edges;
                 _blocks.Insert(index + 1, newBlock);
                 foreach (var edge in block.Edges)
@@ -333,23 +350,7 @@ namespace MonoWeaver.CFG
                     edge.From = block;
                 }
 
-                // 给block构建Edge
-                if (newInst.OpCode.FlowControl is FlowControl.Branch
-                or FlowControl.Cond_Branch)
-                {
-                    foreach (var targetInst in CecilHelper.OperandToTargets(newInst.Operand))
-                    {    
-                        if(targetInst is null)  { block._edgeDirty = true; continue; }
-                        block.AddEdge(BlockByInstruction(targetInst));
-                    }
-                }
-                if (newInst.OpCode.FlowControl is FlowControl.Branch
-                    or FlowControl.Cond_Branch
-                    or FlowControl.Return
-                    or FlowControl.Throw && newInst.Next != null)
-                {
-                    block.AddEdge(BlockByInstruction(newInst.Next));
-                }
+                BuildBlockEdge(block, newInst);
 
                 block._stackDepthDirty = true;
                 newBlock._stackDepthDirty = true;
@@ -388,9 +389,23 @@ namespace MonoWeaver.CFG
 
         public void Update()
         {
-            var dirtyBlock = _blocks.Where(i => i._stackDepthDirty).ToList();
+            var dirtyBlocks = _blocks.Where(i => i._edgeDirty).ToList();
+
+            foreach(var block in dirtyBlocks)
+            {
+                block.Edges.Clear();
+                var index = _blocks.IndexOf(block);
+                var nextBlock = index == _blocks.Count - 1 ? null : _blocks[index + 1];
+                var inst = nextBlock is null ? _analyzer._method.Body.Instructions[_analyzer._method.Body.Instructions.Count] 
+                    : nextBlock.Leader.Previous;
+                BuildBlockEdge(block, inst);
+            }
+
+            dirtyBlocks = _blocks.Where(i => i._stackDepthDirty).ToList();
             var blockSet = new HashSet<Block>();
             //TODO:
+
+          
         }
 
         public Block BlockByInstruction(Instruction inst)
@@ -424,6 +439,27 @@ namespace MonoWeaver.CFG
                     stack.Pop();
             }
             throw new Exception(); //TODO:
+        }
+
+        private void BuildBlockEdge(Block block, Instruction inst)
+        {
+            // 给block构建Edge
+            if (inst.OpCode.FlowControl is FlowControl.Branch
+            or FlowControl.Cond_Branch)
+            {
+                foreach (var targetInst in CecilHelper.OperandToTargets(inst.Operand))
+                {
+                    if (targetInst is null) { block._edgeDirty = true; continue; }
+                    block.AddEdge(BlockByInstruction(targetInst));
+                }
+            }
+            if (inst.OpCode.FlowControl is FlowControl.Branch
+                or FlowControl.Cond_Branch
+                or FlowControl.Return
+                or FlowControl.Throw && inst.Next != null)
+            {
+                block.AddEdge(BlockByInstruction(inst.Next));
+            }
         }
     }
 }
