@@ -826,9 +826,7 @@ public static partial class CecilHelper
     {
         if (inst.Operand is not IMethodSignature sig)
         {
-            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature), inst.Operand?.GetType() ?? typeof(void), inst),
-                AbortStrategy.AbortImminently);
-            return 0;
+            throw new Exception(); //TODO:
         }
         return (sig.ReturnType.Name == "Void" && sig.ReturnType.Namespace == "System") ? 0 : 1;
     }

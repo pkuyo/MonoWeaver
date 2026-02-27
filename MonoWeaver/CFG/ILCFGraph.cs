@@ -2,9 +2,7 @@
 using Mono.Cecil.Cil;
 using MonoWeaver.Utils;
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Collections.Specialized;
 using System.Linq;
 
 namespace MonoWeaver.CFG
@@ -122,8 +120,8 @@ namespace MonoWeaver.CFG
                     }
                 }
 
-                public int? _startIndexCache;
-                public int? _endIndexCache;
+                private int? _startIndexCache;
+                private int? _endIndexCache;
 
 
                 public Region(EHBlock clause, RegionKind kind, Instruction start, Instruction end)
@@ -278,11 +276,16 @@ namespace MonoWeaver.CFG
         public int StackDepthAt(Instruction inst)
         {
             var block = BlockByInstruction(inst);
+            return StackDepthAt(block, inst);
+        }
+        
+        public int StackDepthAt(Block block, Instruction inst)
+        {
             var i = block.Leader;
             var depth = block.EntryStackDepth;
             while(i != inst)
             {
-                depth += inst.PushCount() - inst.PopCount(_analyzer._method);
+                depth += i.PushCount() - i.PopCount(_analyzer._method);
                 i = i.Next;
             }
             return depth;
@@ -293,15 +296,36 @@ namespace MonoWeaver.CFG
         /// </summary>
         /// <param name="before">待插入指令的前一条指令</param>
         /// <param name="newInst">待插入指令</param>
-        public void Emit(Instruction before, Instruction newInst)
+        public void Emit(Instruction? before, Instruction newInst)
         {
+            var normal = newInst.OpCode.FlowControl is FlowControl.Next or FlowControl.Call &&
+                         (newInst.Previous is null || newInst.Previous.OpCode.Code != Code.Tail);
+            if (before == null)
+            {
+                if (_blocks.Count == 0)
+                {
+                    _blocks.Add(new Block(newInst, _regions[0], 0, _analyzer._method.Body, false));
+                }
+                else if(normal)
+                {
+                    var curBlock = BlockByInstruction(newInst.Next);
+                    curBlock.Leader = newInst;
+                    curBlock._stackDepthDirty = true;
+                }
+                else
+                {
+                    var newBlock = new Block(newInst, _regions[0], 0, _analyzer._method.Body, false);
+                    _blocks.Add(newBlock);
+                    ConnectionBlockForInstruction(newInst, newBlock, BlockByInstruction(newInst.Next));
+                }
+                return;
+            }
             var block = BlockByInstruction(before);
             var region = RegionByInstruction(before);
             var index = _blocks.IndexOf(block);
             var nextBlock = index == _blocks.Count - 1 ? null : _blocks[index + 1];
 
-            var normal = newInst.OpCode.FlowControl is FlowControl.Next or FlowControl.Call &&
-                (newInst.Previous is null || newInst.Previous.OpCode.Code != Code.Tail);
+
             if (before == nextBlock?.Leader?.Previous) //基本块末尾, 插入指令为后继或新block
             {
                 if (normal && ((nextBlock.prevEdges.Count == 0) ||
@@ -314,7 +338,7 @@ namespace MonoWeaver.CFG
                 else
                 {
                     var newBlock = new Block(newInst, region, StackDepthAt(newInst), _analyzer._method.Body);
-                    if (nextBlock != null && normal) nextBlock._stackDepthDirty = true;
+                    if (normal) nextBlock._stackDepthDirty = true;
                     ConnectionBlockForInstruction(newInst, newBlock, nextBlock);
                     _blocks.Insert(index + 1, newBlock); //新block
                 }
@@ -333,6 +357,12 @@ namespace MonoWeaver.CFG
         }
 
 
+        /// <summary>
+        /// 在replace前调用
+        /// </summary>
+        /// <param name="pos"></param>
+        /// <param name="newInst"></param>
+        /// <exception cref="Exception"></exception>
         public void Replace(Instruction pos, Instruction newInst)
         {
             var block = BlockByInstruction(pos);
@@ -372,17 +402,17 @@ namespace MonoWeaver.CFG
             block._stackDepthDirty = true;
 
             var tmpRegion = region;
-            while (region?.Start == pos)
+            while (tmpRegion?.Start == pos)
             {
-                region.Start = newInst;
-                region = region.ParentRegion;
+                tmpRegion.Start = newInst;
+                tmpRegion = tmpRegion.ParentRegion;
             }
 
             tmpRegion = region;
-            while (region?.End == pos)
+            while (tmpRegion?.End == pos)
             {
-                region.End = newInst;
-                region = region.ParentRegion;
+                tmpRegion.End = newInst;
+                tmpRegion = tmpRegion.ParentRegion;
             }
 
             block._stackDepthDirty = pos.PopCount(_method) + pos.PushCount() != newInst.PopCount(_method) + newInst.PushCount();
@@ -394,15 +424,41 @@ namespace MonoWeaver.CFG
         /// <param name="pos"></param>
         public void Remove(Instruction pos)
         {
+            
             var block = BlockByInstruction(pos);
-            if (pos.Next != null)
+            var moveTo = pos.Next ?? pos.Previous;
+            if (moveTo is null)  return;
+            var index =  _blocks.IndexOf(block);
+            var nextBlock = index == _blocks.Count - 1 ? null : _blocks[index + 1];
+            
+            var normal = pos.OpCode.FlowControl is FlowControl.Next or FlowControl.Call && 
+                         (pos.Previous is null || pos.Previous.OpCode.Code != Code.Tail);
+            if (!normal && block.Leader != pos && nextBlock != null)
             {
-                Replace(pos, pos.Next);
+                nextBlock.MoveAllEdgesTo(block);
             }
-            else
+            else if (block.Leader == pos) block.Leader = moveTo;
+
+            var region = RegionByInstruction(pos);
+            var tmpRegion = region;
+            while (tmpRegion?.Start == pos)
             {
-                Replace(pos, pos.Previous);
+                tmpRegion.Start = moveTo;
+                tmpRegion = tmpRegion.ParentRegion;
             }
+
+            tmpRegion = region;
+            while (tmpRegion?.End == pos)
+            {
+                tmpRegion.End = moveTo;
+                tmpRegion = tmpRegion.ParentRegion;
+            }
+
+        }
+
+        public void AddExceptionHandler()
+        {
+            //TODO:
         }
 
         public void Update()
@@ -414,16 +470,39 @@ namespace MonoWeaver.CFG
                 block.Edges.Clear();
                 var index = _blocks.IndexOf(block);
                 var nextBlock = index == _blocks.Count - 1 ? null : _blocks[index + 1];
-                var endInst = nextBlock is null ? _analyzer._method.Body.Instructions[_analyzer._method.Body.Instructions.Count] 
+                var endInst = nextBlock is null ? _analyzer._method.Body.Instructions[_analyzer._method.Body.Instructions.Count - 1] 
                     : nextBlock.Leader.Previous;
+                block._edgeDirty = false;
                 ConnectionBlockForInstruction(endInst, block, nextBlock);
             }
 
             dirtyBlocks = _blocks.Where(i => i._stackDepthDirty).ToList();
             var blockSet = new HashSet<Block>();
-            //TODO:
+            for(int i = 0; i < dirtyBlocks.Count; i++)
+            {
+                var block = dirtyBlocks[i];
+                if (blockSet.Contains(block)) continue;
+                blockSet.Add(block);
+                var index =  _blocks.IndexOf(block);
+                var nextBlock = index == _blocks.Count - 1 ? null : _blocks[index + 1];
+                var endInst = nextBlock?.Leader ??
+                              _analyzer._method.Body.Instructions[_analyzer._method.Body.Instructions.Count - 1];
+                block._stackDepthDirty = false;
+                var newDepth = StackDepthAt(endInst);
+                foreach (var edge in block.Edges)
+                {
+                    if (edge.To.EntryStackDepth != newDepth) //不考虑合流 合流等待analyzer验证
+                    {
+                        edge.To.EntryStackDepth = newDepth;
+                    }
+                    dirtyBlocks.Add(edge.To);
+                }
+            }
+        }
 
-          
+        private void UpdateEHBlocks()
+        {
+            
         }
 
         /// <summary>
@@ -492,7 +571,7 @@ namespace MonoWeaver.CFG
 
             for (int i = 0; i < _blocks.Count; i++)
             {
-                if (_blocks[i].Index > i)
+                if (_blocks[i].Index > index)
                     return _blocks[i - 1];
             }
             return _blocks[_blocks.Count - 1];
@@ -507,11 +586,11 @@ namespace MonoWeaver.CFG
 
             for (int i = 0; i < _regions.Count; i++)
             {
-                if (_regions[i].StartIndex > i)
+                if (_regions[i].StartIndex > index)
                     return stack.Peek();
-                else if (_regions[i].EndIndex > i)
+                else if (_regions[i].EndIndex > index)
                     stack.Push(_regions[i]);
-                else if (stack.Peek().EndIndex <= i)
+                else if (stack.Peek().EndIndex <= index)
                     stack.Pop();
             }
             throw new Exception(); //TODO:
