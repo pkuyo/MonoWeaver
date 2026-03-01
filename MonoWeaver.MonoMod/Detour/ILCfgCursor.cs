@@ -5,10 +5,18 @@ using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using MonoWeaver.CFG;
+using MonoWeaver.Utils;
 using MethodBody = Mono.Cecil.Cil.MethodBody;
 
 namespace MonoWeaver.MonoMod.Detour
 {
+    public enum StackDepthCmpType
+    {
+        Before,
+        After,
+        BeforePush,
+    }
+
     public partial class ILCfgCursor
     {
         public enum AutoBranchKind { Auto, Br, Leave }
@@ -43,9 +51,19 @@ namespace MonoWeaver.MonoMod.Detour
             throw new NotImplementedException();
         }
 
-        public void EmitRet(CursorModifyHandler handler)
+        public void EmitRet(CursorModifyHandler beforeRet = null)
         {
-            throw new NotImplementedException();
+            //TODO:异常边界
+            var depth = _innerCursor.Next == null ?
+                Graph.StackDepthAt(_innerCursor.Prev) + _innerCursor.Prev.PushCount() - _innerCursor.Prev.PopCount(_context.Method) :
+                Graph.StackDepthAt(_innerCursor.Next);
+            if(beforeRet is null)
+            {
+                depth -= _context.Method.ReturnType.IsVoid() ? 0 : 1;
+            }
+            for (int i = 0; i < depth; i++) Emit(OpCodes.Pop);
+            beforeRet?.Invoke(this);
+            Emit(OpCodes.Ret);
         }
 
         /*
@@ -55,9 +73,158 @@ namespace MonoWeaver.MonoMod.Detour
         }
         */
 
-        public bool TryGotoNextAtStackDepth(int depth, MoveType moveType = MoveType.Before)
+        public bool TryGotoNextAtStackDepth(int depth, out ILCfgCursor[] cursors, StackDepthCmpType cmpType = StackDepthCmpType.BeforePush,
+            MoveType moveType = MoveType.Before)
         {
-            throw new NotImplementedException();
+            if (moveType == MoveType.AfterLabel)
+                throw new ArgumentException("moveType cannot be AfterLabel when moving to stack depth");
+
+            var result = new List<ILCfgCursor>();
+            var cList = new List<(Instruction inst, int depth)>()
+            {
+                (Next, Graph.StackDepthAt(_innerCursor.Next) + cmpType switch
+                {
+                    StackDepthCmpType.Before => 0,
+                    StackDepthCmpType.After => - _innerCursor.Next.PopCount(_context.Method) + _innerCursor.Next.PushCount(),
+                    StackDepthCmpType.BeforePush => -_innerCursor.Next.PopCount(_context.Method),
+                    _ => throw new ArgumentOutOfRangeException()
+                }) //before inst
+            };
+            while (cList.Count > 0)
+            {
+                for (int i = cList.Count - 1; i >= 0; i--)
+                {
+                    var (inst, curDepth) = cList[i];
+                    var lastPop = inst.PopCount(_context.Method);
+                    var lastPush = inst.PushCount();
+                    if (curDepth == depth)
+                    {
+                        var c = new ILCfgCursor(Context, _innerCursor.Clone());
+                        if (moveType == MoveType.Before)
+                            c.Next = inst;
+                        else
+                            c.Prev = inst;
+                        result.Add(c);
+                        cList.RemoveAt(i);
+                    }
+                    if(inst.Next == null)
+                    {
+                        cList.RemoveAt(i);
+                        continue;
+                    }
+                    var block = Graph.BlockByInstruction(inst.Next);
+                    if (block.Leader == inst.Next)
+                    {
+                        foreach (var nextBlock in block.Edges)
+                        {
+                            var nextInst = nextBlock.To.Leader;
+                            var nextPop = nextInst.PopCount(_context.Method);
+                            var nextPush = nextInst.PushCount();
+                            cList.Add((nextInst, curDepth + cmpType switch
+                            {
+                                StackDepthCmpType.Before => -nextPop + nextPush,
+                                StackDepthCmpType.After => -lastPop + lastPush,
+                                StackDepthCmpType.BeforePush => -lastPush + nextPush,
+                                _ => throw new ArgumentOutOfRangeException()
+                            }));
+                        }
+                        cList.RemoveAt(i);
+                    }
+                    else
+                    {
+                        var nextInst = inst.Next;
+                        var nextPop = nextInst.PopCount(_context.Method);
+                        var nextPush = nextInst.PushCount();
+                        cList[i] = (nextInst, curDepth + cmpType switch
+                        {
+                            StackDepthCmpType.Before => -nextPop + nextPush,
+                            StackDepthCmpType.After => -lastPop + lastPush,
+                            StackDepthCmpType.BeforePush => -lastPush + nextPush,
+                            _ => throw new ArgumentOutOfRangeException()
+                        });
+                    }
+                }
+            }
+            cursors = result.ToArray();
+            return cursors.Length != 0;
+        }
+
+        public bool TryGotoPrevAtStackDepth(int depth, out ILCfgCursor[] cursors, StackDepthCmpType cmpType = StackDepthCmpType.BeforePush,
+            MoveType moveType = MoveType.Before)
+        {
+            if(moveType == MoveType.AfterLabel)
+                throw new ArgumentException("moveType cannot be AfterLabel when moving to stack depth");
+
+            var result = new List<ILCfgCursor>();
+            var cList = new List<(Instruction inst, int depth)>()
+            {
+                (Next, Graph.StackDepthAt(_innerCursor.Next) + cmpType switch
+                {
+                    StackDepthCmpType.Before => 0,
+                    StackDepthCmpType.After => - _innerCursor.Next.PopCount(_context.Method) + _innerCursor.Next.PushCount(),
+                    StackDepthCmpType.BeforePush => -_innerCursor.Next.PopCount(_context.Method),
+                    _ => throw new ArgumentOutOfRangeException()
+                }) //before inst
+            };
+            while (cList.Count > 0)
+            {
+                for(int i = cList.Count -1; i >=0; i--)
+                {
+                    var (inst, curDepth) = cList[i];
+                    var lastPop = inst.PopCount(_context.Method);
+                    var lastPush = inst.PushCount();
+                    if (curDepth == depth)
+                    {
+                        var c = new ILCfgCursor(Context, _innerCursor.Clone());
+                        if (moveType == MoveType.Before)
+                            c.Next = inst;
+                        else
+                            c.Prev = inst;
+                        result.Add(c);
+                        cList.RemoveAt(i);
+                    }
+               
+                    var block = Graph.BlockByInstruction(inst);
+                    if (block.Leader == inst)
+                    {
+                        foreach(var prevBlock in block.prevEdges)
+                        {
+                            var prevInst = Graph.NextBlock(prevBlock.From)?.Leader?.Previous 
+                                ?? _context.Body.Instructions[_context.Body.Instructions.Count - 1];
+                            var prevPop = prevInst.PopCount(_context.Method);
+                            var prevPush = prevInst.PushCount();
+                            cList.Add((prevInst, curDepth + cmpType switch
+                            {
+                                StackDepthCmpType.Before => prevPop - prevPush,
+                                StackDepthCmpType.After => lastPop - lastPush,
+                                StackDepthCmpType.BeforePush => lastPush - prevPush,
+                                _ => throw new ArgumentOutOfRangeException()
+                            }));
+                        }
+                        cList.RemoveAt(i);
+                    }
+                    else
+                    {
+                        if (inst.Previous == null)
+                        {
+                            cList.RemoveAt(i);
+                            continue;
+                        }
+                        var prev = inst.Previous;
+                        var prevPop = prev.PopCount(_context.Method);
+                        var prevPush = prev.PushCount();
+                        cList[i] = (prev, curDepth + cmpType switch
+                        {
+                            StackDepthCmpType.Before => prevPop - prevPush,
+                            StackDepthCmpType.After => lastPop - lastPush,
+                            StackDepthCmpType.BeforePush => lastPush - prevPush,
+                            _ => throw new ArgumentOutOfRangeException()
+                        });
+                    }
+                }
+            }
+            cursors = result.ToArray();
+            return cursors.Length != 0;
         }
 
         public bool TryGotoBlock(ILCFGraph.Block block, BlockPosition pos = BlockPosition.FirstInstruction)
@@ -65,9 +232,21 @@ namespace MonoWeaver.MonoMod.Detour
             throw new NotImplementedException();
         }
 
-        public void GotoNextAtStackDepth(int depth, MoveType moveType = MoveType.Before)
+        public ILCfgCursor[] GotoNextAtStackDepth(int depth, StackDepthCmpType cmpType = StackDepthCmpType.BeforePush,
+            MoveType moveType = MoveType.Before)
         {
-            throw new NotImplementedException();
+            if (!TryGotoNextAtStackDepth(depth, out var cursors, cmpType, moveType))
+                throw new KeyNotFoundException();
+            return cursors;
+        }
+
+
+        public ILCfgCursor[] GotoPrevAtStackDepth(int depth, StackDepthCmpType cmpType = StackDepthCmpType.BeforePush,
+            MoveType moveType = MoveType.Before)
+        {
+            if (!TryGotoPrevAtStackDepth(depth, out var cursors, cmpType, moveType))
+                   throw new KeyNotFoundException();
+            return cursors;
         }
 
         public void GotoBlock(ILCFGraph.Block block, BlockPosition pos = BlockPosition.FirstInstruction)

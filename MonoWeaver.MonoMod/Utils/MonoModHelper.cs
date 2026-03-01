@@ -8,7 +8,7 @@ namespace MonoWeaver.MonoMod.Utils
 {
     public static class MonoModHelper
     {
-        public static ILContext.Manipulator WithCFG(this ILCfgContext.CFGManipulator manipulator)
+        public static ILContext.Manipulator ToMaipulator(this ILCfgContext.CFGManipulator manipulator)
         {
             return il =>
             {

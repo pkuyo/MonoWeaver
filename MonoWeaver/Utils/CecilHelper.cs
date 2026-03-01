@@ -177,6 +177,8 @@ public static partial class CecilHelper
         }
     }
 
+    public static bool IsVoid(this TypeReference type) 
+        => type.Namespace == "System" && type.Name == "Void";
     
     public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full) 
         => new ILMethodAnalyzer(method, options);
@@ -814,7 +816,7 @@ public static partial class CecilHelper
         {
             if (inst.OpCode.Code is Code.Ret)
             {
-                return method.ReturnType.Name == "Void" && method.ReturnType.Namespace == "System"
+                return method.ReturnType.IsVoid()
                     ? 0 : 1;
             }
             throw new Exception();
@@ -828,7 +830,7 @@ public static partial class CecilHelper
         {
             throw new Exception(); //TODO:
         }
-        return (sig.ReturnType.Name == "Void" && sig.ReturnType.Namespace == "System") ? 0 : 1;
+        return (sig.ReturnType.IsVoid()) ? 0 : 1;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

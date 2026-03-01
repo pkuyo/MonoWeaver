@@ -7,6 +7,7 @@ using System.Linq;
 
 namespace MonoWeaver.CFG
 {
+    //TODO: Add Fucking income Label
     public partial class ILCFGraph
     {
         public sealed class Block(Instruction start, EHBlock.Region region, int depth, MethodBody body, bool stackDepthDirty = true) : IEquatable<Block>, IComparable<Block>
@@ -503,6 +504,14 @@ namespace MonoWeaver.CFG
         private void UpdateEHBlocks()
         {
             
+        }
+
+
+        public Block? NextBlock(Block block)
+        {
+            var index = _blocks.IndexOf(block);
+            if(index == -1 || index == _blocks.Count - 1) return null;
+            return _blocks[index + 1];
         }
 
         /// <summary>
