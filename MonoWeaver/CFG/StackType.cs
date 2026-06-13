@@ -101,21 +101,21 @@ namespace MonoWeaver.CFG
             var verifyType = VerificationType.BuiltIn;
             var builtInType = BuiltInType.None;
 
-            if (typeSystem.Boolean == cmpType || typeSystem.Byte == cmpType || typeSystem.SByte == cmpType ||
-                  typeSystem.Int16 == cmpType || typeSystem.UInt16 == cmpType || typeSystem.Char == cmpType ||
-                  typeSystem.Int32 == cmpType || typeSystem.UInt32 == cmpType)
+            if (cmpType.IsSameWith(typeSystem.Boolean) || cmpType.IsSameWith(typeSystem.Byte) || cmpType.IsSameWith(typeSystem.SByte) ||
+                  cmpType.IsSameWith(typeSystem.Int16) || cmpType.IsSameWith(typeSystem.UInt16) || cmpType.IsSameWith(typeSystem.Char) ||
+                  cmpType.IsSameWith(typeSystem.Int32) || cmpType.IsSameWith(typeSystem.UInt32))
             {
                 builtInType = BuiltInType.I4;
             }
-            else if (typeSystem.Int64 == cmpType || typeSystem.UInt64 == cmpType)
+            else if (cmpType.IsSameWith(typeSystem.Int64) || cmpType.IsSameWith(typeSystem.UInt64))
             {
                 builtInType = BuiltInType.I8;
             }
-            else if (typeSystem.Single == cmpType || typeSystem.Double == cmpType)
+            else if (cmpType.IsSameWith(typeSystem.Single) || cmpType.IsSameWith(typeSystem.Double))
             {
                 builtInType = BuiltInType.F;
             }
-            else if (typeSystem.IntPtr == cmpType || typeSystem.UIntPtr == cmpType)
+            else if (cmpType.IsSameWith(typeSystem.IntPtr) || cmpType.IsSameWith(typeSystem.UIntPtr))
             {
                 builtInType = BuiltInType.I;
             }
@@ -146,23 +146,23 @@ namespace MonoWeaver.CFG
             {
                 throw new Exception();
             }
-            if (typeSystem.Boolean == type || typeSystem.Byte == type || typeSystem.SByte == type)
+            if (type.IsSameWith(typeSystem.Boolean) || type.IsSameWith(typeSystem.Byte) || type.IsSameWith(typeSystem.SByte))
             {
                 type = typeSystem.Byte;
             }
-            else if(typeSystem.Int16 == type || typeSystem.UInt16 == type || typeSystem.Char == type)
+            else if(type.IsSameWith(typeSystem.Int16) || type.IsSameWith(typeSystem.UInt16) || type.IsSameWith(typeSystem.Char))
             {
                 type = typeSystem.Int16;
             }
-            else if(typeSystem.Int32 == type || typeSystem.UInt32 == type)
+            else if(type.IsSameWith(typeSystem.Int32) || type.IsSameWith(typeSystem.UInt32))
             {
                 type = typeSystem.Int32;
             }
-            else if (typeSystem.Int64 == type || typeSystem.UInt64 == type)
+            else if (type.IsSameWith(typeSystem.Int64) || type.IsSameWith(typeSystem.UInt64))
             {
                 type = typeSystem.Int64;
             }
-            else if (typeSystem.IntPtr == type || typeSystem.UIntPtr == type)
+            else if (type.IsSameWith(typeSystem.IntPtr) || type.IsSameWith(typeSystem.UIntPtr))
             {
                 type = typeSystem.IntPtr;
             }
@@ -196,6 +196,8 @@ namespace MonoWeaver.CFG
             BoxedType = boxedType;
             Flags = flags;
             Type = type;
+            _typeSig = type is null ? default : TypeSig.Create(type);
+            _boxedTypeSig = boxedType is null ? default : TypeSig.Create(boxedType);
         }
 
 
@@ -267,7 +269,7 @@ namespace MonoWeaver.CFG
             //装箱类型处理
             if (IsBoxedType && right.IsBoxedType)
             {
-                return BoxedType.IsSameWith(right.BoxedType);
+                return _boxedTypeSig == right._boxedTypeSig;
 
             }
             else if (right.IsBoxedType)
@@ -291,12 +293,12 @@ namespace MonoWeaver.CFG
             else if(VerifyType is VerificationType.ValueType)
             {
                 //值类型
-                return Type!.IsSameWith(right!.Type);
+                return _typeSig == right._typeSig;
             }
             else if (VerifyType is VerificationType.ByRef)
             {
-                //BtRef
-                if(Type!.IsSameWith(right!.Type))
+                //ByRef类型
+                if(_typeSig == right._typeSig)
                 {
                     if ((Flags & StackTypeFlags.ReadOnly) <= (right.Flags & StackTypeFlags.ReadOnly))
                         return true;
@@ -321,7 +323,7 @@ namespace MonoWeaver.CFG
                 var mergedFlags =
                     ((Flags & other.Flags) & ~RO)   // 其他位取与
                   | ((Flags | other.Flags) & RO);
-                return Type!.IsSameWith(other!.Type) ? new StackType(Type, BuiltInType, VerifyType, //Readonly取或 其他Flag取与
+                return _typeSig == other._typeSig ? new StackType(Type, BuiltInType, VerifyType, //ReadOnly取或，其他标志取与
                    mergedFlags) : Invalid; 
             }
 
@@ -340,12 +342,12 @@ namespace MonoWeaver.CFG
                 return this;
 
 
-            //引用判断是否为Boxed类型不一致，后找基类
+            //引用判断是否为装箱类型不一致，后找基类
             if (other.Type is not null && Type is not null)
             {
-                if(other.IsBoxedType && IsBoxedType) //只能是Boxed情况
+                if(other.IsBoxedType && IsBoxedType) //只能是装箱情况
                 {
-                    return Create(other.Type); //去除Boxed类型信息
+                    return Create(other.Type); //去除装箱类型信息
                 }
 
                 if(ResolveWithCache(Type)?.IsInterface == true ||
@@ -378,10 +380,15 @@ namespace MonoWeaver.CFG
             if (VerifyType is VerificationType.BuiltIn && BuiltInType != BuiltInType.None) //为了弱智PTR
             {
                 if (Type is null) return other.Type is null;
-                return other.Type is not null && Type.IsSameWith(other.Type);
+                return other.Type is not null && _typeSig == other._typeSig;
             }
-            //非null引用类型和值类型
-            return (BoxedType?.IsSameWith(other.BoxedType) ?? true) && Type!.IsSameWith(other!.Type);
+            if (_typeSig != other._typeSig)
+                return false;
+
+            if (_boxedTypeSig.IsValid != other._boxedTypeSig.IsValid)
+                return false;
+
+            return !_boxedTypeSig.IsValid || _boxedTypeSig == other._boxedTypeSig;
             
         }
 
@@ -406,8 +413,8 @@ namespace MonoWeaver.CFG
                 int h = (int)VerifyType;
                 h = (h * 397) ^ (int)BuiltInType;
                 h = (h * 397) ^ (int)Flags;
-                h = (h * 397) ^ (Type != null ? TypeSig.Create(Type).GetHashCode() : 0);
-                h = (h * 397) ^ (BoxedType != null ? TypeSig.Create(BoxedType).GetHashCode() : 0);
+                h = (h * 397) ^ _typeSig.GetHashCode();
+                h = (h * 397) ^ _boxedTypeSig.GetHashCode();
                 return h;
             }
         }
@@ -421,5 +428,8 @@ namespace MonoWeaver.CFG
         public readonly TypeReference? Type;
 
         public readonly TypeReference? BoxedType;
+
+        private readonly TypeSig _typeSig;
+        private readonly TypeSig _boxedTypeSig;
     }
 }

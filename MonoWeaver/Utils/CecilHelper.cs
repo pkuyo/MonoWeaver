@@ -23,9 +23,9 @@ public static partial class CecilHelper
     private static readonly Dictionary<ModuleDefinition, TypeDefinition> _arrayDefs = new();
     private static readonly Dictionary<ModuleDefinition, TypeReference[]> _arrayInfs = new();
 
-    private static readonly LruCache<(TypeSig from, TypeSig to), bool> _assignableCache = new(8192);
-    private static readonly LruCache<TypeReference, TypeSig> _typeSigCache = new(8192);
-    private static readonly LruCache<(int metaToken, Hash128 hash), TypeDefinition> _typeCache = new(8192);
+    private static readonly Dictionary<(TypeSig to, TypeSig from, bool strict), bool> _assignableCache = new(8192);
+    private static readonly Dictionary<TypeReference, TypeSig> _typeSigCache = new(8192);
+    private static readonly Dictionary<TypeSig, TypeDefinition> _typeCache = new(8192);
 
 
     internal static class InterfaceTraversalCache
@@ -61,124 +61,10 @@ public static partial class CecilHelper
 
 public static partial class CecilHelper
 {
-    
-    public readonly struct TypeSig : IEquatable<TypeSig>
-    {
-        private readonly KeyKind _kind;
-
-
-        private readonly Guid _moduleMvid;
-        private readonly Hash128 _fullNameHash;
-
-        private readonly Guid _ownerModuleMvid;
-        private readonly Hash128 _ownerFullNameHash;
-        private readonly GenericParameterType _gpType;
-        private readonly int _gpPosition;
-
-
-        private TypeSig(Guid moduleMvid, Hash128 fullNameHash)
-        {
-            _kind = KeyKind.Normal;
-            _moduleMvid = moduleMvid;
-            _fullNameHash = fullNameHash;
-
-            _ownerModuleMvid = Guid.Empty;
-            _ownerFullNameHash = default;
-            _gpType = default;
-            _gpPosition = 0;
-        }
-
-        private TypeSig(Guid ownerModuleMvid, Hash128 ownerFullNameHash, GenericParameterType gpType, int gpPosition)
-        {
-            _kind = KeyKind.GenericParameter;
-
-            _ownerModuleMvid = ownerModuleMvid;
-            _ownerFullNameHash = ownerFullNameHash;
-            _gpType = gpType;
-            _gpPosition = gpPosition;
-
-            _moduleMvid = Guid.Empty;
-            _fullNameHash = default;
-        }
-
-        public static TypeSig Create(TypeReference t)
-        {
-            if (_typeSigCache.TryGetValue(t, out TypeSig typeSig))
-                return typeSig;
-
-            if (t is GenericParameter gp)
-            {
-
-                if (gp.Owner is TypeReference tr)
-                    return new TypeSig(ResolveWithCache(t)?.Module?.Mvid ?? tr.Module?.Mvid ?? Guid.Empty,
-                        HashUtils.GetTypeHash(tr), gp.Type, gp.Position);
-
-                if (gp.Owner is MethodReference mr)
-                    return new TypeSig(ResolveWithCache(mr.DeclaringType)?.Module?.Mvid ?? mr.DeclaringType?.Module?.Mvid ?? Guid.Empty,
-                        HashUtils.GetMethodHash(mr), gp.Type, gp.Position);
-
-                typeSig = new TypeSig(Guid.Empty, HashUtils.GetTypeHash(gp), gp.Type, gp.Position);
-            }
-
-            typeSig = new TypeSig(ResolveWithCache(t)?.Module?.Mvid ?? t.Module?.Mvid ?? Guid.Empty, HashUtils.GetTypeHash(t));
-            _typeSigCache.Put(t, typeSig);
-            return typeSig;
-        }
-
-        public bool Equals(TypeSig other)
-        {
-            if (_kind != other._kind) return false;
-
-            if (_kind == KeyKind.Normal)
-            {
-                return _moduleMvid == other._moduleMvid
-                       && _fullNameHash == other._fullNameHash;
-            }
-
-            // GenericParameter
-            return _ownerModuleMvid == other._ownerModuleMvid
-                   && _ownerFullNameHash == other._ownerFullNameHash
-                   && _gpType == other._gpType
-                   && _gpPosition == other._gpPosition;
-
-
-        }
-
-        public override bool Equals(object? obj) => obj is TypeSig k && Equals(k);
-
-        public override int GetHashCode()
-        {
-            unchecked
-            {
-                int h = 17;
-                h = h * 31 + (int)_kind;
-
-                if (_kind == KeyKind.Normal)
-                {
-                    h = h * 31 + _moduleMvid.GetHashCode();
-                    h = h * 31 + _fullNameHash.GetHashCode();
-                }
-                else
-                {
-                    h = h * 31 + _ownerModuleMvid.GetHashCode();
-                    h = h * 31 + _ownerFullNameHash.GetHashCode();
-                    h = h * 31 + (int)_gpType;
-                    h = h * 31 + _gpPosition;
-                }
-
-                return h;
-            }
-        }
-        
-        private enum KeyKind : byte
-        {
-            Normal = 0,
-            GenericParameter = 1
-        }
-    }
+   
 
     public static bool IsVoid(this TypeReference type) 
-        => type.Namespace == "System" && type.Name == "Void";
+        => TypeSig.Create(type) == TypeSig.Void;
     
     public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full) 
         => new ILMethodAnalyzer(method, options);
@@ -190,17 +76,17 @@ public static partial class CecilHelper
  
 
     public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
-    => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
+    => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig to, TypeSig from, bool strict)>());
 
     public static bool IsAssignableTo(this TypeReference from, TypeReference? to)
-        => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig from, TypeSig to)>());
+        => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig to, TypeSig from, bool strict)>());
 
     //不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在别的地方实现该功能）
     public static bool IsILStackAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig from, TypeSig to)>());
+        => IsAssignableFromCore(to, from, true, new HashSet<(TypeSig to, TypeSig from, bool strict)>());
 
     public static bool IsAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig from, TypeSig to)>());
+        => IsAssignableFromCore(to, from, false, new HashSet<(TypeSig to, TypeSig from, bool strict)>());
 
     public static TypeReference? BaseType(this TypeReference? type)
     {
@@ -265,17 +151,17 @@ public static partial class CecilHelper
         }
     }
 
-    private static bool IsAssignableFromCore(TypeReference? to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
+    private static bool IsAssignableFromCore(TypeReference? to, TypeReference? from, bool strict, HashSet<(TypeSig to, TypeSig from, bool strict)> guard)
     {
         var result = IsAssignableFromInternal(to, from, strict, guard);
         if (from != null && to != null)
         {
-             _assignableCache.Put((TypeSig.Create(to), TypeSig.Create(from)), result);
+             _assignableCache[(TypeSig.Create(to), TypeSig.Create(from), strict)] = result;
         }
         return result;
     }
     
-    private static bool IsAssignableFromInternal(TypeReference? to, TypeReference? from, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
+    private static bool IsAssignableFromInternal(TypeReference? to, TypeReference? from, bool strict, HashSet<(TypeSig to, TypeSig from, bool strict)> guard)
     {
         while (true)
         {
@@ -296,7 +182,10 @@ public static partial class CecilHelper
                 if (to.IsValueType && !from.IsValueType) return false;
             }
 
-            if (to.Name == "Object" && to.Namespace == "System")
+            var toKey = TypeSig.Create(to);
+            var fromKey = TypeSig.Create(from);
+
+            if (toKey == TypeSig.Object)
             {
                 return from is not ByReferenceType
                        && from is not PointerType
@@ -304,14 +193,13 @@ public static partial class CecilHelper
                                                            //这里不需要额外判断
             }
 
-            if (from.Name == "Object" && from.Namespace == "System")
+            if (fromKey == TypeSig.Object)
             {
                 return false;
             }
 
-            var toKey = TypeSig.Create(to);
-            var fromKey = TypeSig.Create(from);
-            var hash = (toKey, fromKey);
+
+            var hash = (toKey, fromKey, strict);
 
           
             if (fromKey.Equals(toKey)) 
@@ -370,7 +258,7 @@ public static partial class CecilHelper
             var toDef = ResolveWithCache(to);
 
             //nullable
-            if (toDef?.Name == "Nullable`1" && toDef.Namespace == "System" && to is GenericInstanceType instTo)
+            if (toDef != null && TypeSig.Create(toDef) == TypeSig.Nullable && to is GenericInstanceType instTo)
             {
                 return IsSameWith(instTo.GenericArguments[0], from);
             }
@@ -391,7 +279,7 @@ public static partial class CecilHelper
         }
     }
 
-    private static bool ImplementsInterface(TypeReference from, TypeReference toInterface, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
+    private static bool ImplementsInterface(TypeReference from, TypeReference toInterface, bool strict, HashSet<(TypeSig to, TypeSig from, bool strict)> guard)
     {
         var list = new List<TypeReference>();
         CollectAllInterfaces(from, list);
@@ -501,11 +389,11 @@ public static partial class CecilHelper
             var index = 0;
             foreach (var g in new[]
                      {
-                         ImportCorelibType(mod, "System.Collections.Generic", "IEnumerable`1"),
-                         ImportCorelibType(mod, "System.Collections.Generic", "ICollection`1"),
-                         ImportCorelibType(mod, "System.Collections.Generic", "IList`1"),
-                         ImportCorelibType(mod, "System.Collections.Generic", "IReadOnlyCollection`1"),
-                         ImportCorelibType(mod, "System.Collections.Generic", "IReadOnlyList`1"),
+                         mod.ImportReference(typeof(IEnumerable<>)),
+                         mod.ImportReference(typeof(ICollection<>)),
+                         mod.ImportReference(typeof(IList<>)),
+                         mod.ImportReference(typeof(IReadOnlyCollection<>)),
+                         mod.ImportReference(typeof(IReadOnlyList<>)),
                      })
             {
                 array[index++] = g;
@@ -516,23 +404,17 @@ public static partial class CecilHelper
         }
     }
 
-    private static TypeReference ImportCorelibType(ModuleDefinition mod, string @namespace, string name)
-    {
-        var td = new TypeReference(@namespace, name, mod, mod.TypeSystem.CoreLibrary);
-        return mod.ImportReference(td);
-    }
-
     private static TypeReference SystemArrayRef(ModuleDefinition module)
     {
         if (_arrayDefs.TryGetValue(module, out var array))
             return array;
-        _arrayDefs[module] = array = ImportCorelibType(module, "System", "Array").Resolve();
+        _arrayDefs[module] = array = module.ImportReference(typeof(Array)).Resolve();
         return array;
     }
 
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
         bool strict,
-        HashSet<(TypeSig from, TypeSig to)> guard, bool isArrayType)
+        HashSet<(TypeSig to, TypeSig from, bool strict)> guard, bool isArrayType)
     {
         if (target.GenericArguments.Count != source.GenericArguments.Count)
             return false;
@@ -597,26 +479,26 @@ public static partial class CecilHelper
 
 
 
-    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, HashSet<(TypeSig from, TypeSig to)> guard)
+    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, HashSet<(TypeSig to, TypeSig from, bool strict)> guard)
     {
         to = to.StripType();
+        var toKey = TypeSig.Create(to);
 
         // T[] -> System.Array
-        if (to.Namespace == "System")
+        if (toKey == TypeSig.Array || toKey == TypeSig.ICloneable)
         {
-            if (to.Name is "Array" or "ICloneable")
-                return true;
+            return true;
         }
 
         // T[] -> 非泛型 IEnumerable/ICollection/IList
-        else if (to.Namespace == "System.Collections")
-        { 
-            if (to.Name is "IEnumerable"
-                      or "ICollection"
-                      or "IList"
-                      or "IStructuralComparable")
+        if (toKey == TypeSig.SystemCollections.IEnumerable
+            || toKey == TypeSig.SystemCollections.ICollection
+            || toKey == TypeSig.SystemCollections.IList
+            || toKey == TypeSig.SystemCollections.IStructuralComparable)
+        {
             return true;
         }
+
         // 数组 -> 数组 (处理协变)
         if (to is ArrayType toArr)
         {
@@ -635,7 +517,7 @@ public static partial class CecilHelper
     }
 
     private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool strict,
-        HashSet<(TypeSig from, TypeSig to)> guard)
+        HashSet<(TypeSig to, TypeSig from, bool strict)> guard)
     {
         // 对每个显式约束：where T : C, IFoo 处理，假定T为每一个约束类型进行赋值比较判断
         foreach (var c in fromGp.Constraints)
@@ -647,15 +529,16 @@ public static partial class CecilHelper
         }
 
         var constraint = fromGp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
+        var toKey = TypeSig.Create(to);
         switch (constraint)
         {
             case GenericParameterAttributes.ReferenceTypeConstraint:
-                return to.Name == "Object" && to.Namespace == "System";
+                return toKey == TypeSig.Object;
             case GenericParameterAttributes.NotNullableValueTypeConstraint:
                 if (strict) return false;
-                return to.Name is "Object" or "ValueType" && to.Namespace is "System";
+                return toKey == TypeSig.Object || toKey == TypeSig.ValueType;
         }
-        return to.Name == "Object" && to.Namespace == "System" && !strict;
+        return toKey == TypeSig.Object && !strict;
     }
 
 
@@ -737,13 +620,26 @@ public static partial class CecilHelper
     {
         if (t is null)
             return null;
-        if (_typeCache.TryGetValue((t.MetadataToken.ToInt32(), HashUtils.GetTypeHash(t)), out var def1))
+
+        // Mono.Cecil 的Resolve()针对TypeSpecification会调用GetElementType().
+        // 缓存的话需要List`1这种def而不是元素def.
+        TypeReference keyType;
+        try
         {
-            return def1;
+            keyType = t.GetElementType();
         }
-        var def = t.Resolve();
-        if(def is not null)
-            _typeCache.Put((t.MetadataToken.ToInt32(), HashUtils.GetTypeHash(t)), def);
+        catch
+        {
+            keyType = t;
+        }
+
+        var key = TypeSig.Create(keyType);
+        if (_typeCache.TryGetValue(key, out var def1))
+            return def1;
+
+        var def = TryResolve(keyType);
+        if (def is not null)
+            _typeCache[key] = def;
         return def;
     }
 

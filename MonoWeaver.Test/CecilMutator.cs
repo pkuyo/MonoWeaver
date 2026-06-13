@@ -484,7 +484,7 @@ public static class CecilMutator
         var ehFilter = new ExceptionHandler(ExceptionHandlerType.Filter)
         {
             TryStart = t0,
-            TryEnd = f0,              // exclusive
+            TryEnd = f0,              // 不包含终点
             FilterStart = f0,
             HandlerStart = h0,
             HandlerEnd = afterFilterHandler

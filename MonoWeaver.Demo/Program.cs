@@ -23,7 +23,7 @@
             {
                 int iterations = GetArgInt(args, "--n", 200_0000);
                 int seed = GetArgInt(args, "--seed", 20260304);
-                int catalogSize = GetArgInt(args, "--catalog", 80);     // 候选类型数量（小）
+                int catalogSize = GetArgInt(args, "--catalog", 80);     // 候选类型数量（较小）
                 int hotSize = GetArgInt(args, "--hot", 14);             // 热门类型数量（更小）
                 int maxMismatchesToPrint = GetArgInt(args, "--print", 50);
 
@@ -83,6 +83,7 @@
                         // Cecil
                         var trTarget = ImportCached(m, importCache, target);
                         var trSource = ImportCached(m, importCache, source);
+                        trTarget.IsAssignableFrom(trSource); //预加载
 
                         t0 = Stopwatch.GetTimestamp();
                         bool cecil = trTarget.IsAssignableFrom(trSource);
