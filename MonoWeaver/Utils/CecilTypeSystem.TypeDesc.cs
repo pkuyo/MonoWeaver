@@ -5,7 +5,7 @@ using System.Threading;
 
 namespace MonoWeaver.Utils;
 
-public static partial class CecilHelper
+public static partial class CecilTypeSystem
 {
     private sealed class TypeDesc
     {

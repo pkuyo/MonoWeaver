@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace MonoWeaver.Utils;
 
-public static partial class CecilHelper
+public static partial class CecilTypeSystem
 {
     /// <summary>
     ///类型签名 id。

@@ -2,7 +2,7 @@
 using MonoWeaver.Utils;
 using System;
 using System.Runtime.CompilerServices;
-using static MonoWeaver.Utils.CecilHelper;
+using static MonoWeaver.Utils.CecilTypeSystem;
 namespace MonoWeaver.CFG
 {
     /// <summary>
@@ -55,7 +55,7 @@ namespace MonoWeaver.CFG
         ByRef = 2,      //有TypeRef
         O = 3,          //除null有TypeRef
         ValueType = 4,  //有TypeRef
-        TypeRef = 5,
+        TypedRef = 5,
     }
     
 
@@ -79,7 +79,7 @@ namespace MonoWeaver.CFG
         public static readonly StackType I = new StackType(BuiltInType.I);
         public static readonly StackType Null = new StackType(BuiltInType.Null);
         public static readonly StackType Invalid = new StackType(BuiltInType.None);
-        public static readonly StackType TypeRef = new StackType(null, BuiltInType.None, VerificationType.TypeRef, StackTypeFlags.None);
+        public static readonly StackType TypeRef = new StackType(null, BuiltInType.None, VerificationType.TypedRef, StackTypeFlags.None);
 
         public static StackType Create(TypeReference type, StackTypeFlags flag = StackTypeFlags.None)
         {

@@ -1152,9 +1152,28 @@ public partial class ILMethodAnalyzer
                             AnalyzeCF_EvalStackPush(localStack, ref node, retType, inst);
                         }
                         break;
-                    default:
+                    case StackBehaviour.Push1:
+                        retType = VerifyPush1(inst, retType);
                         AnalyzeCF_EvalStackPush(localStack, ref node, retType, inst);
                         break;
+                    case StackBehaviour.Pushi:
+                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.I4, inst);
+                        break;
+                    case StackBehaviour.Pushi8:
+                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.I8, inst);
+                        break;
+                    case StackBehaviour.Pushr4:
+                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.F, inst);
+                        break;
+                    case StackBehaviour.Pushr8:
+                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.F, inst);
+                        break;
+                    case StackBehaviour.Pushref:
+                        retType = VerifyPushref(inst, retType);
+                        AnalyzeCF_EvalStackPush(localStack, ref node, retType, inst);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException();
                 }
                 if (VerifyLocalInit)
                 {
