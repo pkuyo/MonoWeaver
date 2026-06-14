@@ -1,5 +1,6 @@
 ﻿using Mono.Cecil;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -34,23 +35,16 @@ public static partial class CecilHelper
         {
             if (t == null) throw new ArgumentNullException(nameof(t));
 
-            lock (_typeSigSync)
-            {
-                if (_typeSigCache.TryGetValue(t, out var cached))
-                    return cached;
-            }
+
+            if (_typeSigCache.TryGetValue(t, out var cached))
+                return cached;
+
 
             var key = TypeSigKey.Create(t);
+            var sig = new TypeSig(InternTypeSigKey(key));
 
-            lock (_typeSigSync)
-            {
-                if (_typeSigCache.TryGetValue(t, out var cached))
-                    return cached;
+            return _typeSigCache.GetOrAdd(t, sig);
 
-                var sig = new TypeSig(InternTypeSigKey(key));
-                _typeSigCache[t] = sig;
-                return sig;
-            }
         }
 
         public bool Equals(TypeSig other) => _id == other._id;
@@ -178,21 +172,19 @@ public static partial class CecilHelper
         }
     }
 
-    private static readonly object _typeSigSync = new();
-    private static readonly Dictionary<TypeSigKey, int> _typeSigInterner = new();
+    private static readonly ConcurrentDictionary<TypeSigKey, int> _typeSigInterner = new();
     private static int _nextTypeSigId = 1;
 
     private static int InternTypeSigKey(TypeSigKey key)
     {
-        lock (_typeSigSync)
-        {
-            if (_typeSigInterner.TryGetValue(key, out var id))
-                return id;
-
-            id = _nextTypeSigId++;
-            _typeSigInterner.Add(key, id);
+        if (_typeSigInterner.TryGetValue(key, out var id))
             return id;
-        }
+
+        id = Interlocked.Increment(ref _nextTypeSigId);
+        if (id <= 0)
+            throw new InvalidOperationException("TypeSig id space exhausted.");
+
+        return _typeSigInterner.GetOrAdd(key, id);
     }
 
     private enum TypeSigKind : byte

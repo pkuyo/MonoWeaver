@@ -83,7 +83,6 @@
                         // Cecil
                         var trTarget = ImportCached(m, importCache, target);
                         var trSource = ImportCached(m, importCache, source);
-                        trTarget.IsAssignableFrom(trSource); //预加载
 
                         t0 = Stopwatch.GetTimestamp();
                         bool cecil = trTarget.IsAssignableFrom(trSource);

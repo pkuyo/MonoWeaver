@@ -363,3 +363,7 @@ MigrationBackup/
 FodyWeavers.xsd
 
 .idea/
+
+
+MonoWeaver.CoreClrToolsDemo/
+Compare-CoreClrTools.ps1
