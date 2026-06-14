@@ -1,8 +1,11 @@
 ﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
+using MonoWeaver.Utils;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Drawing;
+using System.Net;
 using System.Runtime.CompilerServices;
 
 namespace MonoWeaver.CFG;
@@ -18,7 +21,98 @@ public partial class ILMethodAnalyzer
         return null;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyTypeOperand(Instruction inst, out TypeReference type)
+    {
+        if (inst.Operand is TypeReference operand)
+        {
+            type = operand;
+            return true;
+        }
 
+        type = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(TypeReference),
+            inst.Operand?.GetType() ?? typeof(void), inst));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyMethodOperand(Instruction inst, out MethodReference method)
+    {
+        if (inst.Operand is MethodReference operand)
+        {
+            method = operand;
+            return true;
+        }
+
+        method = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MethodReference),
+            inst.Operand?.GetType() ?? typeof(void), inst));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyFieldOperand(Instruction inst, out FieldReference field)
+    {
+        if (inst.Operand is FieldReference operand)
+        {
+            field = operand;
+            return true;
+        }
+
+        field = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(FieldReference),
+            inst.Operand?.GetType() ?? typeof(void), inst));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyMemberOperand(Instruction inst, out MemberReference member)
+    {
+        if (inst.Operand is MemberReference operand)
+        {
+            member = operand;
+            return true;
+        }
+
+        member = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MemberReference),
+            inst.Operand?.GetType() ?? typeof(void), inst));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyVarOperand(Instruction inst, out VariableReference variable)
+    {
+        if (inst.Operand is VariableReference operand)
+        {
+            variable = operand;
+            return true;
+        }
+
+        variable = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(VariableReference),
+            inst.Operand?.GetType() ?? typeof(void), inst));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyParameterOperand(Instruction inst, out ParameterReference param)
+    {
+        if (inst.Operand is ParameterReference operand)
+        {
+            param = operand;
+            return true;
+        }
+
+        param = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(ParameterReference),
+            inst.Operand?.GetType() ?? typeof(void), inst));
+        return false;
+    }
+
+    /// TypeReference走隐式类型转换
+    /// 否则built in会出现问题
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private StackType VerifyType(StackType type1, StackType type2, Instruction inst)
     {
@@ -30,6 +124,7 @@ public partial class ILMethodAnalyzer
         return type2;
     }
 
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private StackType VerifyValueType(StackType type1, Instruction inst)
     {
@@ -40,20 +135,14 @@ public partial class ILMethodAnalyzer
 
         if (inst.OpCode.Code is Code.Box)
         {
-            if (inst.Operand is not TypeReference boxType)
-            {
-                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(TypeReference),
-                    inst.Operand?.GetType() ?? typeof(void), inst));
+            if (!VerifyTypeOperand(inst, out var boxType))
                 return StackType.Invalid;
-            }
 
             var expected = StackType.Create(boxType);
             if (!type1.StackValueEqualsTo(expected))
             {
                 ReportStackTypeMismatch(expected, type1, inst);
             }
-
-            return boxType.IsValueType ? StackType.CreateBoxed(boxType) : StackType.Create(boxType);
         }
 
         return type1;
@@ -95,7 +184,7 @@ public partial class ILMethodAnalyzer
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackType VerifyInt(StackType type1, Instruction inst)
+    private StackType VerifyInt(in StackType type1, Instruction inst)
     {
         if (!IsIntegerStackType(type1))
         {
@@ -106,33 +195,25 @@ public partial class ILMethodAnalyzer
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackType VerifyByRef(StackType type1, Instruction inst)
+    private StackType VerifyByRef(in StackType type1, TypeReference expectType, Instruction inst)
     {
-        if (inst.OpCode.Code is Code.Refanyval)
+       
+        if (type1.VerifyType != VerificationType.ByRef)
         {
-            VerifyType(type1, StackType.TypeRef, inst);
-
-            if (inst.Operand is not TypeReference targetType)
-            {
-                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(TypeReference),
-                    inst.Operand?.GetType() ?? typeof(void), inst));
-                return StackType.Invalid;
-            }
-
-            return StackType.CreateByRef(targetType);
+            ReportStackTypeMismatch("byref type", type1, inst);
         }
-
-        if (type1.VerifyType is not VerificationType.ByRef)
+     
+        if(!type1.Type.IsSameWith(expectType))
         {
-            ReportStackTypeMismatch("managed pointer", type1, inst);
+            ReportDiagnostic(CFGDiagnostic.TypeMismatch(expectType,
+                type1.Type, inst));
             return StackType.Invalid;
         }
-
         return type1;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackType VerifyFloat(StackType type1, Instruction inst)
+    private StackType VerifyFloat(in StackType type1, Instruction inst)
     {
         if (type1.BuiltInType is not BuiltInType.F)
         {
@@ -168,7 +249,7 @@ public partial class ILMethodAnalyzer
         if (type == StackType.Invalid)
             return "invalid";
 
-        if (type == StackType.TypeRef)
+        if (type == StackType.TypedRef)
             return "typedref";
 
         if (type.BuiltInType is not BuiltInType.None)
@@ -200,11 +281,12 @@ public partial class ILMethodAnalyzer
             case Code.Stloc_1:
             case Code.Stloc_2:
             case Code.Stloc_3:
-            case Code.Starg_S:
-            case Code.Stloc_S:
                 break;
             case Code.Box:
-                return VerifyValueType(stacks[0], inst);
+                {
+                    var type = VerifyValueType(stacks[0], inst);
+                    return type.IsInvalid ? StackType.Create(module.TypeSystem.Object) : StackType.CreateBoxed(type.Type!);
+                }
             case Code.Ckfinite:
                 return VerifyType(stacks[0], StackType.F, inst);
             case Code.Conv_I1:
@@ -252,7 +334,12 @@ public partial class ILMethodAnalyzer
             case Code.Refanytype:
                 return VerifyType(stacks[0], module.TypeSystem.TypedReference, inst);
             case Code.Refanyval:
-                return VerifyByRef(stacks[0], inst);
+                {
+                    if (!VerifyTypeOperand(inst, out var targetType))
+                        return StackType.Invalid;
+
+                    return VerifyByRef(stacks[0], targetType, inst);
+                }
             case Code.Starg:
                 {
                     if (inst.Operand is not ParameterReference pr)
@@ -286,12 +373,9 @@ public partial class ILMethodAnalyzer
                 }
             case Code.Stsfld:
                 {
-                    if (inst.Operand is not FieldReference field)
-                    {
-                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(FieldReference),
-                            inst.Operand?.GetType() ?? typeof(void), inst));
+                    if (!VerifyFieldOperand(inst, out var field))
                         return StackType.Invalid;
-                    }
+
                     stacks[0] = field.FieldType;
                     return StackType.Invalid;
                 }
@@ -305,53 +389,77 @@ public partial class ILMethodAnalyzer
     private StackType VerifyPop1_pop1(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
+        var a = stacks[0];
+        var b = stacks[1];
         switch (inst.OpCode.Code)
         {
-            case Code.Beq_S:
-            case Code.Bge_S:
-            case Code.Bgt_S:
-            case Code.Ble_S:
-            case Code.Blt_S:
-            case Code.Bne_Un_S:
-            case Code.Bge_Un_S:
-            case Code.Bgt_Un_S:
-            case Code.Ble_Un_S:
-            case Code.Blt_Un_S:
             case Code.Beq:
+            case Code.Bne_Un:
+            case Code.Ceq:
+                {
+                    VerifyComparable(a, b, inst, CompareKind.Equality);
+                    break;
+                }
+            case Code.Cgt_Un:
+                {
+                    VerifyComparable(a, b, inst, CompareKind.CgtUn);
+                    break;
+                }
             case Code.Bge:
             case Code.Bgt:
             case Code.Ble:
             case Code.Blt:
-            case Code.Bne_Un:
             case Code.Bge_Un:
             case Code.Bgt_Un:
             case Code.Ble_Un:
             case Code.Blt_Un:
+            case Code.Cgt:
+            case Code.Clt:
+            case Code.Clt_Un:
+                {
+                    VerifyComparable(a, b, inst, CompareKind.Ordered);
+                    break;
+                }
+
             case Code.Add:
             case Code.Sub:
             case Code.Mul:
             case Code.Div:
-            case Code.Div_Un:
             case Code.Rem:
-            case Code.Rem_Un:
+                {
+                    VerifyBinary(a, b, inst, BinaryKind.Arithmetic);
+                    break;
+                }
             case Code.And:
             case Code.Or:
             case Code.Xor:
+            case Code.Div_Un:
+            case Code.Rem_Un:
+                {
+                    VerifyBinary(a, b, inst, BinaryKind.Integer);
+                    break;
+                }
             case Code.Shl:
             case Code.Shr:
             case Code.Shr_Un:
+                {
+                    VerifyBinary(a, b, inst, BinaryKind.Shift);
+                    break;
+                }
             case Code.Add_Ovf:
-            case Code.Add_Ovf_Un:
             case Code.Mul_Ovf:
             case Code.Mul_Ovf_Un:
             case Code.Sub_Ovf:
+                {
+                    VerifyBinary(a, b, inst, BinaryKind.Overflow);
+                    break;
+                }
             case Code.Sub_Ovf_Un:
-            case Code.Ceq:
-            case Code.Cgt:
-            case Code.Cgt_Un:
-            case Code.Clt:
-            case Code.Clt_Un:
-                break;
+            case Code.Add_Ovf_Un:
+                {
+                    VerifyBinary(a, b, inst, BinaryKind.OverflowUnsigned);
+                    break;
+                }
             default:
                 throw new ArgumentOutOfRangeException();
         }
@@ -361,9 +469,19 @@ public partial class ILMethodAnalyzer
     private StackType VerifyPopi_pop1(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
+        var value = stacks[0];
+        var address = stacks[1]; //I/I4/&
         switch (inst.OpCode.Code)
         {
             case Code.Stobj:
+                if (!VerifyTypeOperand(inst, out var targetType))
+                    return StackType.Invalid;
+
+                VerifyType(value, targetType, inst);
+                if (!IsIntegerNative(address))
+                {
+                    VerifyByRef(address, targetType, inst);
+                }
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -374,9 +492,16 @@ public partial class ILMethodAnalyzer
     private StackType VerifyPopref_pop1(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
+        var value = stacks[0];
+        var obj = stacks[1]; //&
         switch (inst.OpCode.Code)
         {
             case Code.Stfld:
+                if (!VerifyFieldOperand(inst, out var field))
+                    return StackType.Invalid;
+
+                VerifyType(value, field.FieldType, inst);
+                VerifyByRef(obj, field.FieldType, inst);
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -384,30 +509,60 @@ public partial class ILMethodAnalyzer
         throw new NotImplementedException();
     }
 
-    private StackType VerifyPop3(Instruction inst, StackType[] stacks)
+    private void VerifyPop3(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
-        switch (inst.OpCode.Code)
+        var value = stacks[0];
+        var index = stacks[1]; //I4
+        var array = stacks[2]; //1 rank array
+        if (array.Type is not TypeReference type || type is not ArrayType arrayType ||
+            arrayType.Rank != 1)
         {
-            case Code.Stelem_I:
-            case Code.Stelem_I1:
-            case Code.Stelem_I2:
-            case Code.Stelem_I4:
-            case Code.Stelem_I8:
-            case Code.Stelem_R4:
-            case Code.Stelem_R8:
-            case Code.Stelem_Ref:
-            case Code.Stelem_Any:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
+            ReportStackTypeMismatch("1 rank array type", array, inst);
+            return;
         }
-        throw new NotImplementedException();
+        VerifyInt(index, inst);
+        var expectType = inst.OpCode.Code switch
+        {
+            Code.Stelem_I => StackType.I,
+            Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I2 or Code.Stelem_I4 => StackType.I4,
+            Code.Stelem_I8 => StackType.I8,
+            Code.Stelem_R4 or Code.Stelem_R8 => StackType.F,
+            Code.Stelem_Ref => StackType.Invalid,
+            Code.Stelem_Any => StackType.Invalid, //TODO: 暂时不考虑泛型
+            _ => throw new ArgumentOutOfRangeException()
+        };
+
+        if (inst.OpCode.Code is Code.Stelem_Ref)
+        {
+            if (arrayType.ElementType.IsValueType || arrayType.ElementType.IsEnum())
+            {
+                ReportStackTypeMismatch("reference type", arrayType.ElementType, inst);
+                return;
+            }
+            expectType = arrayType.ElementType;
+        }
+
+        if (inst.OpCode.Code is Code.Stelem_Any)
+        {
+            if (!VerifyTypeOperand(inst, out var typeRef))
+                return;
+
+            expectType = typeRef;
+        }
+
+        VerifyType(value, expectType, inst);
     }
 
     private StackType VerifyPopref(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
+        var type = stacks[0];
+        if (type.VerifyType != VerificationType.O)
+        {
+            ReportStackTypeMismatch("reference type", type, inst);
+        }
+
         switch (inst.OpCode.Code)
         {
             case Code.Castclass:
@@ -451,8 +606,6 @@ public partial class ILMethodAnalyzer
         throw new NotImplementedException();
     }
 
-
-
     private StackType VerifyVarPop(Instruction inst, ref StackType[] args, out int len)
     {
         if (inst.Operand is not IMethodSignature sig)
@@ -481,6 +634,211 @@ public partial class ILMethodAnalyzer
             ? StackType.Invalid : StackType.Create(sig.ReturnType);
     }
 
+
+    private enum CompareKind
+    {
+        Equality,       // beq, bne.un, ceq
+        Ordered,        // bge, bgt, ble, blt, cgt, clt
+        CgtUn,          // cgt.un 特殊可以处理O和O的 主要用于object 和 null比较
+    }
+
+
+    private void VerifyComparable(StackType a, StackType b, Instruction inst, CompareKind kind)
+    {
+        if (IsComparable(a, b, kind))
+            return;
+
+        ReportStackTypeMismatch("comparable pair", a, inst);
+    }
+
+    private static bool IsComparable(StackType a, StackType b, CompareKind kind)
+    {
+        if (IsSamePrimitive(a, b))
+            return true;
+
+        if (IsI4NativePair(a, b))
+            return true;
+
+        if (IsObjRefPair(a, b))
+            return kind is CompareKind.Equality or CompareKind.CgtUn;
+
+        if (IsByRefPair(a, b))
+            return kind is CompareKind.Equality;
+
+        if (IsNativeByRefPair(a, b))
+            return kind is CompareKind.Equality;
+
+        return false;
+    }
+
+    private enum BinaryKind
+    {
+        Arithmetic,          // add/sub/mul/div/rem
+        Integer,             // div.un/rem.un/and/or/xor
+        Shift,               // shl/shr/shr.un
+        Overflow,            // add.ovf/sub.ovf/mul.ovf
+        OverflowUnsigned,    // add.ovf.un/sub.ovf.un/mul.ovf.un
+    }
+
+    private StackType VerifyBinary(StackType left, StackType right, Instruction inst, BinaryKind kind)
+    {
+        return kind switch
+        {
+            BinaryKind.Arithmetic => VerifyArithmetic(left, right, inst),
+            BinaryKind.Integer => VerifyIntegerBinary(left, right, inst),
+            BinaryKind.Shift => VerifyShift(left, right, inst),
+            BinaryKind.Overflow => VerifyOverflow(left, right, inst, unsigned: false),
+            BinaryKind.OverflowUnsigned => VerifyOverflow(left, right, inst, unsigned: true),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+    }
+
+    
+    private StackType VerifyNumericBinary(StackType left, StackType right, Instruction inst, bool allowFloat)
+    {
+        //I4/I <-> I4/I
+        //I8 <-> I8
+        //F <-> F
+        if (left.BuiltInType == BuiltInType.I4 && right.BuiltInType == BuiltInType.I4)
+            return StackType.I4;
+
+        if (IsI4NativePair(left, right))
+            return StackType.I;
+
+        if (left.BuiltInType == BuiltInType.I && right.BuiltInType == BuiltInType.I)
+            return StackType.I;
+
+        if (left.BuiltInType == BuiltInType.I8 && right.BuiltInType == BuiltInType.I8)
+            return StackType.I8;
+
+        if (allowFloat && left.BuiltInType == BuiltInType.F && right.BuiltInType == BuiltInType.F)
+            return StackType.F;
+
+        ReportStackTypeMismatch("valid binary numeric pair", left, inst);
+        return StackType.Invalid;
+    }
+
+
+    private StackType VerifyArithmetic(StackType left, StackType right, Instruction inst)
+    {
+        var code = inst.OpCode.Code;
+
+        // & + I/I4
+        // I/I4 + &
+        if (code is Code.Add)
+        {
+            if (IsIntegerNative(left) && right.VerifyType == VerificationType.ByRef)
+                return right;
+
+            if (left.VerifyType == VerificationType.ByRef && IsIntegerNative(right))
+                return left;
+        }
+
+        // & - I/I4
+        // & - &
+        if (code is Code.Sub)
+        {
+            if (left.VerifyType == VerificationType.ByRef && IsIntegerNative(right))
+                return left;
+
+            if (left.VerifyType == VerificationType.ByRef && right.VerifyType == VerificationType.ByRef)
+                return StackType.I;
+        }
+
+        return VerifyNumericBinary(left, right, inst, allowFloat: true);
+    }
+
+    private StackType VerifyIntegerBinary(StackType left, StackType right, Instruction inst)
+    {
+        return VerifyNumericBinary(left, right, inst, allowFloat: false);
+    }
+
+    private StackType VerifyShift(StackType left, StackType right, Instruction inst)
+    {
+        // R -> I4/I
+        if (!IsIntegerNative(right))
+        {
+            ReportStackTypeMismatch("I4 or native int shift amount", right, inst);
+            return StackType.Invalid;
+        }
+
+        // L -> I4/I8/I
+        return left.BuiltInType switch
+        {
+            BuiltInType.I4 => StackType.I4,
+            BuiltInType.I8 => StackType.I8,
+            BuiltInType.I => StackType.I,
+            _ => ReportInvalidBinary(left, inst)
+        };
+    }
+    private StackType VerifyOverflow(StackType left, StackType right, Instruction inst, bool unsigned)
+    {
+        var code = inst.OpCode.Code;
+
+        if (unsigned)
+        {
+            //I/I4 + &
+            //& + I/I4
+            if (code is Code.Add_Ovf_Un)
+            {
+                if (IsIntegerNative(left) && right.VerifyType == VerificationType.ByRef)
+                    return right;
+
+                if (left.VerifyType == VerificationType.ByRef && IsIntegerNative(right))
+                    return left;
+            }
+
+            // & - I/I4
+            // & - &
+            if (code is Code.Sub_Ovf_Un)
+            {
+                if (left.VerifyType == VerificationType.ByRef && IsIntegerNative(right))
+                    return left;
+
+                if (left.VerifyType == VerificationType.ByRef && right.VerifyType == VerificationType.ByRef)
+                    return StackType.I;
+            }
+        }
+
+        return VerifyNumericBinary(left, right, inst, allowFloat: false);
+    }
+
+    private StackType ReportInvalidBinary(StackType actual, Instruction inst)
+    {
+        ReportStackTypeMismatch("valid binary operand", actual, inst);
+        return StackType.Invalid;
+    }
+
+    private static bool IsSamePrimitive(StackType a, StackType b)
+    => a.VerifyType is VerificationType.BuiltIn
+       && b.VerifyType is VerificationType.BuiltIn
+       && a.BuiltInType == b.BuiltInType
+       && a.BuiltInType is BuiltInType.I4 or BuiltInType.I8 or BuiltInType.I or BuiltInType.F;
+
+    private static bool IsI4NativePair(StackType a, StackType b)
+        => IsBuiltInPair(a, b, BuiltInType.I4, BuiltInType.I);
+
+    private static bool IsNativeByRefPair(StackType a, StackType b)
+        => (a.BuiltInType == BuiltInType.I && b.VerifyType == VerificationType.ByRef)
+           || (b.BuiltInType == BuiltInType.I && a.VerifyType == VerificationType.ByRef);
+
+    private static bool IsByRefPair(StackType a, StackType b)
+        => a.VerifyType == VerificationType.ByRef && b.VerifyType == VerificationType.ByRef;
+
+    private static bool IsObjRefPair(StackType a, StackType b)
+        => a.VerifyType == VerificationType.O && b.VerifyType == VerificationType.O;
+
+    private static bool IsBuiltInPair(StackType a, StackType b, BuiltInType x, BuiltInType y)
+        => a.VerifyType == VerificationType.BuiltIn
+           && b.VerifyType == VerificationType.BuiltIn
+           && ((a.BuiltInType == x && b.BuiltInType == y)
+               || (a.BuiltInType == y && b.BuiltInType == x));
+
+    private static bool IsIntegerNative(StackType type)
+        => type.VerifyType == VerificationType.BuiltIn
+           && type.BuiltInType is BuiltInType.I4 or BuiltInType.I;
+
+
 }
 
 public partial class ILMethodAnalyzer
@@ -498,8 +856,6 @@ public partial class ILMethodAnalyzer
             case Code.Ldloc_1:
             case Code.Ldloc_2:
             case Code.Ldloc_3:
-            case Code.Ldarg_S:
-            case Code.Ldloc_S:
             case Code.Add:
             case Code.Sub:
             case Code.Mul:
@@ -557,4 +913,6 @@ public partial class ILMethodAnalyzer
 
         return retType;
     }
+
+
 }

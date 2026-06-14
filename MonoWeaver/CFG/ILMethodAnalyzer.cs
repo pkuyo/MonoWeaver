@@ -745,12 +745,7 @@ public partial class ILMethodAnalyzer
             {
                 case OperandType.InlineMethod:
                     {
-                        if (inst.Operand is not MethodReference mf)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MethodReference),
-                                inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else
+                        if (VerifyMethodOperand(inst, out var mf))
                         {
                             ResolveWithDiagnostic(mf);
                         }
@@ -758,13 +753,7 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineField:
                     {
-
-                        if (inst.Operand is not FieldReference field)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(FieldReference),
-                                inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else if (ResolveWithDiagnostic(field) is FieldDefinition fd)
+                        if (VerifyFieldOperand(inst, out var field) && ResolveWithDiagnostic(field) is FieldDefinition fd)
                         {
                             if (fd.Attributes.HasFlag(FieldAttributes.Static) !=
                                 (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
@@ -777,12 +766,7 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineTok:
                     {
-                        if (inst.Operand is not MemberReference member)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MemberReference),
-                                inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else
+                        if (VerifyMemberOperand(inst, out var member))
                         {
                             ResolveWithDiagnostic(member);
                         }
@@ -790,12 +774,7 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineType:
                     {
-                        if (inst.Operand is not TypeReference type)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MemberReference),
-                                inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else
+                        if (VerifyTypeOperand(inst, out var type))
                         {
                             ResolveWithDiagnostic(type);
                         }
@@ -803,12 +782,7 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineVar:
                     {
-                        if (inst.Operand is not VariableReference re)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(VariableReference),
-                                inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else
+                        if(VerifyVarOperand(inst, out var re))
                         {
                             if (re.Index < 0 || re.Index >= _method.Body.Variables.Count)
                             {
@@ -820,12 +794,7 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineArg:
                     {
-                        if (inst.Operand is not ParameterReference re)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(ParameterReference),
-                                inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else
+                        if (VerifyParameterOperand(inst, out var re))
                         {
                             if (re.Index < 0 || re.Index >= _method.Parameters.Count)
                             {
@@ -1122,7 +1091,7 @@ public partial class ILMethodAnalyzer
                     case StackBehaviour.Popref_popi_popr4:
                     case StackBehaviour.Popref_popi_popr8:
                     case StackBehaviour.Popref_popi_popref:
-                        retType = VerifyPop3(inst, buffer);
+                        VerifyPop3(inst, buffer);
                         break;
 
                     case StackBehaviour.Varpop:

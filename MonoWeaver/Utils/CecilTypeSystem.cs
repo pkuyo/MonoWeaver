@@ -19,6 +19,11 @@ using TypeAttributes = Mono.Cecil.TypeAttributes;
 
 namespace MonoWeaver.Utils;
 
+
+/// <summary>
+/// 提供类型系统相关的功能，例如类型比较、类型关系判断、获取基类和接口等。
+/// 字段、类型定义
+/// </summary>
 public static partial class CecilTypeSystem
 {
     private static readonly ConcurrentDictionary<ModuleDefinition, TypeDefinition> _arrayDefs;
@@ -93,7 +98,58 @@ public static partial class CecilTypeSystem
             return _reusableStack;
         }
     }
+}
 
+
+/// <summary>
+/// 提供类型系统相关的功能，例如类型比较、类型关系判断、获取基类和接口等。
+/// 公共接口部分
+/// </summary>
+public static partial class CecilTypeSystem
+{
+    /// <summary>
+    /// 判断 from 是否可以赋值给 to，考虑 IL 栈上的类型转换（例如 byte -> int）
+    /// 但不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在 `MonoWeaver.CFG.StackType` 实现该功能）
+    /// </summary>
+    /// <param name="from"></param>
+    /// <param name="to"></param>
+    /// <returns></returns>
+    public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
+    => IsAssignableFromRoot(to, from, true);
+
+    /// <summary>
+    /// 判断 from 是否可以赋值给 to，不考虑 IL 栈上的类型转换（例如 byte -> int）
+    /// </summary>
+    /// <param name="from"></param>
+    /// <param name="to"></param>
+    /// <returns></returns>
+    public static bool IsAssignableTo(this TypeReference from, TypeReference? to)
+        => IsAssignableFromRoot(to, from, false);
+
+    /// <summary>
+    /// 判断 from 是否可以赋值给 to，考虑 IL 栈上的类型转换（例如 byte -> int）
+    /// 但不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在 `MonoWeaver.CFG.StackType` 实现该功能）
+    /// </summary>
+    /// <param name="to"></param>
+    /// <param name="from"></param>
+    /// <returns></returns>
+    public static bool IsILStackAssignableFrom(this TypeReference to, TypeReference? from)
+        => IsAssignableFromRoot(to, from, true);
+
+    /// <summary>
+    /// 判断 from 是否可以赋值给 to，不考虑 IL 栈上的类型转换（例如 byte -> int）
+    /// </summary>
+    /// <param name="to"></param>
+    /// <param name="from"></param>
+    /// <returns></returns>
+    public static bool IsAssignableFrom(this TypeReference to, TypeReference? from)
+        => IsAssignableFromRoot(to, from, false);
+
+    /// <summary>
+    /// 去除类型修饰符，获取实际类型，例如 List`1& -> List`1，List`1 modopt(int32) -> List`1
+    /// </summary>
+    /// <param name="t"></param>
+    /// <returns></returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static TypeReference StripType(this TypeReference t)
     {
@@ -110,7 +166,13 @@ public static partial class CecilTypeSystem
         }
     }
 
-    public static TypeReference? GetEnumType(this TypeReference typeRef)
+    /// <summary>
+    /// 获取枚举的底层类型，如果不是枚举则返回 null
+    /// </summary>
+    /// <param name="typeRef"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentException"></exception>
+    public static TypeReference? GetEnumBackingFieldType(this TypeReference typeRef)
     {
         TypeDefinition? typeDef = ResolveWithCache(typeRef);
 
@@ -128,40 +190,13 @@ public static partial class CecilTypeSystem
 
         return valueField.FieldType;
     }
-}
 
-public static partial class CecilTypeSystem
-{
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static ulong PackAssignableKey(TypeSig to, TypeSig from, bool strict)
-    {
-        var key = ((ulong)(uint)to.Id << 32) | (uint)from.Id;
-        return strict ? key | 0x8000000000000000UL : key;
-    }
-   
-
-    public static bool IsVoid(this TypeReference type) 
-        => TypeSig.Create(type) == TypeSig.Void;
-}
-
-public static partial class CecilTypeSystem
-{
-
- 
-
-    public static bool IsILStackAssignableTo(this TypeReference from, TypeReference? to)
-    => IsAssignableFromRoot(to, from, true);
-
-    public static bool IsAssignableTo(this TypeReference from, TypeReference? to)
-        => IsAssignableFromRoot(to, from, false);
-
-    //不考虑 Byte Sbyte Uint16都转化为I4这种的等价（在别的地方实现该功能）
-    public static bool IsILStackAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromRoot(to, from, true);
-
-    public static bool IsAssignableFrom(this TypeReference to, TypeReference? from)
-        => IsAssignableFromRoot(to, from, false);
-
+    /// <summary>
+    /// 获取基类，支持处理数组和泛型参数等特殊情况
+    /// </summary>
+    /// <param name="type"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
     public static TypeReference? BaseType(this TypeReference? type)
     {
         if (type == null) return null;
@@ -176,6 +211,12 @@ public static partial class CecilTypeSystem
         return GetBaseTypeWithCache(type);
     }
 
+    /// <summary>
+    /// 获取所有基类，按照从近到远的顺序返回，不包含自身
+    /// </summary>
+    /// <param name="type"></param>
+    /// <param name="withBoxing"></param>
+    /// <returns></returns>
     internal static IEnumerable<TypeReference> AllBaseTypes(this TypeReference? type, bool withBoxing)
     {
         if (type is null || type.IsValueType)
@@ -197,7 +238,7 @@ public static partial class CecilTypeSystem
     /// <returns></returns>
     public static TypeReference? FindCommonBaseType(TypeReference? a0, TypeReference? b0)
     {
-        if(a0 is null || b0 is null) return null;
+        if (a0 is null || b0 is null) return null;
 
         var a = a0;
         var b = b0;
@@ -218,6 +259,70 @@ public static partial class CecilTypeSystem
         }
     }
 
+
+    /// <summary>
+    /// 收集所有接口，包含直接实现的和间接实现的（基类实现的），不包含重复项，结果放在 resultBuffer 中
+    /// 会填充泛型参数
+    /// </summary>
+    /// <param name="type"></param>
+    /// <param name="resultBuffer"></param>
+    public static void CollectAllInterfaces(TypeReference? type, List<TypeReference> resultBuffer)
+    {
+        if (type == null) return;
+        resultBuffer.AddRange(GetRuntimeInterfacesWithCache(type));
+    }
+
+
+    /// <summary>
+    /// 判断两个类型是否相同
+    /// </summary>
+    /// <param name="a"></param>
+    /// <param name="b"></param>
+    /// <returns></returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsSameWith(this TypeReference? a, TypeReference? b)
+    {
+        if (b is null || a is null) return false;
+        if (ReferenceEquals(a, b))
+            return true;
+        return TypeSig.Create(a).Equals(TypeSig.Create(b));
+    }
+
+
+    /// <summary>
+    /// 判断是否为枚举类型
+    /// </summary>
+    /// <param name="typeRef"></param>
+    /// <returns></returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsEnum(this TypeReference typeRef)
+    {
+        TypeDefinition? typeDef = ResolveWithCache(typeRef);
+
+        return typeDef?.IsEnum ?? false;
+    }
+
+
+    /// <summary>
+    /// 判断是否为 void 类型
+    /// </summary>
+    /// <param name="type"></param>
+    /// <returns></returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsVoid(this TypeReference type)
+    => TypeSig.Create(type) == TypeSig.Void;
+
+
+
+}
+
+
+
+/// <summary>
+/// 类型关系判断实现部分以及其他私有函数
+/// </summary>
+public static partial class CecilTypeSystem
+{
     private static bool IsAssignableFromRoot(TypeReference? to, TypeReference? from, bool strict)
     {
         var context = _assignabilityContext;
@@ -422,11 +527,7 @@ public static partial class CecilTypeSystem
         return false;
     }
 
-    public static void CollectAllInterfaces(TypeReference? type, List<TypeReference> resultBuffer)
-    {
-        if (type == null) return;
-        resultBuffer.AddRange(GetRuntimeInterfacesWithCache(type));
-    }
+
 
     private static GenericInstanceType GenerateGenericInstanceType(TypeReference type)
     {
@@ -620,14 +721,7 @@ public static partial class CecilTypeSystem
 
 
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsSameWith(this TypeReference? a, TypeReference? b)
-    {
-        if (b is null || a is null) return false;
-        if (ReferenceEquals(a, b))
-            return true;
-        return TypeSig.Create(a).Equals(TypeSig.Create(b));
-    }
+
 
     /// <summary>
     /// 尝试填充泛型
@@ -711,5 +805,12 @@ public static partial class CecilTypeSystem
         }
 
         return ResolveWithTypeDescCache(keyType);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static ulong PackAssignableKey(TypeSig to, TypeSig from, bool strict)
+    {
+        var key = ((ulong)(uint)to.Id << 32) | (uint)from.Id;
+        return strict ? key | 0x8000000000000000UL : key;
     }
 }

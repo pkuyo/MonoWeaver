@@ -254,7 +254,7 @@ public static partial class CecilTypeSystem
                        && _metadataToken == other._metadataToken;
             }
 
-            //兜底 但真的会进兜底吗
+            //兜底
             return _moduleMvid == other._moduleMvid
                    && _metadataToken == other._metadataToken
                    && _scopeName == other._scopeName
@@ -342,7 +342,7 @@ public static partial class CecilTypeSystem
                        && _metadataToken == other._metadataToken;
             }
 
-            //兜底 但真的会进兜底吗
+            //兜底
             return _moduleMvid == other._moduleMvid
                    && _metadataToken == other._metadataToken
                    && _declaringType == other._declaringType

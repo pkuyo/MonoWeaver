@@ -77,12 +77,17 @@ namespace MonoWeaver.CFG
         public static readonly StackType I8 = new StackType(BuiltInType.I8);
         public static readonly StackType F = new StackType(BuiltInType.F);
         public static readonly StackType I = new StackType(BuiltInType.I);
-        public static readonly StackType Null = new StackType(BuiltInType.Null);
+        public static readonly StackType Null = new StackType(BuiltInType.Null); //Null属于VerificationType.O且可以转换为任意O
         public static readonly StackType Invalid = new StackType(BuiltInType.None);
-        public static readonly StackType TypeRef = new StackType(null, BuiltInType.None, VerificationType.TypedRef, StackTypeFlags.None);
+        public static readonly StackType TypedRef = new StackType(null, BuiltInType.None, VerificationType.TypedRef, StackTypeFlags.None);
 
         public static StackType Create(TypeReference type, StackTypeFlags flag = StackTypeFlags.None)
         {
+            if (type is null)
+            {
+                throw new ArgumentNullException("type");
+            }
+
             type = type.StripType();
 
  
@@ -95,7 +100,7 @@ namespace MonoWeaver.CFG
                 return CreateByRef(refType.ElementType);
             }
           
-            var cmpType = type.GetEnumType() ?? type;
+            var cmpType = type.GetEnumBackingFieldType() ?? type;
             var typeSystem = type.Module.TypeSystem;
             TypeReference? outType = null;
             var verifyType = VerificationType.BuiltIn;
@@ -175,7 +180,7 @@ namespace MonoWeaver.CFG
             if (!type.IsValueType)
                 throw new ArgumentException("boxedType must be a value type");
             
-            return new StackType(type.GetEnumType() is not null ? type.Module.ImportReference(typeof(Enum)) : type.Module.ImportReference(typeof(ValueType)), 
+            return new StackType(type.GetEnumBackingFieldType() is not null ? type.Module.ImportReference(typeof(Enum)) : type.Module.ImportReference(typeof(ValueType)), 
                 BuiltInType.None, VerificationType.O, StackTypeFlags.None, type);
 
         }
@@ -219,7 +224,7 @@ namespace MonoWeaver.CFG
                 _ => throw new ArgumentOutOfRangeException(nameof(builtIn))
             }, StackTypeFlags.None)
         { }
-
+        public bool IsInvalid => VerifyType == VerificationType.Invalid;
 
         public bool IsValueType => (VerifyType is VerificationType.ValueType or VerificationType.BuiltIn) && !IsPtr;
 
@@ -270,7 +275,6 @@ namespace MonoWeaver.CFG
             if (IsBoxedType && right.IsBoxedType)
             {
                 return _boxedTypeSig == right._boxedTypeSig;
-
             }
             else if (right.IsBoxedType)
             {
