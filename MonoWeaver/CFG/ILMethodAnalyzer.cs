@@ -132,25 +132,25 @@ public partial class ILMethodAnalyzer
 }
 public partial class ILMethodAnalyzer
 {
-    private bool BuildExceptionBlock(ExceptionHandler eh, Dictionary<Instruction, int> instDic, out EHandler? block)
+    private bool BuildExceptionBlock(ExceptionHandler eh, Dictionary<Instruction, int> instDic, int methodEndIndex, out EHandler? block)
     {
         block = null;
         if (eh.TryStart is null) return false;
-        if (eh.TryEnd is null) return false;
         if (eh.HandlerStart is null) return false;
         if (eh.HandlerEnd is null) return false;
         if (eh is { HandlerType: ExceptionHandlerType.Filter, FilterStart: null })
             return false;
 
         int filterStart = -1;
-
+        int tryEnd = methodEndIndex; //如果为null代表指向函数尾
+        int handlerEnd = methodEndIndex; //如果为null代表指向函数尾
         if (!instDic.TryGetValue(eh.TryStart, out var tryStart)) return false;
-        if (!instDic.TryGetValue(eh.TryEnd, out var tryEnd)) return false;
+        if (eh.TryEnd != null && !instDic.TryGetValue(eh.TryEnd, out tryEnd)) return false;
         if (!instDic.TryGetValue(eh.HandlerStart, out var handlerStart)) return false;
-        if (!instDic.TryGetValue(eh.HandlerEnd, out var handlerEnd)) return false;
+        if (eh.HandlerEnd != null && !instDic.TryGetValue(eh.HandlerEnd, out handlerEnd)) return false;
         if (eh.FilterStart is not null && !instDic.TryGetValue(eh.FilterStart, out filterStart)) return false;
 
-        if(tryStart >= tryEnd || tryEnd > handlerStart || handlerStart >= handlerEnd)
+        if(tryStart >= tryEnd || tryEnd >    0 || handlerStart >= handlerEnd)
             return false; //不符合约束
 
         if (eh.HandlerType == ExceptionHandlerType.Filter)
@@ -294,7 +294,7 @@ public partial class ILMethodAnalyzer
     {
         _blocks = new List<BasicBlock>();
 
-        var totalMethodRegion = EHandler.CreateMethodRegion(_method.Body.Instructions.Count);
+        var totalMethodRegion = EHandler.CreateMethodRegion(_method.Body.Instructions.Count + 1); //占位末尾为length+1 length为真实末尾
         ehRegions = new List<EHandler.Region>(_method.Body.ExceptionHandlers.Count);
         _exceptionHandlers ??= new List<EHandler>(_method.Body.ExceptionHandlers.Count + 1);
         _exceptionHandlers.Add(totalMethodRegion);
@@ -327,7 +327,7 @@ public partial class ILMethodAnalyzer
         //初始化EH并检查合法性
         foreach (var eh in _method.Body.ExceptionHandlers) //由于未Apply的Instruction的Offset为0 不能直接用Offset来判断异常边界
         {
-            if (BuildExceptionBlock(eh, _instDictionary, out var hb))
+            if (BuildExceptionBlock(eh, _instDictionary, _method.Body.Instructions.Count, out var hb))
             {
                 hb!.Id = _exceptionHandlers.Count;
                 hb!.SetClause();
@@ -367,7 +367,7 @@ public partial class ILMethodAnalyzer
     {
          var stack = new Stack<EHandler.Region>();
         _regionFrames = [];
-        instEhFrames = new int[_method.Body.Instructions.Count];
+        instEhFrames = new int[_method.Body.Instructions.Count + 1];
         int lastFrameStart = int.MinValue;
         
         for (int i = 0; i < ehRegions.Count; i++)
@@ -493,24 +493,28 @@ public partial class ILMethodAnalyzer
             if (inst.OpCode.FlowControl is FlowControl.Branch
                 or FlowControl.Cond_Branch)
             {
-                foreach (var targetInst in CecilHelper.OperandToTargets(inst.Operand))
+                if (TryResolveBranchTargets(inst, out var targetInsts))
                 {
-                    if (!_instDictionary.TryGetValue(targetInst, out var index))
+                    foreach (var targetInst in targetInsts)
                     {
-                        //无效目标位置
-                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidBrTarget, inst));
-                    }
+                        if (!_instDictionary.TryGetValue(targetInst, out var index))
+                        {
+                            //无效目标位置
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidBrTarget, inst));
+                            continue;
+                        }
 
-                    if ((instEhFrames[index] == instEhFrames[i]) == (inst.OpCode.Code == Code.Leave))
-                    {
-                        //跨异常边界跳转
-                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(
-                            inst.OpCode.Code == Code.Leave
-                                ? CFGExceptionType.LeaveTargetSameEhRegion
-                                : CFGExceptionType.BrTargetCrossEhRegion, inst));
-                    }
+                        if ((instEhFrames[index] == instEhFrames[i]) == (inst.OpCode.Code == Code.Leave))
+                        {
+                            //跨异常边界跳转
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(
+                                inst.OpCode.Code == Code.Leave
+                                    ? CFGExceptionType.LeaveTargetSameEhRegion
+                                    : CFGExceptionType.BrTargetCrossEhRegion, inst));
+                        }
 
-                    AddBasicBlock(targetInst, _regionFrames[instEhFrames[index]].Region);
+                        AddBasicBlock(targetInst, _regionFrames[instEhFrames[index]].Region);
+                    }
                 }
             }
 
@@ -553,8 +557,6 @@ public partial class ILMethodAnalyzer
             {
                 if (inst.OpCode.Code is Code.Constrained or Code.Volatile)
                 {
-
-
                     if (prefix.Value == inst.OpCode.Code ||
                         (prefix.Value is not Code.Constrained and not Code.Volatile))
                     {
@@ -669,6 +671,16 @@ public partial class ILMethodAnalyzer
                         if (prefix != null)
                             pPrefix = prefix;
                         prefix = inst.OpCode.Code;
+
+                        if (inst.OpCode.Code == Code.Unaligned)
+                        {
+                            if (inst.Operand is not byte b || b > 4 || b == 3)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(byte), inst.Operand?.GetType() 
+                                    ?? typeof(void), inst));
+                            }
+                        }
+
                         break;
                     }
                 case Code.No:
@@ -720,8 +732,8 @@ public partial class ILMethodAnalyzer
                 case Code.Endfinally:
                     {
                         if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler ||
-                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
-                                .Finally)
+                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is
+                                not ExceptionHandlerType.Finally and not ExceptionHandlerType.Fault)
                         {
                             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
                                 inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside finally region."));
@@ -730,11 +742,31 @@ public partial class ILMethodAnalyzer
                     }
                 case Code.Leave:
                     {
-                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Try &&
-                            _regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler)
+                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Try and not RegionKind.Handler)
                         {
                             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
                                 inst, DiagnosticSeverity.Error, "Invalid 'leave' outside try/catch region."));
+                        }
+                        var currentRegion = _regionFrames[instEhFrames[i]].Region;
+                        if (CecilHelper.TryResolveInstructionTarget(inst.Operand, out var target, out var error))
+                        {
+                            var targetRegion = _regionFrames[instEhFrames[_instDictionary[target!]]].Region;
+                            bool checkOk = false;
+                            while (currentRegion != null) //跳出位置应该为对应段的外部区域
+                            {
+                                if (currentRegion == targetRegion)
+                                {
+                                    checkOk = true;
+                                    break;
+                                }
+                                currentRegion = currentRegion.ParentRegion;
+                            }
+          
+                            if (!checkOk)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
+                                    inst, DiagnosticSeverity.Error, "Invalid 'leave' target crossing EH region boundaries."));
+                            }
                         }
                         break;
                     }
@@ -804,6 +836,52 @@ public partial class ILMethodAnalyzer
                         }
                         break;
                     }
+                case OperandType.InlineBrTarget:
+                    {
+                        VerifyInstructionOperand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineSwitch:
+                    {
+                        VerifyInstructionArrayOperand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineI:
+                    {
+                        VerifyInt32Operand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineI8:
+                    {
+                        VerifyInt64Operand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineR:
+                    {
+                        VerifyDoubleOperand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineString:
+                    {
+                        VerifyStringOperand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineSig:
+                    {
+                        VerifyCallSiteOperand(inst, out _);
+                        break;
+                    }
+                case OperandType.InlineNone:
+                    {
+                        VerifyNoOperand(inst);
+                        break;
+                    }
+                case OperandType.InlinePhi:
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidOpCode, inst,
+                            DiagnosticSeverity.Error, "InlinePhi operand type is not valid in CIL."));
+                        break;
+                    }
                 default:
                     //其他非法情况会在Mono.Cecil处报错
                     break;
@@ -811,9 +889,25 @@ public partial class ILMethodAnalyzer
 
         
         }
+
+        if (prefix != null)
+        {
+            ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
+                _method.Body.Instructions.Last(), prefix.Value));
+        }
         ThrowIfNeedAbort(AbortStrategy.AbortNextStep);
     }
-    
+
+    private bool TryResolveBranchTargets(Instruction inst, out Instruction[] targets)
+    {
+        if (CecilHelper.TryResolveOperandTargets(inst.Operand, out targets, out var error))
+            return true;
+
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(error.Expected, error.Current, inst,
+            message: error.Message));
+        return false;
+    }
+
     private void AddBasicBlock(Instruction leader, EHandler.Region region)
     {
         if (_blockMap.ContainsKey(leader)) return;  
@@ -928,28 +1022,29 @@ public partial class ILMethodAnalyzer
                         }
                         break;
                     case FlowControl.Branch:
-                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        if (!TryResolveBranchTargets(inst, out var branchTargets))
+                            break;
+
+                        foreach (var target in branchTargets)
                         {
                             AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         }
                         endBlock = true;
                         break;
                     case FlowControl.Cond_Branch:
-                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        if (!TryResolveBranchTargets(inst, out var condBranchTargets))
+                            break;
+
+                        foreach (var target in condBranchTargets)
                         {
                             AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         }
                         AnalyzeCF_AddNextBlock(block, _blockMap[inst.Next], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         endBlock = true;
                         break;
-                    case FlowControl.Throw:
+                    case FlowControl.Throw or FlowControl.Return:
                         endBlock = true;
                         break;
-                    case FlowControl.Return when inst.OpCode.Code is Code.Endfilter:
-                        AnalyzeCF_AddNextBlock(block, _blockMap[inst.Next], bfsBlocks, stackHeight, initLocals, usedBlocks);
-                        endBlock = true;
-                        break;
-                  
                 }
 
                 if (endBlock)
@@ -1122,23 +1217,11 @@ public partial class ILMethodAnalyzer
                         }
                         break;
                     case StackBehaviour.Push1:
-                        retType = VerifyPush1(inst, retType);
-                        AnalyzeCF_EvalStackPush(localStack, ref node, retType, inst);
-                        break;
                     case StackBehaviour.Pushi:
-                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.I4, inst);
-                        break;
                     case StackBehaviour.Pushi8:
-                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.I8, inst);
-                        break;
                     case StackBehaviour.Pushr4:
-                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.F, inst);
-                        break;
                     case StackBehaviour.Pushr8:
-                        AnalyzeCF_EvalStackPush(localStack, ref node, StackType.F, inst);
-                        break;
                     case StackBehaviour.Pushref:
-                        retType = VerifyPushref(inst, retType);
                         AnalyzeCF_EvalStackPush(localStack, ref node, retType, inst);
                         break;
                     default:
@@ -1172,7 +1255,10 @@ public partial class ILMethodAnalyzer
                         break;
                     case FlowControl.Branch:
                         AnalyzeCF_AppendStack(localStack, ref node);
-                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        if (!TryResolveBranchTargets(inst, out var branchTargets))
+                            break;
+
+                        foreach (var target in branchTargets)
                         {
                             var targetBlock = _blockMap[target];
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
@@ -1182,7 +1268,10 @@ public partial class ILMethodAnalyzer
                         break;
                     case FlowControl.Cond_Branch:
                         AnalyzeCF_AppendStack(localStack, ref node);
-                        foreach (var target in CecilHelper.OperandToTargets(inst.Operand))
+                        if (!TryResolveBranchTargets(inst, out var condBranchTargets))
+                            break;
+
+                        foreach (var target in condBranchTargets)
                         {
                             var targetBlock = _blockMap[target];
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);

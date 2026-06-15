@@ -539,30 +539,33 @@ namespace MonoWeaver.CFG
             {
                 case FlowControl.Branch:
                 case FlowControl.Call when endInst.OpCode.Code is Code.Jmp:
-                case FlowControl.Throw:
-                    foreach (var target in CecilHelper.OperandToTargets(endInst.Operand))
+                    if (!CecilHelper.TryResolveOperandTargets(endInst.Operand, out var branchTargets, out _))
                     {
-                        if (target is null)
-                        {
-                            block._edgeDirty = true;
-                            continue;
-                        }
+                        block._edgeDirty = true;
+                        break;
+                    }
+
+                    foreach (var target in branchTargets)
+                    {
                         var targetBlock = TargetSplitBlock(target);
                         block.AddEdgeTo(targetBlock);
                     }
                     break;
                 case FlowControl.Cond_Branch:
-                    foreach (var target in CecilHelper.OperandToTargets(endInst.Operand))
+                    if (!CecilHelper.TryResolveOperandTargets(endInst.Operand, out var condBranchTargets, out _))
                     {
-                        if (target is null)
-                        {
-                            block._edgeDirty = true;
-                            continue;
-                        }
+                        block._edgeDirty = true;
+                        break;
+                    }
+
+                    foreach (var target in condBranchTargets)
+                    {
                         var targetBlock = TargetSplitBlock(target);
                         block.AddEdgeTo(targetBlock);
                     }
                     if(nextBlock is not null)  block.AddEdgeTo(nextBlock);
+                    break;
+                case FlowControl.Throw:
                     break;
                 case FlowControl.Return:
                     break;

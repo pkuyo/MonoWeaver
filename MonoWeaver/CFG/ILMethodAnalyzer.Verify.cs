@@ -25,90 +25,98 @@ public partial class ILMethodAnalyzer
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool VerifyTypeOperand(Instruction inst, out TypeReference type)
-    {
-        if (inst.Operand is TypeReference operand)
-        {
-            type = operand;
-            return true;
-        }
-
-        type = null!;
-        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(TypeReference),
-            inst.Operand?.GetType() ?? typeof(void), inst));
-        return false;
-    }
+        => VerifyOperand(inst, out type);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool VerifyMethodOperand(Instruction inst, out MethodReference method)
-    {
-        if (inst.Operand is MethodReference operand)
-        {
-            method = operand;
-            return true;
-        }
-
-        method = null!;
-        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MethodReference),
-            inst.Operand?.GetType() ?? typeof(void), inst));
-        return false;
-    }
+        => VerifyOperand(inst, out method);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool VerifyFieldOperand(Instruction inst, out FieldReference field)
-    {
-        if (inst.Operand is FieldReference operand)
-        {
-            field = operand;
-            return true;
-        }
-
-        field = null!;
-        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(FieldReference),
-            inst.Operand?.GetType() ?? typeof(void), inst));
-        return false;
-    }
+        => VerifyOperand(inst, out field);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool VerifyMemberOperand(Instruction inst, out MemberReference member)
-    {
-        if (inst.Operand is MemberReference operand)
-        {
-            member = operand;
-            return true;
-        }
-
-        member = null!;
-        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(MemberReference),
-            inst.Operand?.GetType() ?? typeof(void), inst));
-        return false;
-    }
+        => VerifyOperand(inst, out member);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool VerifyVarOperand(Instruction inst, out VariableReference variable)
+        => VerifyOperand(inst, out variable);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyParameterOperand(Instruction inst, out ParameterReference param)
+        => VerifyOperand(inst, out param);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyInstructionOperand(Instruction inst, out Instruction target)
     {
-        if (inst.Operand is VariableReference operand)
+        if (CecilHelper.TryResolveInstructionTarget(inst.Operand, out var resolvedTarget, out var error))
         {
-            variable = operand;
+            target = resolvedTarget!;
             return true;
         }
 
-        variable = null!;
-        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(VariableReference),
-            inst.Operand?.GetType() ?? typeof(void), inst));
+        target = null!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(error.Expected, error.Current, inst,
+            message: error.Message));
         return false;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool VerifyParameterOperand(Instruction inst, out ParameterReference param)
+    private bool VerifyInstructionArrayOperand(Instruction inst, out Instruction[] targets)
     {
-        if (inst.Operand is ParameterReference operand)
+        if (CecilHelper.TryResolveInstructionTargetArray(inst.Operand, out targets, out var error))
         {
-            param = operand;
             return true;
         }
 
-        param = null!;
-        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(ParameterReference),
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(error.Expected, error.Current, inst,
+            message: error.Message));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyInt32Operand(Instruction inst, out int value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyInt64Operand(Instruction inst, out long value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyDoubleOperand(Instruction inst, out double value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyStringOperand(Instruction inst, out string value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyCallSiteOperand(Instruction inst, out Mono.Cecil.CallSite callSite)
+        => VerifyOperand(inst, out callSite);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyNoOperand(Instruction inst)
+    {
+        if (inst.Operand is null)
+            return true;
+
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(void),
+            inst.Operand.GetType(), inst));
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyOperand<T>(Instruction inst, out T operand)
+    {
+        if (inst.Operand is T value)
+        {
+            operand = value;
+            return true;
+        }
+
+        operand = default!;
+        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(T),
             inst.Operand?.GetType() ?? typeof(void), inst));
         return false;
     }
@@ -1038,82 +1046,6 @@ public partial class ILMethodAnalyzer
     private static bool IsIntegerNative(StackType type)
         => type.VerifyType == VerificationType.BuiltIn
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I;
-
-
-}
-
-public partial class ILMethodAnalyzer
-{
-    private StackType VerifyPush1(Instruction inst, StackType retType)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-            case Code.Ldarg_0:
-            case Code.Ldarg_1:
-            case Code.Ldarg_2:
-            case Code.Ldarg_3:
-            case Code.Ldloc_0:
-            case Code.Ldloc_1:
-            case Code.Ldloc_2:
-            case Code.Ldloc_3:
-            case Code.Add:
-            case Code.Sub:
-            case Code.Mul:
-            case Code.Div:
-            case Code.Div_Un:
-            case Code.Rem:
-            case Code.Rem_Un:
-            case Code.And:
-            case Code.Or:
-            case Code.Xor:
-            case Code.Shl:
-            case Code.Shr:
-            case Code.Shr_Un:
-            case Code.Neg:
-            case Code.Not:
-            case Code.Ldobj:
-            case Code.Ldfld:
-            case Code.Ldsfld:
-            case Code.Ldelem_Any:
-            case Code.Unbox_Any:
-            case Code.Mkrefany:
-            case Code.Add_Ovf:
-            case Code.Add_Ovf_Un:
-            case Code.Mul_Ovf:
-            case Code.Mul_Ovf_Un:
-            case Code.Sub_Ovf:
-            case Code.Sub_Ovf_Un:
-            case Code.Ldarg:
-            case Code.Ldloc:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
-        }
-
-        return retType;
-    }
-
-    private StackType VerifyPushref(Instruction inst, StackType retType)
-    {
-        var module = _method.Module;
-        switch (inst.OpCode.Code)
-        {
-            case Code.Ldnull:
-            case Code.Ldind_Ref:
-            case Code.Ldstr:
-            case Code.Newobj:
-            case Code.Castclass:
-            case Code.Box:
-            case Code.Newarr:
-            case Code.Ldelem_Ref:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException();
-        }
-
-        return retType;
-    }
 
 
 }

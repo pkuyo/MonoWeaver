@@ -57,7 +57,8 @@ public static partial class CecilHelper
         => inst.OpCode.StackBehaviourPush switch
     {
         StackBehaviour.Push0 => 0,
-        StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushref or StackBehaviour.Pushr8 => 1,
+        StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushref or
+        StackBehaviour.Pushr8 or StackBehaviour.Pushi8 or StackBehaviour.Pushr4 => 1,
         StackBehaviour.Push1_push1 => 2,
         StackBehaviour.Varpush => VarPushCount(inst),
         _ => throw new ArgumentOutOfRangeException()
