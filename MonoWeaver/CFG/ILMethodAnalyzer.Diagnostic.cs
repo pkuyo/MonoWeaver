@@ -51,6 +51,15 @@ public enum DiagnosticSeverity
     Fatal,
 }
 
+public enum TypeMismatchKind
+{
+    Type,
+    StackType,
+    MethodReturnType,
+    MethodParameterType,
+    MethodParameterCount,
+}
+
 public enum AbortStrategy : byte
 {
     NoAbort = 0,
@@ -63,7 +72,14 @@ public enum AbortStrategy : byte
 public interface ICFGContext { }
 
 public sealed record InstContext(Instruction Instruction) : ICFGContext;
-public sealed record TypeMismatchContext(Instruction Instruction, TypeReference Expect, TypeReference? Current) : ICFGContext;
+public sealed record TypeMismatchContext(
+    Instruction Instruction,
+    TypeMismatchKind Kind,
+    string Expect,
+    string Current,
+    TypeReference? ExpectType = null,
+    TypeReference? CurrentType = null,
+    int? ParameterIndex = null) : ICFGContext;
 
 public sealed record InvalidOperandContext(Instruction Instruction, Type Expect, Type Current) : ICFGContext;
 public sealed record OperandOutOfRangeContext(Instruction Instruction) : ICFGContext;
@@ -95,8 +111,11 @@ public sealed record CFGDiagnostic(
 
             case TypeMismatchContext tm:
                 sb.Append(" @ IL_").Append(tm.Instruction.Offset.ToString("X4"))
-                  .Append(" expect=").Append(tm.Expect.FullName)
-                  .Append(" current=").Append(tm.Current?.FullName ?? "<null>");
+                  .Append(" kind=").Append(tm.Kind)
+                  .Append(" expect=").Append(tm.Expect)
+                  .Append(" current=").Append(tm.Current);
+                if (tm.ParameterIndex is { } parameterIndex)
+                    sb.Append(" parameter=").Append(parameterIndex);
                 break;
 
             case InvalidOperandContext io:
@@ -138,7 +157,64 @@ public sealed record CFGDiagnostic(
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
         => new(CFGExceptionType.TypeMismatch, severity,
             message ?? $"Type mismatch: expect {expect.FullName}, got {current?.FullName ?? "<null>"}",
-            new TypeMismatchContext(inst, expect, current));
+            new TypeMismatchContext(inst, TypeMismatchKind.Type, expect.FullName,
+                current?.FullName ?? "<null>", expect, current));
+
+    public static CFGDiagnostic StackTypeMismatch(string expect, string current, Instruction inst,
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => new(CFGExceptionType.TypeMismatch, severity,
+            message ?? $"Stack type mismatch: expect {expect}, got {current}",
+            new TypeMismatchContext(inst, TypeMismatchKind.StackType, expect, current));
+
+    public static CFGDiagnostic MethodSignatureMismatch(TypeMismatchKind kind, MethodDefinition current, MethodDefinition expect,
+        Instruction inst, int? parameterIndex = null, DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+    {
+        switch (kind)
+        {
+            case TypeMismatchKind.MethodReturnType:
+                return MethodSignatureMismatch(kind, expect.ReturnType, current.ReturnType, inst,
+                    parameterIndex, severity, message);
+
+            case TypeMismatchKind.MethodParameterType:
+                if (parameterIndex is not { } index)
+                    throw new ArgumentNullException(nameof(parameterIndex));
+                return MethodSignatureMismatch(kind, expect.Parameters[index].ParameterType,
+                    current.Parameters[index].ParameterType, inst, parameterIndex, severity, message);
+
+            case TypeMismatchKind.MethodParameterCount:
+                return MethodSignatureMismatch(kind, expect.Parameters.Count.ToString(),
+                    current.Parameters.Count.ToString(), inst, parameterIndex, severity, message);
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+    }
+
+    public static CFGDiagnostic MethodSignatureMismatch(TypeMismatchKind kind, TypeReference expect, TypeReference current,
+        Instruction inst, int? parameterIndex = null, DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => MethodSignatureMismatch(kind, expect.FullName, current.FullName, inst, parameterIndex, severity, message,
+            expect, current);
+
+    public static CFGDiagnostic MethodSignatureMismatch(TypeMismatchKind kind, string expect, string current,
+        Instruction inst, int? parameterIndex = null, DiagnosticSeverity severity = DiagnosticSeverity.Error,
+        string? message = null, TypeReference? expectType = null, TypeReference? currentType = null)
+    {
+        return new CFGDiagnostic(CFGExceptionType.TypeMismatch, severity,
+            message ?? FormatMethodSignatureMismatchMessage(kind, expect, current, parameterIndex),
+            new TypeMismatchContext(inst, kind, expect, current, expectType, currentType, parameterIndex));
+    }
+
+    private static string FormatMethodSignatureMismatchMessage(TypeMismatchKind kind, string expect, string current, int? parameterIndex)
+        => kind switch
+        {
+            TypeMismatchKind.MethodReturnType =>
+                $"Method signature return type mismatch: expect {expect}, got {current}",
+            TypeMismatchKind.MethodParameterType =>
+                $"Method signature parameter[{parameterIndex}] type mismatch: expect {expect}, got {current}",
+            TypeMismatchKind.MethodParameterCount =>
+                $"Method signature parameter count mismatch: expect {expect}, got {current}",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
     
     public static CFGDiagnostic IncompatibleMerge(CFGExceptionType exceptionType, ILMethodAnalyzer.BasicBlock from, ILMethodAnalyzer.BasicBlock to,
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)

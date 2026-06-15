@@ -242,6 +242,8 @@ namespace MonoWeaver.CFG
             }
         }
 
+        public TypeSig TypeSig => _typeSig;
+
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static implicit operator StackType(TypeReference type) => Create(type);

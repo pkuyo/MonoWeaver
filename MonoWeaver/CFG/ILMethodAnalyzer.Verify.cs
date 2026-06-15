@@ -5,8 +5,10 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
+using System.Linq;
 using System.Net;
 using System.Runtime.CompilerServices;
+using static MonoWeaver.Utils.CecilTypeSystem;
 
 namespace MonoWeaver.CFG;
 
@@ -114,14 +116,12 @@ public partial class ILMethodAnalyzer
     /// TypeReference走隐式类型转换
     /// 否则built in会出现问题
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackType VerifyType(StackType type1, StackType type2, Instruction inst)
+    private void VerifyType(StackType acutal, StackType expect, Instruction inst)
     {
-        if (!type1.StackValueEqualsTo(type2))
+        if (!acutal.StackValueEqualsTo(expect))
         {
-            ReportStackTypeMismatch(type2, type1, inst);
+            ReportStackTypeMismatch(expect, acutal, inst);
         }
-
-        return type2;
     }
 
 
@@ -233,6 +233,86 @@ public partial class ILMethodAnalyzer
         => type.VerifyType is VerificationType.BuiltIn
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I8 or BuiltInType.I;
 
+
+    private void VerifyMethodSig(MethodReference actual, MethodDefinition expect, Instruction inst,
+        GenericInstanceType? expectContext = null)
+    {
+        var actualContext = actual.DeclaringType as GenericInstanceType;
+        var actualReturnType = InflateMethodSigType(actual.ReturnType, actualContext);
+        var expectReturnType = InflateMethodSigType(expect.ReturnType, expectContext);
+        if (!actualReturnType.IsILStackAssignableTo(expectReturnType))
+        {
+            ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(
+                TypeMismatchKind.MethodReturnType, expectReturnType, actualReturnType, inst));
+        }
+
+        if (actual.Parameters.Count != expect.Parameters.Count)
+        {
+            ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(
+                TypeMismatchKind.MethodParameterCount, expect.Parameters.Count.ToString(),
+                actual.Parameters.Count.ToString(), inst));
+            return;
+        }
+
+        for(int i = 0; i < actual.Parameters.Count; i++)
+        {
+            var expectParameterType = InflateMethodSigType(expect.Parameters[i].ParameterType, expectContext);
+            var actualParameterType = InflateMethodSigType(actual.Parameters[i].ParameterType, actualContext);
+            if (!expectParameterType.IsILStackAssignableTo(actualParameterType))
+            {
+                ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(
+                    TypeMismatchKind.MethodParameterType, expectParameterType, actualParameterType, inst, i));
+            }
+        }
+    }
+
+    private static TypeReference InflateMethodSigType(TypeReference type, GenericInstanceType? context)
+    {
+        if (context is null)
+            return type;
+
+        switch (type)
+        {
+            case GenericParameter gp when gp.Owner is TypeReference ownerRef
+                                      && ownerRef.IsSameWith(context.ElementType)
+                                      && context.GenericArguments.Count > gp.Position:
+                return context.GenericArguments[gp.Position];
+
+            case ByReferenceType byRef:
+                return new ByReferenceType(InflateMethodSigType(byRef.ElementType, context));
+
+            case PointerType ptr:
+                return new PointerType(InflateMethodSigType(ptr.ElementType, context));
+
+            case ArrayType array:
+                var element = InflateMethodSigType(array.ElementType, context);
+                var result = array.IsVector
+                    ? new ArrayType(element)
+                    : new ArrayType(element, array.Rank);
+                foreach (var dimension in array.Dimensions)
+                    result.Dimensions.Add(new ArrayDimension(dimension.LowerBound, dimension.UpperBound));
+                return result;
+
+            case GenericInstanceType genericInstance:
+                var inflatedElement = InflateMethodSigType(genericInstance.ElementType, context);
+                var inflatedInstance = new GenericInstanceType(inflatedElement);
+                foreach (var argument in genericInstance.GenericArguments)
+                    inflatedInstance.GenericArguments.Add(InflateMethodSigType(argument, context));
+                return inflatedInstance;
+
+            case OptionalModifierType optional:
+                return new OptionalModifierType(optional.ModifierType,
+                    InflateMethodSigType(optional.ElementType, context));
+
+            case RequiredModifierType required:
+                return new RequiredModifierType(required.ModifierType,
+                    InflateMethodSigType(required.ElementType, context));
+
+            default:
+                return type;
+        }
+    }
+
     private void ReportStackTypeMismatch(StackType expected, StackType actual, Instruction inst)
     {
         ReportStackTypeMismatch(FormatStackType(expected), actual, inst);
@@ -240,8 +320,7 @@ public partial class ILMethodAnalyzer
 
     private void ReportStackTypeMismatch(string expected, StackType actual, Instruction inst)
     {
-        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.TypeMismatch, inst,
-            message: $"Stack type mismatch: expect {expected}, got {FormatStackType(actual)}"));
+        ReportDiagnostic(CFGDiagnostic.StackTypeMismatch(expected, FormatStackType(actual), inst));
     }
 
     private static string FormatStackType(StackType type)
@@ -288,7 +367,10 @@ public partial class ILMethodAnalyzer
                     return type.IsInvalid ? StackType.Create(module.TypeSystem.Object) : StackType.CreateBoxed(type.Type!);
                 }
             case Code.Ckfinite:
-                return VerifyType(stacks[0], StackType.F, inst);
+                {
+                    VerifyType(stacks[0], StackType.F, inst);
+                    return StackType.F;
+                }
             case Code.Conv_I1:
             case Code.Conv_I2:
             case Code.Conv_I4:
@@ -332,13 +414,20 @@ public partial class ILMethodAnalyzer
             case Code.Pop:
                 return StackType.Invalid;
             case Code.Refanytype:
-                return VerifyType(stacks[0], module.TypeSystem.TypedReference, inst);
+                {
+                    VerifyType(stacks[0], module.TypeSystem.TypedReference, inst);
+                    return module.ImportReference(typeof(RuntimeTypeHandle));
+                }
             case Code.Refanyval:
                 {
                     if (!VerifyTypeOperand(inst, out var targetType))
                         return StackType.Invalid;
-
-                    return VerifyByRef(stacks[0], targetType, inst);
+                    if (stacks[0].VerifyType != VerificationType.TypedRef)
+                    {
+                        ReportStackTypeMismatch(StackType.TypedRef, stacks[0], inst);
+                        return StackType.Invalid;
+                    }
+                    return StackType.CreateByRef(targetType);
                 }
             case Code.Starg:
                 {
@@ -511,6 +600,7 @@ public partial class ILMethodAnalyzer
 
     private void VerifyPop3(Instruction inst, StackType[] stacks)
     {
+        //TODO: 这里没有校验数组是否兼容对应元素数据
         var module = _method.Module;
         var value = stacks[0];
         var index = stacks[1]; //I4
@@ -535,7 +625,7 @@ public partial class ILMethodAnalyzer
 
         if (inst.OpCode.Code is Code.Stelem_Ref)
         {
-            if (arrayType.ElementType.IsValueType || arrayType.ElementType.IsEnum())
+            if (arrayType.ElementType.IsValueType)
             {
                 ReportStackTypeMismatch("reference type", arrayType.ElementType, inst);
                 return;
@@ -567,14 +657,105 @@ public partial class ILMethodAnalyzer
         {
             case Code.Castclass:
             case Code.Isinst:
+                {
+                    if (VerifyTypeOperand(inst, out var targetType))
+                    {
+                        return targetType;
+                    }
+                    return StackType.Invalid;
+                }
             case Code.Unbox:
-            case Code.Throw:
-            case Code.Ldfld:
-            case Code.Ldflda:
-            case Code.Ldlen:
+                {
+                    VerifyType(type, module.TypeSystem.Object, inst);
+                    if (VerifyTypeOperand(inst, out var targetType))
+                    {
+                        if (!targetType.IsValueType)
+                        {
+                            ReportStackTypeMismatch("reference type", type, inst);
+                        }
+                        return StackType.CreateByRef(targetType);
+                    }
+                    return StackType.Invalid;
+                }
             case Code.Unbox_Any:
+                {
+                    VerifyType(type, module.TypeSystem.Object, inst);
+                    if (VerifyTypeOperand(inst, out var targetType))
+                    {
+                        return targetType;
+                    }
+                    return StackType.Invalid;
+                }
+            case Code.Throw:
+                return StackType.Invalid;
+            case Code.Ldfld:
+                {
+                    if (VerifyFieldOperand(inst, out var field))
+                    {
+                        if (type == StackType.Null)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, null, inst, DiagnosticSeverity.Warning));
+                        }
+                        else if (type.Type is not null && !type.Type.IsILStackAssignableTo(field.DeclaringType))
+                        {
+                            ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, type.Type, inst));
+                        }
+                        return field.FieldType;
+                    }
+                    return StackType.Invalid;
+                }
+            case Code.Ldflda:
+                {
+                    if (VerifyFieldOperand(inst, out var field))
+                    {
+                        if (type == StackType.Null)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, null, inst, DiagnosticSeverity.Warning));
+                        }
+                        else if (type.Type is not null && !type.Type.IsILStackAssignableTo(field.DeclaringType))
+                        {
+                            ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, type.Type, inst));
+                        }
+                        return StackType.CreateByRef(field.FieldType);
+                    }
+                    return StackType.Invalid;
+                }
+            case Code.Ldlen:
+                {
+                    if (type.TypeSig != TypeSig.Array && 
+                        (type.Type.BaseType() is not TypeReference baseType
+                        || TypeSig.Create(baseType) != TypeSig.Array)) //少用一次importRef
+                    {
+                        ReportStackTypeMismatch("any array type", type, inst);
+                    }
+                    return StackType.I;
+                }
             case Code.Ldvirtftn:
-                break;
+                {
+                    if (VerifyMethodOperand(inst, out var method))
+                    {
+                        VerifyType(type, method.DeclaringType, inst);
+                        var methodDef = ResolveWithDiagnostic(method) as MethodDefinition;
+                        //对于下一句为 newobj instance void SomeDelegate::.ctor(object, native int)的情况时特殊处理进行验证
+                        if (inst.Next is { } nextInst &&
+                            nextInst.OpCode.Code == Code.Newobj &&
+                            methodDef != null &&
+                            nextInst.Operand is MethodReference ctorMethod &&
+                            ctorMethod.DeclaringType.IsAssignableTo(module.ImportReference(typeof(Delegate))/*TODO: 这里暂时不知道如何优化*/) &&
+                            ResolveWithDiagnostic(ctorMethod.DeclaringType) is TypeDefinition delegateType)
+                        {
+                            var invoke = delegateType.Methods.FirstOrDefault(m =>
+                                    m.Name == "Invoke" &&
+                                    !m.IsStatic);
+                            if (invoke != null)
+                            {
+                                VerifyMethodSig(method, invoke, inst, ctorMethod.DeclaringType as GenericInstanceType);
+                            }
+                        }
+                    }
+                    
+                    return StackType.I;
+                }
             default:
                 throw new ArgumentOutOfRangeException();
         }
@@ -583,10 +764,29 @@ public partial class ILMethodAnalyzer
 
     private StackType VerifyPopref_popi(Instruction inst, StackType[] stacks)
     {
+        //TODO: 这里没有校验数组是否兼容对应元素数据
         var module = _method.Module;
+        var index = stacks[0];
+        var array = stacks[1]; //1 rank array
+        if (array.Type is not TypeReference ty || ty is not ArrayType arrayType ||
+            arrayType.Rank != 1)
+        {
+            ReportStackTypeMismatch("1 rank array type", array, inst);
+            return StackType.Invalid;
+        }
+        var eleType = arrayType.ElementType;
+        VerifyInt(index, inst);
         switch (inst.OpCode.Code)
         {
             case Code.Ldelema:
+                {
+                    if (VerifyTypeOperand(inst, out var type))
+                    {
+                        VerifyType(eleType, type, inst);
+                        return StackType.CreateByRef(type);
+                    }
+                    return StackType.Invalid;
+                }
             case Code.Ldelem_I1:
             case Code.Ldelem_U1:
             case Code.Ldelem_I2:
@@ -630,7 +830,7 @@ public partial class ILMethodAnalyzer
         {
             args[i++] = p.ParameterType;
         }
-        return (sig.ReturnType.Namespace == "System" && sig.ReturnType.Name == "Void") 
+        return (sig.ReturnType.IsVoid()) 
             ? StackType.Invalid : StackType.Create(sig.ReturnType);
     }
 
@@ -771,6 +971,7 @@ public partial class ILMethodAnalyzer
             _ => ReportInvalidBinary(left, inst)
         };
     }
+
     private StackType VerifyOverflow(StackType left, StackType right, Instruction inst, bool unsigned)
     {
         var code = inst.OpCode.Code;
