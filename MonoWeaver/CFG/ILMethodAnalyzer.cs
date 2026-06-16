@@ -218,7 +218,6 @@ public partial class ILMethodAnalyzer
 
         _verifyOptions = verifyOptions;
         _method = method;
-        _method.Body.SimplifyMacros();
         _needInitAnalysis = !_method.Body.InitLocals;
         VerifyMethod();
     }
@@ -233,7 +232,6 @@ public partial class ILMethodAnalyzer
         _blockMap.Clear();
         _nodeIntern.Clear();
         _blocks.Clear();
-        _method.Body.SimplifyMacros();
         Diagnostics.Clear();
         _currentErrorCount = 0;
         VerifyMethod();
@@ -504,11 +502,11 @@ public partial class ILMethodAnalyzer
                             continue;
                         }
 
-                        if ((instEhFrames[index] == instEhFrames[i]) == (inst.OpCode.Code == Code.Leave))
+                        if ((instEhFrames[index] == instEhFrames[i]) == (inst.OpCode.Code is Code.Leave or Code.Leave_S))
                         {
                             //跨异常边界跳转
                             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(
-                                inst.OpCode.Code == Code.Leave
+                                inst.OpCode.Code is Code.Leave or Code.Leave_S
                                     ? CFGExceptionType.LeaveTargetSameEhRegion
                                     : CFGExceptionType.BrTargetCrossEhRegion, inst));
                         }
@@ -741,6 +739,7 @@ public partial class ILMethodAnalyzer
                         break;
                     }
                 case Code.Leave:
+                case Code.Leave_S:
                     {
                         if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Try and not RegionKind.Handler)
                         {
@@ -813,30 +812,20 @@ public partial class ILMethodAnalyzer
                         break;
                     }
                 case OperandType.InlineVar:
+                case OperandType.ShortInlineVar:
                     {
-                        if(VerifyVarOperand(inst, out var re))
-                        {
-                            if (re.Index < 0 || re.Index >= _method.Body.Variables.Count)
-                            {
-                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
-                            }
-                        } 
+                        TryGetVariableIndex(inst, out _);
                         break;
                         
                     }
                 case OperandType.InlineArg:
+                case OperandType.ShortInlineArg:
                     {
-                        if (VerifyParameterOperand(inst, out var re))
-                        {
-                            if (re.Index < 0 || re.Index >= _method.Parameters.Count)
-                            {
-                                if(re.Index != -1 || !_method.HasThis)
-                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
-                            }
-                        }
+                        TryGetParameterType(inst, out _);
                         break;
                     }
                 case OperandType.InlineBrTarget:
+                case OperandType.ShortInlineBrTarget:
                     {
                         VerifyInstructionOperand(inst, out _);
                         break;
@@ -851,6 +840,14 @@ public partial class ILMethodAnalyzer
                         VerifyInt32Operand(inst, out _);
                         break;
                     }
+                case OperandType.ShortInlineI:
+                    {
+                        if (inst.OpCode.Code is Code.Ldc_I4_S)
+                            VerifySByteOperand(inst, out _);
+                        else
+                            VerifyByteOperand(inst, out _);
+                        break;
+                    }
                 case OperandType.InlineI8:
                     {
                         VerifyInt64Operand(inst, out _);
@@ -859,6 +856,11 @@ public partial class ILMethodAnalyzer
                 case OperandType.InlineR:
                     {
                         VerifyDoubleOperand(inst, out _);
+                        break;
+                    }
+                case OperandType.ShortInlineR:
+                    {
+                        VerifySingleOperand(inst, out _);
                         break;
                     }
                 case OperandType.InlineString:
@@ -1106,12 +1108,13 @@ public partial class ILMethodAnalyzer
             for (var inst = leader; inst != null; inst = inst.Next)
             {
                 var ts = _method.Module.TypeSystem;
-                if(inst.OpCode.StackBehaviourPop == StackBehaviour.PopAll)
+                var popBehaviour = inst.OpCode.StackBehaviourPop;
+                if(popBehaviour == StackBehaviour.PopAll)
                 {
                     localStack.Clear();
                     node = _root;
                 }
-                var pop = inst.OpCode.StackBehaviourPop.PopCount() switch
+                var pop = popBehaviour == StackBehaviour.PopAll ? 0 : popBehaviour.PopCount() switch
                 {
                     -1 => 0,
                     var tmpPop => tmpPop
@@ -1125,6 +1128,7 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.StackBehaviourPop)
                 {
                     case StackBehaviour.Pop0:
+                        retType = VerifyPop0(inst, buffer);
                         break;
 
                     case StackBehaviour.Pop1:
@@ -1132,7 +1136,7 @@ public partial class ILMethodAnalyzer
                         break;
 
                     case StackBehaviour.Popi:
-                        VerifyType(buffer[0], ts.Int32, inst);
+                        retType = VerifyPopi(inst, buffer);
                         break;
 
                     case StackBehaviour.Popref:
@@ -1196,6 +1200,9 @@ public partial class ILMethodAnalyzer
                             var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
                             VerifyType(type, funcBuffer[j], inst);
                         }
+                        break;
+
+                    case StackBehaviour.PopAll:
                         break;
 
                     default:
@@ -1297,16 +1304,18 @@ public partial class ILMethodAnalyzer
     //校验local是否被初始化，进入该函数需确保VerifyInitLocal为true
     private void AnalyzeCF_CalcInitLocal(Instruction inst, BitArray array)
     {
-        if (inst.OpCode.Code is Code.Stloc)
+        if (IsStlocCode(inst.OpCode.Code) && TryGetVariableIndex(inst, out var stlocIndex))
         {
-            array[((VariableDefinition)(inst.Operand)).Index] = true;
+            array[stlocIndex] = true;
         }
 
-        if (inst.OpCode.Code is Code.Ldloc or Code.Ldloca && !array[((VariableDefinition)(inst.Operand)).Index])
+        if ((IsLdlocCode(inst.OpCode.Code) || IsLdlocaCode(inst.OpCode.Code)) &&
+            TryGetVariableIndex(inst, out var ldlocIndex) &&
+            !array[ldlocIndex])
         {
             //Ldlocda进行最保守估计，不追踪
             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitializedLocal, inst,
-                inst.OpCode.Code is Code.Ldloc ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning));
+                IsLdlocCode(inst.OpCode.Code) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning));
         }
     }
 

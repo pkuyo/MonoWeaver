@@ -41,6 +41,7 @@ public static partial class CecilHelper
             StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
             StackBehaviour.Popref_popi or StackBehaviour.Popi_pop1 or
             StackBehaviour.Popref_pop1 or StackBehaviour.Pop1_pop1 => 2,
+        StackBehaviour.Popi_popi_popi or
         StackBehaviour.Popref_popi_popi or
             StackBehaviour.Popref_popi_popi8 or
             StackBehaviour.Popref_popi_popr4 or
@@ -74,6 +75,7 @@ public static partial class CecilHelper
           StackBehaviour.Popi_popr4 or StackBehaviour.Popi_popr8 or
           StackBehaviour.Popref_popi or StackBehaviour.Popi_pop1 or
           StackBehaviour.Popref_pop1 or StackBehaviour.Pop1_pop1 => 2,
+      StackBehaviour.Popi_popi_popi or
       StackBehaviour.Popref_popi_popi or
           StackBehaviour.Popref_popi_popi8 or
           StackBehaviour.Popref_popi_popr4 or
@@ -89,7 +91,8 @@ public static partial class CecilHelper
     => behaviour switch
     {
         StackBehaviour.Push0 => 0,
-        StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushref or StackBehaviour.Pushr8 => 1,
+        StackBehaviour.Push1 or StackBehaviour.Pushi or StackBehaviour.Pushi8 or StackBehaviour.Pushref or
+            StackBehaviour.Pushr4 or StackBehaviour.Pushr8 => 1,
         StackBehaviour.Push1_push1 => 2,
         StackBehaviour.Varpush => -1, //Unknown
         _ => throw new ArgumentOutOfRangeException()

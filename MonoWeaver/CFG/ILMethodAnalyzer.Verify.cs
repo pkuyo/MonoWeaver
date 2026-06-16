@@ -48,6 +48,18 @@ public partial class ILMethodAnalyzer
         => VerifyOperand(inst, out param);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifyByteOperand(Instruction inst, out byte value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifySByteOperand(Instruction inst, out sbyte value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool VerifySingleOperand(Instruction inst, out float value)
+        => VerifyOperand(inst, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool VerifyInstructionOperand(Instruction inst, out Instruction target)
     {
         if (CecilHelper.TryResolveInstructionTarget(inst.Operand, out var resolvedTarget, out var error))
@@ -120,6 +132,168 @@ public partial class ILMethodAnalyzer
             inst.Operand?.GetType() ?? typeof(void), inst));
         return false;
     }
+
+    private bool TryGetParameterType(Instruction inst, out TypeReference type)
+    {
+        type = null!;
+        if (TryGetMacroArgumentSlot(inst.OpCode.Code, out var slot))
+            return TryGetParameterTypeBySlot(slot, inst, out type);
+
+        if (!VerifyParameterOperand(inst, out var parameter))
+            return false;
+
+        return TryGetParameterType(parameter, inst, out type);
+    }
+
+    private bool TryGetParameterType(ParameterReference parameter, Instruction inst, out TypeReference type)
+    {
+        type = null!;
+        if (parameter.Index == -1)
+        {
+            if (_method.HasThis)
+            {
+                type = _method.DeclaringType;
+                return true;
+            }
+
+            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+            return false;
+        }
+
+        if (parameter.Index < 0 || parameter.Index >= _method.Parameters.Count)
+        {
+            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+            return false;
+        }
+
+        type = _method.Parameters[parameter.Index].ParameterType;
+        return true;
+    }
+
+    private bool TryGetParameterTypeBySlot(int slot, Instruction inst, out TypeReference type)
+    {
+        type = null!;
+        var parameterIndex = _method.HasThis ? slot - 1 : slot;
+        if (parameterIndex == -1)
+        {
+            type = _method.DeclaringType;
+            return true;
+        }
+
+        if (parameterIndex < 0 || parameterIndex >= _method.Parameters.Count)
+        {
+            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+            return false;
+        }
+
+        type = _method.Parameters[parameterIndex].ParameterType;
+        return true;
+    }
+
+    private static bool TryGetMacroArgumentSlot(Code code, out int slot)
+    {
+        switch (code)
+        {
+            case Code.Ldarg_0:
+                slot = 0;
+                return true;
+            case Code.Ldarg_1:
+                slot = 1;
+                return true;
+            case Code.Ldarg_2:
+                slot = 2;
+                return true;
+            case Code.Ldarg_3:
+                slot = 3;
+                return true;
+            default:
+                slot = -1;
+                return false;
+        }
+    }
+
+    private bool TryGetVariableType(Instruction inst, out TypeReference type)
+    {
+        type = null!;
+        if (TryGetMacroVariableIndex(inst.OpCode.Code, out var index))
+            return TryGetVariableTypeByIndex(index, inst, out type);
+
+        if (!VerifyVarOperand(inst, out var variable))
+            return false;
+
+        return TryGetVariableTypeByIndex(variable.Index, inst, out type);
+    }
+
+    private bool TryGetVariableIndex(Instruction inst, out int index)
+    {
+        if (TryGetMacroVariableIndex(inst.OpCode.Code, out index))
+            return TryValidateVariableIndex(index, inst);
+
+        if (!VerifyVarOperand(inst, out var variable))
+        {
+            index = -1;
+            return false;
+        }
+
+        index = variable.Index;
+        return TryValidateVariableIndex(index, inst);
+    }
+
+    private bool TryGetVariableTypeByIndex(int index, Instruction inst, out TypeReference type)
+    {
+        type = null!;
+        if (!TryValidateVariableIndex(index, inst))
+            return false;
+
+        type = _method.Body.Variables[index].VariableType;
+        return true;
+    }
+
+    private bool TryValidateVariableIndex(int index, Instruction inst)
+    {
+        if (index >= 0 && index < _method.Body.Variables.Count)
+            return true;
+
+        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
+        return false;
+    }
+
+    private static bool TryGetMacroVariableIndex(Code code, out int index)
+    {
+        switch (code)
+        {
+            case Code.Ldloc_0:
+            case Code.Stloc_0:
+                index = 0;
+                return true;
+            case Code.Ldloc_1:
+            case Code.Stloc_1:
+                index = 1;
+                return true;
+            case Code.Ldloc_2:
+            case Code.Stloc_2:
+                index = 2;
+                return true;
+            case Code.Ldloc_3:
+            case Code.Stloc_3:
+                index = 3;
+                return true;
+            default:
+                index = -1;
+                return false;
+        }
+    }
+
+    private static bool IsLdlocCode(Code code)
+        => code is Code.Ldloc or Code.Ldloc_S
+            or Code.Ldloc_0 or Code.Ldloc_1 or Code.Ldloc_2 or Code.Ldloc_3;
+
+    private static bool IsLdlocaCode(Code code)
+        => code is Code.Ldloca or Code.Ldloca_S;
+
+    private static bool IsStlocCode(Code code)
+        => code is Code.Stloc or Code.Stloc_S
+            or Code.Stloc_0 or Code.Stloc_1 or Code.Stloc_2 or Code.Stloc_3;
 
     /// TypeReference走隐式类型转换
     /// 否则built in会出现问题
@@ -209,9 +383,10 @@ public partial class ILMethodAnalyzer
         if (type1.VerifyType != VerificationType.ByRef)
         {
             ReportStackTypeMismatch("byref type", type1, inst);
+            return StackType.Invalid;
         }
      
-        if(!type1.Type.IsSameWith(expectType))
+        if(type1.Type is null || !type1.Type.IsSameWith(expectType))
         {
             ReportDiagnostic(CFGDiagnostic.TypeMismatch(expectType,
                 type1.Type, inst));
@@ -358,7 +533,136 @@ public partial class ILMethodAnalyzer
 
 public partial class ILMethodAnalyzer
 {
+    private StackType VerifyPop0(Instruction inst, StackType[] stacks)
+    {
+        var module = _method.Module;
 
+        switch (inst.OpCode.Code)
+        {
+            case Code.Nop:
+            case Code.Break:
+            case Code.Jmp:
+            case Code.Br:
+            case Code.Br_S:
+            case Code.Endfinally:
+            case Code.Unaligned:
+            case Code.Volatile:
+            case Code.Tail:
+            case Code.Constrained:
+            case Code.No:
+            case Code.Rethrow:
+            case Code.Readonly:
+                return StackType.Invalid;
+
+            case Code.Ldnull:
+                return StackType.Null;
+
+            case Code.Ldc_I4_M1:
+            case Code.Ldc_I4_0:
+            case Code.Ldc_I4_1:
+            case Code.Ldc_I4_2:
+            case Code.Ldc_I4_3:
+            case Code.Ldc_I4_4:
+            case Code.Ldc_I4_5:
+            case Code.Ldc_I4_6:
+            case Code.Ldc_I4_7:
+            case Code.Ldc_I4_8:
+            case Code.Ldc_I4_S:
+            case Code.Ldc_I4:
+                return StackType.I4;
+
+            case Code.Ldc_I8:
+                return StackType.I8;
+
+            case Code.Ldc_R4:
+            case Code.Ldc_R8:
+                return StackType.F;
+
+            case Code.Ldstr:
+                return module.TypeSystem.String;
+
+            case Code.Ldsfld:
+                {
+                    if (VerifyFieldOperand(inst, out var field))
+                        return field.FieldType;
+                    return StackType.Invalid;
+                }
+
+            case Code.Ldsflda:
+                {
+                    if (VerifyFieldOperand(inst, out var field))
+                        return StackType.CreateByRef(field.FieldType);
+                    return StackType.Invalid;
+                }
+
+            case Code.Ldtoken:
+                {
+                    if (!VerifyMemberOperand(inst, out var member))
+                        return StackType.Invalid;
+
+                    return member switch
+                    {
+                        TypeReference => module.ImportReference(typeof(RuntimeTypeHandle)),
+                        FieldReference => module.ImportReference(typeof(RuntimeFieldHandle)),
+                        MethodReference => module.ImportReference(typeof(RuntimeMethodHandle)),
+                        _ => StackType.Invalid
+                    };
+                }
+
+            case Code.Arglist:
+                return module.ImportReference(typeof(RuntimeArgumentHandle));
+
+            case Code.Ldftn:
+                return StackType.I;
+
+            case Code.Ldarg_0:
+            case Code.Ldarg_1:
+            case Code.Ldarg_2:
+            case Code.Ldarg_3:
+            case Code.Ldarg_S:
+            case Code.Ldarg:
+                {
+                    if (TryGetParameterType(inst, out var paramType))
+                        return paramType;
+                    return StackType.Invalid;
+                }
+
+            case Code.Ldarga_S:
+            case Code.Ldarga:
+                {
+                    if (TryGetParameterType(inst, out var paramType))
+                        return StackType.CreateByRef(paramType);
+                    return StackType.Invalid;
+                }
+
+            case Code.Ldloc_0:
+            case Code.Ldloc_1:
+            case Code.Ldloc_2:
+            case Code.Ldloc_3:
+            case Code.Ldloc_S:
+            case Code.Ldloc:
+                {
+                    if (TryGetVariableType(inst, out var variableType))
+                        return variableType;
+                    return StackType.Invalid;
+                }
+
+            case Code.Ldloca_S:
+            case Code.Ldloca:
+                {
+                    if (TryGetVariableType(inst, out var variableType))
+                        return StackType.CreateByRef(variableType);
+                    return StackType.Invalid;
+                }
+
+            case Code.Sizeof:
+                return StackType.I;
+
+            default:
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                return StackType.Invalid;
+        }
+    }
     private StackType VerifyPop1(Instruction inst, StackType[] stacks)
     {
         var module = _method.Module;
@@ -368,7 +672,13 @@ public partial class ILMethodAnalyzer
             case Code.Stloc_1:
             case Code.Stloc_2:
             case Code.Stloc_3:
-                break;
+            case Code.Stloc_S:
+            case Code.Stloc:
+                {
+                    if (TryGetVariableType(inst, out var variableType))
+                        VerifyType(stacks[0], variableType, inst);
+                    return StackType.Invalid;
+                }
             case Code.Box:
                 {
                     var type = VerifyValueType(stacks[0], inst);
@@ -437,50 +747,114 @@ public partial class ILMethodAnalyzer
                     }
                     return StackType.CreateByRef(targetType);
                 }
+            case Code.Starg_S:
             case Code.Starg:
                 {
-                    if (inst.Operand is not ParameterReference pr)
-                    {
-                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(ParameterReference),
-                            inst.Operand?.GetType() ?? typeof(void), inst));
-                        return StackType.Invalid;
-                    }
-
-                    var index = pr.Index;
-                    if (index >= _method.Parameters.Count || index < 0)
-                    {
-                        if (index != -1 || !_method.HasThis)
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
-                    }
-
-                    VerifyType(stacks[0], (_method.HasThis && index == 0) ? _method.DeclaringType
-                    : _method.Parameters[index - (_method.HasThis ? 1 : 0)].ParameterType, inst);
+                    if (TryGetParameterType(inst, out var parameterType))
+                        VerifyType(stacks[0], parameterType, inst);
                     return StackType.Invalid; 
-                }
-            case Code.Stloc:
-                {
-                    if (inst.Operand is not VariableReference reference)
-                    {
-                        ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(VariableReference),
-                            inst.Operand?.GetType() ?? typeof(void), inst));
-                        return StackType.Invalid;
-                    }
-                    VerifyType(stacks[0], reference.VariableType, inst);
-                    return StackType.Invalid;
                 }
             case Code.Stsfld:
                 {
                     if (!VerifyFieldOperand(inst, out var field))
                         return StackType.Invalid;
 
-                    stacks[0] = field.FieldType;
+                    VerifyType(stacks[0], field.FieldType, inst);
                     return StackType.Invalid;
                 }
             default:
-                throw new ArgumentOutOfRangeException(); //TODO:
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
         }
 
-        throw new NotImplementedException();
+        return StackType.Invalid;
+    }
+
+    private StackType VerifyPopi(Instruction inst, StackType[] stacks)
+    {
+        var module = _method.Module;
+        var value = stacks[0];
+        switch (inst.OpCode.Code)
+        {
+            case Code.Brfalse_S:
+            case Code.Brtrue_S:
+            case Code.Brfalse:
+            case Code.Brtrue:
+            case Code.Switch:
+            case Code.Endfilter:
+                VerifyInt(value, inst);
+                return StackType.Invalid;
+
+            case Code.Ldind_I1:
+            case Code.Ldind_U1:
+            case Code.Ldind_I2:
+            case Code.Ldind_U2:
+            case Code.Ldind_I4:
+            case Code.Ldind_U4:
+                VerifyIndirectAddress(value, inst);
+                return StackType.I4;
+
+            case Code.Ldind_I8:
+                VerifyIndirectAddress(value, inst);
+                return StackType.I8;
+
+            case Code.Ldind_I:
+                VerifyIndirectAddress(value, inst);
+                return StackType.I;
+
+            case Code.Ldind_R4:
+            case Code.Ldind_R8:
+                VerifyIndirectAddress(value, inst);
+                return StackType.F;
+
+            case Code.Ldind_Ref:
+                VerifyIndirectAddress(value, inst);
+                return module.TypeSystem.Object;
+
+            case Code.Ldobj:
+                {
+                    if (!VerifyTypeOperand(inst, out var targetType))
+                        return StackType.Invalid;
+
+                    VerifyTypedAddress(value, targetType, inst);
+                    return targetType;
+                }
+
+            case Code.Newarr:
+                {
+                    VerifyInt(value, inst);
+                    if (!VerifyTypeOperand(inst, out var elementType))
+                        return StackType.Invalid;
+
+                    return new ArrayType(elementType);
+                }
+
+            case Code.Mkrefany:
+                {
+                    if (!VerifyTypeOperand(inst, out var targetType))
+                        return StackType.Invalid;
+
+                    VerifyTypedAddress(value, targetType, inst);
+                    return StackType.TypedRef;
+                }
+
+            case Code.Localloc:
+                VerifyInt(value, inst);
+                return StackType.I;
+
+            case Code.Initobj:
+                {
+                    if (!VerifyTypeOperand(inst, out var targetType))
+                        return StackType.Invalid;
+
+                    VerifyTypedAddress(value, targetType, inst);
+                    return StackType.Invalid;
+                }
+
+            default:
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                return StackType.Invalid;
+        }
     }
 
     private StackType VerifyPop1_pop1(Instruction inst, StackType[] stacks)
@@ -490,18 +864,28 @@ public partial class ILMethodAnalyzer
         var b = stacks[1];
         switch (inst.OpCode.Code)
         {
+            case Code.Beq_S:
+            case Code.Bne_Un_S:
             case Code.Beq:
             case Code.Bne_Un:
             case Code.Ceq:
                 {
                     VerifyComparable(a, b, inst, CompareKind.Equality);
-                    break;
+                    return StackType.I4;
                 }
             case Code.Cgt_Un:
                 {
                     VerifyComparable(a, b, inst, CompareKind.CgtUn);
-                    break;
+                    return StackType.I4;
                 }
+            case Code.Bge_S:
+            case Code.Bgt_S:
+            case Code.Ble_S:
+            case Code.Blt_S:
+            case Code.Bge_Un_S:
+            case Code.Bgt_Un_S:
+            case Code.Ble_Un_S:
+            case Code.Blt_Un_S:
             case Code.Bge:
             case Code.Bgt:
             case Code.Ble:
@@ -515,52 +899,38 @@ public partial class ILMethodAnalyzer
             case Code.Clt_Un:
                 {
                     VerifyComparable(a, b, inst, CompareKind.Ordered);
-                    break;
+                    return StackType.I4;
                 }
-
             case Code.Add:
             case Code.Sub:
             case Code.Mul:
             case Code.Div:
             case Code.Rem:
-                {
-                    VerifyBinary(a, b, inst, BinaryKind.Arithmetic);
-                    break;
-                }
+                    return VerifyBinary(a, b, inst, BinaryKind.Arithmetic);
             case Code.And:
             case Code.Or:
             case Code.Xor:
             case Code.Div_Un:
             case Code.Rem_Un:
-                {
-                    VerifyBinary(a, b, inst, BinaryKind.Integer);
-                    break;
-                }
+                    return VerifyBinary(a, b, inst, BinaryKind.Integer);
+                
             case Code.Shl:
             case Code.Shr:
             case Code.Shr_Un:
-                {
-                    VerifyBinary(a, b, inst, BinaryKind.Shift);
-                    break;
-                }
+                    return VerifyBinary(a, b, inst, BinaryKind.Shift);
             case Code.Add_Ovf:
             case Code.Mul_Ovf:
-            case Code.Mul_Ovf_Un:
             case Code.Sub_Ovf:
-                {
-                    VerifyBinary(a, b, inst, BinaryKind.Overflow);
-                    break;
-                }
+                return VerifyBinary(a, b, inst, BinaryKind.Overflow);
             case Code.Sub_Ovf_Un:
             case Code.Add_Ovf_Un:
-                {
-                    VerifyBinary(a, b, inst, BinaryKind.OverflowUnsigned);
-                    break;
-                }
+            case Code.Mul_Ovf_Un:
+                return VerifyBinary(a, b, inst, BinaryKind.OverflowUnsigned);
             default:
-                throw new ArgumentOutOfRangeException();
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
         }
-        throw new NotImplementedException();
+        return StackType.Invalid;
     }
 
     private StackType VerifyPopi_pop1(Instruction inst, StackType[] stacks)
@@ -581,9 +951,10 @@ public partial class ILMethodAnalyzer
                 }
                 break;
             default:
-                throw new ArgumentOutOfRangeException();
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
         }
-        throw new NotImplementedException();
+        return StackType.Invalid;
     }
 
     private StackType VerifyPopref_pop1(Instruction inst, StackType[] stacks)
@@ -601,9 +972,10 @@ public partial class ILMethodAnalyzer
                 VerifyByRef(obj, field.FieldType, inst);
                 break;
             default:
-                throw new ArgumentOutOfRangeException();
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
         }
-        throw new NotImplementedException();
+        return StackType.Invalid;
     }
 
     private void VerifyPop3(Instruction inst, StackType[] stacks)
@@ -628,7 +1000,7 @@ public partial class ILMethodAnalyzer
             Code.Stelem_R4 or Code.Stelem_R8 => StackType.F,
             Code.Stelem_Ref => StackType.Invalid,
             Code.Stelem_Any => StackType.Invalid, //TODO: 暂时不考虑泛型
-            _ => throw new ArgumentOutOfRangeException()
+            _ => StackType.Invalid
         };
 
         if (inst.OpCode.Code is Code.Stelem_Ref)
@@ -640,16 +1012,21 @@ public partial class ILMethodAnalyzer
             }
             expectType = arrayType.ElementType;
         }
-
-        if (inst.OpCode.Code is Code.Stelem_Any)
+        else if (inst.OpCode.Code is Code.Stelem_Any)
         {
             if (!VerifyTypeOperand(inst, out var typeRef))
                 return;
 
             expectType = typeRef;
         }
-
-        VerifyType(value, expectType, inst);
+        if (expectType != StackType.Invalid)
+        {
+            VerifyType(value, expectType, inst);
+        }
+        else
+        {
+            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+        }
     }
 
     private StackType VerifyPopref(Instruction inst, StackType[] stacks)
@@ -765,9 +1142,10 @@ public partial class ILMethodAnalyzer
                     return StackType.I;
                 }
             default:
-                throw new ArgumentOutOfRangeException();
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
         }
-        throw new NotImplementedException();
+        return StackType.Invalid;
     }
 
     private StackType VerifyPopref_popi(Instruction inst, StackType[] stacks)
@@ -801,24 +1179,60 @@ public partial class ILMethodAnalyzer
             case Code.Ldelem_U2:
             case Code.Ldelem_I4:
             case Code.Ldelem_U4:
+                return StackType.I4;
             case Code.Ldelem_I8:
+                return StackType.I8;
             case Code.Ldelem_I:
+                return StackType.I;
             case Code.Ldelem_R4:
             case Code.Ldelem_R8:
+                return StackType.F;
             case Code.Ldelem_Ref:
+                if (arrayType.ElementType.IsValueType)
+                {
+                    ReportStackTypeMismatch("reference type", arrayType.ElementType, inst);
+                    return StackType.Invalid;
+                }
+                return arrayType.ElementType;
             case Code.Ldelem_Any:
-                break;
+                {
+                    if (VerifyTypeOperand(inst, out var type))
+                    {
+                        VerifyType(eleType, type, inst);
+                        return type;
+                    }
+                    return StackType.Invalid;
+                }
             default:
-                throw new ArgumentOutOfRangeException();
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
         }
-        throw new NotImplementedException();
+        return StackType.Invalid;
     }
 
     private StackType VerifyVarPop(Instruction inst, ref StackType[] args, out int len)
     {
         if (inst.Operand is not IMethodSignature sig)
         {
-            throw new Exception();
+            if (inst.OpCode.Code is Code.Ret)
+            {
+                if (_method.ReturnType.IsVoid())
+                {
+                    len = 0;
+                    return StackType.Invalid;
+                }
+
+                len = 1;
+                if (args.Length < len)
+                    Array.Resize(ref args, len);
+                args[0] = _method.ReturnType;
+                return StackType.Invalid;
+            }
+
+            len = 0;
+            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature),
+                inst.Operand?.GetType() ?? typeof(void), inst));
+            return StackType.Invalid;
         }
         var paramLen = sig.Parameters.Count + (sig.HasThis ? 1 : 0);
         len = paramLen;
@@ -1021,8 +1435,7 @@ public partial class ILMethodAnalyzer
     private static bool IsSamePrimitive(StackType a, StackType b)
     => a.VerifyType is VerificationType.BuiltIn
        && b.VerifyType is VerificationType.BuiltIn
-       && a.BuiltInType == b.BuiltInType
-       && a.BuiltInType is BuiltInType.I4 or BuiltInType.I8 or BuiltInType.I or BuiltInType.F;
+       && a.BuiltInType == b.BuiltInType;
 
     private static bool IsI4NativePair(StackType a, StackType b)
         => IsBuiltInPair(a, b, BuiltInType.I4, BuiltInType.I);
@@ -1043,9 +1456,23 @@ public partial class ILMethodAnalyzer
            && ((a.BuiltInType == x && b.BuiltInType == y)
                || (a.BuiltInType == y && b.BuiltInType == x));
 
+    private void VerifyIndirectAddress(StackType address, Instruction inst)
+    {
+        if (IsIntegerNative(address) || address.VerifyType == VerificationType.ByRef)
+            return;
+
+        ReportStackTypeMismatch("I4, native int, or byref address", address, inst);
+    }
+
+    private void VerifyTypedAddress(StackType address, TypeReference targetType, Instruction inst)
+    {
+        if (IsIntegerNative(address))
+            return;
+
+        VerifyByRef(address, targetType, inst);
+    }
+
     private static bool IsIntegerNative(StackType type)
         => type.VerifyType == VerificationType.BuiltIn
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I;
-
-
 }
