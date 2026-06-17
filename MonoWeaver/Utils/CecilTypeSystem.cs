@@ -472,7 +472,7 @@ public static partial class CecilTypeSystem
                 {
                     //处理逆变/协变
                     if (IsSameWith(toGi.ElementType, fromGi.ElementType) &&
-                        GenericArgsAssignableWithVariance(toGi, fromGi, strict, context, from.IsArray))
+                        GenericArgsAssignableWithVariance(toGi, fromGi, strict, context))
                     {
                         return true;
                     }
@@ -519,7 +519,7 @@ public static partial class CecilTypeSystem
             if (toInterface is GenericInstanceType toGi &&
                 iface is GenericInstanceType fromGi &&
                 IsSameWith(toGi.ElementType, fromGi.ElementType) &&
-                GenericArgsAssignableWithVariance(toGi, fromGi, strict, context, from.IsArray))
+                GenericArgsAssignableWithVariance(toGi, fromGi, strict, context))
             {
                 return true;
             }
@@ -592,7 +592,7 @@ public static partial class CecilTypeSystem
 
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
         bool strict,
-        AssignabilityContext context, bool isArrayType)
+        AssignabilityContext context)
     {
         if (target.GenericArguments.Count != source.GenericArguments.Count)
             return false;
@@ -609,7 +609,8 @@ public static partial class CecilTypeSystem
             var tArg = target.GenericArguments[i].StripType();
             var sArg = source.GenericArguments[i].StripType();
 
-            if (isArrayType && !sArg.IsValueType) //引用数组对于其他接口按协变处理
+
+            if (sArg.IsArray && !sArg.IsValueType && tArg.IsArray && !tArg.IsValueType) //引用数组对于其他接口按协变处理
             {
                 variance = GenericParameterAttributes.Covariant;
             }
@@ -641,15 +642,15 @@ public static partial class CecilTypeSystem
 
         bool DefinitelyRef(TypeReference x)
         {
-            //IFoo<int> -> IFoo<object> x
+            // 避免 IFoo<int> -> IFoo<object>
             x = x.StripType();
             if (x.IsValueType) return false;
             if (x is GenericParameter gp)
             {
                 var sc = gp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
-                if (sc == GenericParameterAttributes.NotNullableValueTypeConstraint) return false;
-                if (sc == GenericParameterAttributes.ReferenceTypeConstraint) return true;
-                return false; // 不确定就按不允许 variance 处理 （可能为值类型）
+                if ((sc & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) return false;
+                if ((sc & GenericParameterAttributes.ReferenceTypeConstraint) != 0) return true;
+                return false; // 不确定就按不允许 variance 处理（可能为值类型）
             }
             return true;
         }

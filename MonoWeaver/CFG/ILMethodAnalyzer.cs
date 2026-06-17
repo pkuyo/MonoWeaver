@@ -137,7 +137,6 @@ public partial class ILMethodAnalyzer
         block = null;
         if (eh.TryStart is null) return false;
         if (eh.HandlerStart is null) return false;
-        if (eh.HandlerEnd is null) return false;
         if (eh is { HandlerType: ExceptionHandlerType.Filter, FilterStart: null })
             return false;
 
@@ -150,8 +149,8 @@ public partial class ILMethodAnalyzer
         if (eh.HandlerEnd != null && !instDic.TryGetValue(eh.HandlerEnd, out handlerEnd)) return false;
         if (eh.FilterStart is not null && !instDic.TryGetValue(eh.FilterStart, out filterStart)) return false;
 
-        if(tryStart >= tryEnd || tryEnd >    0 || handlerStart >= handlerEnd)
-            return false; //不符合约束
+        if (tryStart >= tryEnd || tryEnd > methodEndIndex || handlerStart >= handlerEnd || handlerEnd > methodEndIndex)
+            return false;
 
         if (eh.HandlerType == ExceptionHandlerType.Filter)
         {

@@ -986,7 +986,7 @@ public partial class ILMethodAnalyzer
         var index = stacks[1]; //I4
         var array = stacks[2]; //1 rank array
         if (array.Type is not TypeReference type || type is not ArrayType arrayType ||
-            arrayType.Rank != 1)
+            arrayType.Rank != 1 || !arrayType.IsVector)
         {
             ReportStackTypeMismatch("1 rank array type", array, inst);
             return;
@@ -1155,7 +1155,7 @@ public partial class ILMethodAnalyzer
         var index = stacks[0];
         var array = stacks[1]; //1 rank array
         if (array.Type is not TypeReference ty || ty is not ArrayType arrayType ||
-            arrayType.Rank != 1)
+            arrayType.Rank != 1 || !arrayType.IsVector)
         {
             ReportStackTypeMismatch("1 rank array type", array, inst);
             return StackType.Invalid;
@@ -1248,10 +1248,13 @@ public partial class ILMethodAnalyzer
             else
                 args[i++] = StackType.Invalid;
         }
-        foreach(var p in sig.Parameters)
+        foreach (var p in sig.Parameters)
         {
             args[i++] = p.ParameterType;
         }
+        if (inst.OpCode.Code == Code.Newobj && sig is MethodReference ctor)
+            return StackType.Create(ctor.DeclaringType);
+
         return (sig.ReturnType.IsVoid()) 
             ? StackType.Invalid : StackType.Create(sig.ReturnType);
     }
