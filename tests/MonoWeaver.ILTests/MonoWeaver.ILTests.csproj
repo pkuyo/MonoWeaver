@@ -1,0 +1,41 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>12</LangVersion>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Keep copied verifier corpus files as data. Some of them intentionally define System.* test types. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <!-- Build MonoWeaver sources directly so this test migration works offline with only the provided SDK. -->
+    <Compile Include="../../MonoWeaver/CFG/**/*.cs" LinkBase="MonoWeaver/CFG" />
+    <Compile Include="../../MonoWeaver/Utils/**/*.cs" LinkBase="MonoWeaver/Utils" />
+    <Compile Include="../../MonoWeaver/IsExternalInit.cs" Link="MonoWeaver/IsExternalInit.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Mono.Cecil" HintPath="lib/Mono.Cecil.dll" Private="true" />
+    <Reference Include="Mono.Cecil.Rocks" HintPath="lib/Mono.Cecil.Rocks.dll" Private="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="ILVerification/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="lib/*.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Tests/.gitkeep" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" PrivateAssets="all" />
+    <PackageReference Include="xunit" Version="2.9.3" PrivateAssets="all" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

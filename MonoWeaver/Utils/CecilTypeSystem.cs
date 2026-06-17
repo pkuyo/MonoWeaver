@@ -298,7 +298,6 @@ public static partial class CecilTypeSystem
     public static bool IsEnum(this TypeReference typeRef)
     {
         TypeDefinition? typeDef = ResolveWithCache(typeRef);
-
         return typeDef?.IsEnum ?? false;
     }
 
@@ -310,7 +309,7 @@ public static partial class CecilTypeSystem
     /// <returns></returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsVoid(this TypeReference type)
-    => TypeSig.Create(type) == TypeSig.Void;
+    => type.MetadataType == MetadataType.Void;
 
 
 

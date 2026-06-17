@@ -1,6 +1,5 @@
 ﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
-using Mono.Cecil.Rocks;
 using MonoWeaver.Utils;
 using System;
 using System.Collections;
@@ -19,8 +18,18 @@ public enum VerifyOptions
     StackBalance = 1 << 3,
     StackTypes = 1 << 4 | StackBalance, //TODO:WIP
     ByrefEscape = 1 << 5, //TODO:待实现
-    Full = Instructions | LocalInit | StackTypes | ByrefEscape,
-    Light = StackBalance | Instructions
+    AccessTest = 1 << 6,
+    Full = Instructions | LocalInit | StackTypes | ByrefEscape | AccessTest,
+    Light = StackBalance | LocalInit | Instructions
+}
+
+public enum EHRelation
+{
+    None,
+    Same,
+    Assciated,
+    Enclosing,
+    Disjoint
 }
 
 /// <summary>
@@ -46,7 +55,7 @@ public sealed class EHandler(ExceptionHandler eh)
         public int End;
         public EHandler Clause = null!;
         public Region? ParentRegion;
-        public RegionKind Kind;
+        public readonly RegionKind Kind;
 
         public Region(RegionKind kind, int start = -1, int end = -1)
         {
@@ -185,6 +194,7 @@ public partial class ILMethodAnalyzer
     private readonly Dictionary<Instruction, BasicBlock> _blockMap = new();
 
     internal List<BasicBlock> _blocks = null!;
+    internal List<BasicBlock> _entryblocks = null!;
 
     internal List<EHandler> _exceptionHandlers = null!;
 
@@ -195,6 +205,7 @@ public partial class ILMethodAnalyzer
     private VerifyOptions _verifyOptions;
 
     private AbortStrategy _abortVerificationStrategy;
+
 
 
     public bool VerifyStackType => _verifyOptions.HasFlag(VerifyOptions.StackTypes);
@@ -290,6 +301,7 @@ public partial class ILMethodAnalyzer
     private void InitializeFirstPassState(out List<EHandler.Region> ehRegions)
     {
         _blocks = new List<BasicBlock>();
+        _entryblocks = new List<BasicBlock>();
 
         var totalMethodRegion = EHandler.CreateMethodRegion(_method.Body.Instructions.Count + 1); //占位末尾为length+1 length为真实末尾
         ehRegions = new List<EHandler.Region>(_method.Body.ExceptionHandlers.Count);
@@ -312,6 +324,14 @@ public partial class ILMethodAnalyzer
             }
         }
         ThrowIfNeedAbort(AbortStrategy.AbortNextStep);
+    }
+
+    private EHRelation GetEHRelation(EHandler.Region from, EHandler.Region to)
+    {
+        if (from.Start == to.Start && from.End == to.End) return EHRelation.Same;
+        if (from.Start >= to.Start && from.End <= to.End) return EHRelation.Enclosing;
+        if (to.Start >= from.Start && to.End <= from.End) return EHRelation.Assciated;
+        return EHRelation.Disjoint;
     }
 
     /// <summary>
@@ -469,15 +489,16 @@ public partial class ILMethodAnalyzer
         ThrowIfNeedAbort(AbortStrategy.AbortNextStep);
     }
 
+
     /// <summary>
     /// 遍历instruction并添加basicBlock
     /// </summary>
     /// <param name="instEhFrames"></param>
     private void ScanInstructionsAndAddBasicBlocks(int[] instEhFrames)
     {
-        foreach (var ehFlame in _regionFrames)
+        foreach (var ehFrame in _regionFrames)
         {
-            AddBasicBlock(_method.Body.Instructions[ehFlame.Start], ehFlame.Region);
+            AddBasicBlock(_method.Body.Instructions[ehFrame.Start], ehFrame.Region, true);
         }
         
         for (int i = 0; i < _method.Body.Instructions.Count; i++)
@@ -494,6 +515,11 @@ public partial class ILMethodAnalyzer
                 {
                     foreach (var targetInst in targetInsts)
                     {
+                        if (targetInst.Previous is not null && targetInst.Previous.OpCode.OpCodeType == OpCodeType.Prefix)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidBrTarget, inst));
+                        }
+
                         if (!_instDictionary.TryGetValue(targetInst, out var index))
                         {
                             //无效目标位置
@@ -501,15 +527,112 @@ public partial class ILMethodAnalyzer
                             continue;
                         }
 
-                        if ((instEhFrames[index] == instEhFrames[i]) == (inst.OpCode.Code is Code.Leave or Code.Leave_S))
+                        if (inst.OpCode.Code is Code.Leave or Code.Leave_S)
                         {
-                            //跨异常边界跳转
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(
-                                inst.OpCode.Code is Code.Leave or Code.Leave_S
-                                    ? CFGExceptionType.LeaveTargetSameEhRegion
-                                    : CFGExceptionType.BrTargetCrossEhRegion, inst));
-                        }
+                            var currentRegion = _regionFrames[instEhFrames[i]].Region;
+                            var targetRegion = _regionFrames[instEhFrames[index]].Region;
+                            var relation = GetEHRelation(currentRegion, targetRegion);
+                            if (currentRegion.Kind == RegionKind.Normal)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                            }
+                            if (currentRegion.Kind is RegionKind.Handler
+                                     && (currentRegion.Clause.ExceptionHandler.HandlerType is ExceptionHandlerType.Fault or ExceptionHandlerType.Finally) 
+                                && relation != EHRelation.Same)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                            }
+                            else if (currentRegion.Kind is RegionKind.Filter
+                                     && (currentRegion.Clause.ExceptionHandler.HandlerType is ExceptionHandlerType.Filter or ExceptionHandlerType.Fault or ExceptionHandlerType.Finally)
+                                && relation != EHRelation.Same)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                            }
+                            else
+                            {
+                                if (currentRegion.Clause == targetRegion.Clause && targetRegion.Kind == RegionKind.Try)
+                                {
+                                    //对于Handler和Try的leave跳转，允许leave跳转到同EH段的try块
+                                    relation = EHRelation.Same;
+                                }
+                                switch (relation)
+                                {
+                                    case EHRelation.Same:
+                                        break;
+                                    case EHRelation.Assciated: //Assciated情况下必须要求目标为try块的入口
+                                        {
+                                            if (targetRegion.Kind is not RegionKind.Try and not RegionKind.Normal || targetRegion.Start != index)
+                                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                                            break;
+                                        }
+                                    case EHRelation.Enclosing:
+                                        {
+                                            if (targetRegion.Kind is not RegionKind.Try and not RegionKind.Normal &&
+                                                targetRegion != currentRegion.ParentRegion) //为直接外部的EH段如果是其他类型也合法
+                                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                                            break;
+                                        }
+                                    case EHRelation.Disjoint: //Disjoint情况下必须要求目标为try块的入口
+                                        {
+                                            //判断不相交的目标位置是否为第一条指令 多层嵌套应满足每一层都是第一条指令
+                                            //（多层的Start应一致且等于目标位置）
+                                            var tmpRegion = targetRegion;
+                                            var tmp2Region = currentRegion;
+                                            for (; tmp2Region.ParentRegion != null; tmp2Region = tmp2Region.ParentRegion)
+                                            {
+                                                for (tmpRegion = targetRegion; 
+                                                    tmpRegion.ParentRegion != tmp2Region.ParentRegion && tmpRegion.ParentRegion != null; 
+                                                    tmpRegion = tmpRegion.ParentRegion)
+                                                {
+                                                    if (tmpRegion.ParentRegion.Start != tmpRegion.Start) break;
+                                                }
+                                                if (tmpRegion.ParentRegion == tmp2Region.ParentRegion) break;
+                                            }
+                                            if (tmp2Region.ParentRegion == null)
+                                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                                            else if (targetRegion.Kind is not RegionKind.Try || targetRegion.Start != index)
+                                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LeaveTargetInvalid, inst));
+                                            return;
+                                        }
+                                }
+                            }
 
+                        }
+                        else if (_regionFrames[instEhFrames[index]].Region != _regionFrames[instEhFrames[i]].Region) //最外层的Normal有两个ID
+                        {
+                            var currentRegion = _regionFrames[instEhFrames[i]].Region;
+                            var targetRegion = _regionFrames[instEhFrames[index]].Region;
+                            if (targetRegion.Kind != RegionKind.Try)
+                            {
+                                //跨异常边界跳转
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.BrTargetCrossEhRegion, inst));
+                            }
+                            else
+                            {
+                                //如果非内嵌的protected block也算异常
+                                var relation = GetEHRelation(currentRegion, targetRegion);
+                                if (relation is not EHRelation.Assciated and not EHRelation.Same)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.BrTargetCrossEhRegion, inst));
+                                }
+                                else //内嵌要求必须为首指令
+                                {
+                                    bool isFirstInstr = true;
+                                    for (; targetRegion != currentRegion && targetRegion != null; targetRegion = targetRegion.ParentRegion)
+                                    {
+                                        if (targetRegion.Start != index)
+                                        {
+                                            isFirstInstr = false;
+                                        }
+                                    }
+                                    if (!isFirstInstr)
+                                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.BrTargetCrossEhRegion, inst));
+
+                                    if (targetRegion == null)
+                                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                                }
+                            }
+                        }
                         AddBasicBlock(targetInst, _regionFrames[instEhFrames[index]].Region);
                     }
                 }
@@ -592,7 +715,7 @@ public partial class ILMethodAnalyzer
                                 Code.Stind_I1 or Code.Stind_I2 or Code.Stind_I4 or Code.Stind_I8 or Code.Stind_I or
                                 Code.Stind_R4 or Code.Stind_R8 or Code.Stind_Ref or
                                 Code.Ldfld or Code.Ldsfld or Code.Ldobj or Code.Stfld or Code.Stsfld or Code.Stobj or
-                                Code.Initblk or Code.Cpblk))
+                                Code.Initblk or Code.Cpblk or Code.Unaligned))
                             {
                                 ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
                                     inst, prefix.Value));
@@ -612,7 +735,9 @@ public partial class ILMethodAnalyzer
                             }
                             break;
                         case Code.Readonly:
-                            if (inst.OpCode.Code is not Code.Ldelema)
+                            if (inst.OpCode.Code is not Code.Ldelema && 
+                                (inst.OpCode.Code is not Code.Call || !VerifyMethodOperand(inst, out var method) ||
+                                !method.DeclaringType.IsArray || method.Name != "Address")) //针对MDArray
                             {
                                 ReportDiagnostic(CFGDiagnostic.PrefixInvalid(CFGExceptionType.InvalidOpCode, 
                                     inst, prefix.Value));
@@ -737,37 +862,7 @@ public partial class ILMethodAnalyzer
                         }
                         break;
                     }
-                case Code.Leave:
-                case Code.Leave_S:
-                    {
-                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Try and not RegionKind.Handler)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
-                                inst, DiagnosticSeverity.Error, "Invalid 'leave' outside try/catch region."));
-                        }
-                        var currentRegion = _regionFrames[instEhFrames[i]].Region;
-                        if (CecilHelper.TryResolveInstructionTarget(inst.Operand, out var target, out var error))
-                        {
-                            var targetRegion = _regionFrames[instEhFrames[_instDictionary[target!]]].Region;
-                            bool checkOk = false;
-                            while (currentRegion != null) //跳出位置应该为对应段的外部区域
-                            {
-                                if (currentRegion == targetRegion)
-                                {
-                                    checkOk = true;
-                                    break;
-                                }
-                                currentRegion = currentRegion.ParentRegion;
-                            }
-          
-                            if (!checkOk)
-                            {
-                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
-                                    inst, DiagnosticSeverity.Error, "Invalid 'leave' target crossing EH region boundaries."));
-                            }
-                        }
-                        break;
-                    }
+                    //在Leave前面ScanInstructionsAndAddBasicBlocks已经进行了校验 
             }
 
             // 验证调用指令的可解析性 对于inlineBr在前面AddBasicBlock处理了
@@ -909,31 +1004,36 @@ public partial class ILMethodAnalyzer
         return false;
     }
 
-    private void AddBasicBlock(Instruction leader, EHandler.Region region)
+    private void AddBasicBlock(Instruction leader, EHandler.Region region, bool entry = false)
     {
         if (_blockMap.ContainsKey(leader)) return;  
         var block = new BasicBlock(leader, region);
         _blocks.Add(block);
         _blockMap.Add(leader, block);
+
+        if (entry)
+        {
+            _entryblocks.Add(block);
+        }
     }
 
     private void LightControlFlowPass()
     {
-        var usedBlocks = new HashSet<BasicBlock>();
-
-        foreach (var block in _blocks)
+        HashSet<BasicBlock> usedBlocks = new();
+        foreach (var entry in _entryblocks)
         {
-            if (usedBlocks.Contains(block))  continue;
-            LightAnalyzeBlocksControlFlow(block, usedBlocks);
-            ThrowIfNeedAbort(AbortStrategy.AbortNextBlock);
+            LightAnalyzeBlocksControlFlow(entry, usedBlocks);
         }
+        ThrowIfNeedAbort(AbortStrategy.AbortNextBlock);
+     
     }
 
     private void LightAnalyzeBlocksControlFlow(BasicBlock entryBlock, HashSet<BasicBlock> usedBlocks)
     {
 
         if (entryBlock.Kind is RegionKind.Filter ||
-            (entryBlock.Kind is RegionKind.Handler && entryBlock.Region.Clause.ExceptionHandler.CatchType is not null)) //对于filter和handler插入异常对象
+            entryBlock.Kind is RegionKind.Handler) 
+            //对于filter和handler插入异常对象
         {
             entryBlock._entryStackDepth = 1;
         }
@@ -1007,16 +1107,22 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:
-                        if (_blockMap.TryGetValue(inst.Next, out var ehBlock))
+                        if (_blockMap.TryGetValue(inst.Next, out var fallThrougthBlock))
                         {
-                            switch (ehBlock.Kind)
+                            if (block.Kind is RegionKind.Handler or RegionKind.Filter && fallThrougthBlock != block)
                             {
-                                case RegionKind.Handler or RegionKind.Filter when block.Region != ehBlock.Region:
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidFallThrough, inst));
+                                endBlock = true;
+                                break;
+                            }
+                            switch (fallThrougthBlock.Kind)
+                            {
+                                case RegionKind.Handler or RegionKind.Filter when block.Region != fallThrougthBlock.Region:
                                     ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidFallThrough, inst));
                                     endBlock = true;
                                     break;
                                 case RegionKind.Try:
-                                    AnalyzeCF_AddNextBlock(block, ehBlock, bfsBlocks, stackHeight, initLocals, usedBlocks);
+                                    AnalyzeCF_AddNextBlock(block, fallThrougthBlock, bfsBlocks, stackHeight, initLocals, usedBlocks);
                                     endBlock = true;
                                     break;
                             }
@@ -1028,6 +1134,16 @@ public partial class ILMethodAnalyzer
 
                         foreach (var target in branchTargets)
                         {
+                            if (target.Previous != null && 
+                                target.Previous.OpCode.FlowControl == FlowControl.Branch &&
+                                _instDictionary[target] < i)
+                            {
+                                if (stackHeight != 0)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
+                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                }
+                            }
                             AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         }
                         endBlock = true;
@@ -1038,6 +1154,16 @@ public partial class ILMethodAnalyzer
 
                         foreach (var target in condBranchTargets)
                         {
+                            if (target.Previous != null &&
+                                  target.Previous.OpCode.FlowControl == FlowControl.Branch &&
+                                  _instDictionary[target] < i)
+                            {
+                                if (stackHeight != 0)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
+                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                }
+                            }
                             AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         }
                         AnalyzeCF_AddNextBlock(block, _blockMap[inst.Next], bfsBlocks, stackHeight, initLocals, usedBlocks);
@@ -1267,6 +1393,16 @@ public partial class ILMethodAnalyzer
                         foreach (var target in branchTargets)
                         {
                             var targetBlock = _blockMap[target];
+                            if (target.Previous != null &&
+                                   target.Previous.OpCode.FlowControl == FlowControl.Branch &&
+                                   _instDictionary[target] < i)
+                            {
+                                if (node.Depth != 0)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
+                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                }
+                            }
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }
@@ -1280,6 +1416,16 @@ public partial class ILMethodAnalyzer
                         foreach (var target in condBranchTargets)
                         {
                             var targetBlock = _blockMap[target];
+                            if (target.Previous != null &&
+                                target.Previous.OpCode.FlowControl == FlowControl.Branch &&
+                                _instDictionary[target] < i)
+                            {
+                                if (node.Depth != 0)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
+                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                }
+                            }
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
                             block.Edges.Add(new ControlFlowEdge(block, targetBlock));
                         }

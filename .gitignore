@@ -367,3 +367,7 @@ FodyWeavers.xsd
 
 MonoWeaver.CoreClrToolsDemo/
 Compare-CoreClrTools.ps1
+
+# Test results
+TestResults/
+*.trx

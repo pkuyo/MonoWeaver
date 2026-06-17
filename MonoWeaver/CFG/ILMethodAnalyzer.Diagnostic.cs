@@ -33,14 +33,18 @@ public enum CFGExceptionType
     InvalidFallThrough,
     UninitializedLocal,
     IncompatibleMergeTypes,
+    InvalidBackwardBranch,
     IncompatibleMergeDepth,
     InvalidBrTarget,
     BrTargetCrossEhRegion,
-    LeaveTargetSameEhRegion,
+    LeaveTargetInvalid,
     OutOfRange,
     
     ResolveFailed,
     UnExpected,
+
+    FieldAccess,
+    MethodAccess
 }
 
 public enum DiagnosticSeverity

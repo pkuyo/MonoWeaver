@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <ILTEST_FILTER>ArrayAddress_Valid</ILTEST_FILTER>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

@@ -19,8 +19,137 @@ public partial class ILMethodAnalyzer
     {
         if (memberReference.Resolve() is { } re)
             return re;
-        ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference));
+
+        //对于T[] T[,...]的特殊处理
+        if (memberReference is MethodReference methodReference &&
+            TryCreateArrayRuntimeMethodDefinition(methodReference, out var arrayRuntimeMethod))
+            return arrayRuntimeMethod;
+        if (memberReference is not GenericParameter) //GenericParameter不进行Resolve校验
+        {
+            ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference));
+        }
         return null;
+    }
+
+    private bool TryCreateArrayRuntimeMethodDefinition(MethodReference methodReference,
+        out MethodDefinition methodDefinition)
+    {
+        methodDefinition = null!;
+        if (methodReference.DeclaringType is not ArrayType arrayType ||
+            !methodReference.HasThis ||
+            methodReference.HasGenericParameters ||
+            methodReference is GenericInstanceMethod)
+        {
+            return false;
+        }
+
+        var module = methodReference.Module ?? arrayType.Module ?? _method.Module;
+        var int32Type = module.TypeSystem.Int32;
+        var voidType = module.TypeSystem.Void;
+        TypeReference expectedReturnType;
+        TypeReference[] expectedParameterTypes;
+        var attributes = MethodAttributes.Public | MethodAttributes.HideBySig;
+
+        switch (methodReference.Name)
+        {
+            case ".ctor":
+                if (!IsValidArrayCtorParameterCount(arrayType, methodReference.Parameters.Count))
+                    return false;
+
+                attributes |= MethodAttributes.SpecialName | MethodAttributes.RTSpecialName;
+                expectedReturnType = voidType;
+                expectedParameterTypes = CreateRepeatedTypeArray(int32Type, methodReference.Parameters.Count);
+                break;
+
+            case "Get":
+                if (methodReference.Parameters.Count != arrayType.Rank)
+                    return false;
+
+                expectedReturnType = arrayType.ElementType;
+                expectedParameterTypes = CreateRepeatedTypeArray(int32Type, arrayType.Rank);
+                break;
+
+            case "Address":
+                if (methodReference.Parameters.Count != arrayType.Rank)
+                    return false;
+
+                expectedReturnType = new ByReferenceType(arrayType.ElementType);
+                expectedParameterTypes = CreateRepeatedTypeArray(int32Type, arrayType.Rank);
+                break;
+
+            case "Set":
+                if (methodReference.Parameters.Count != arrayType.Rank + 1)
+                    return false;
+
+                expectedReturnType = voidType;
+                expectedParameterTypes = CreateRepeatedTypeArray(int32Type, arrayType.Rank + 1);
+                expectedParameterTypes[expectedParameterTypes.Length - 1] = arrayType.ElementType;
+                break;
+
+            default:
+                return false;
+        }
+
+        if (!IsSameRuntimeSignatureType(methodReference.ReturnType, expectedReturnType) ||
+            !HasSameParameterTypes(methodReference, expectedParameterTypes))
+        {
+            return false;
+        }
+
+        methodDefinition = new MethodDefinition(methodReference.Name, attributes, expectedReturnType)
+        {
+            CallingConvention = methodReference.CallingConvention,
+            ExplicitThis = methodReference.ExplicitThis,
+            HasThis = methodReference.HasThis,
+            ImplAttributes = MethodImplAttributes.Runtime
+        };
+
+        for (int i = 0; i < expectedParameterTypes.Length; i++)
+        {
+            var sourceParameter = methodReference.Parameters[i];
+            methodDefinition.Parameters.Add(new ParameterDefinition(sourceParameter.Name,
+                sourceParameter.Attributes, expectedParameterTypes[i]));
+        }
+
+        return true;
+    }
+
+    private static bool IsValidArrayCtorParameterCount(ArrayType arrayType, int parameterCount)
+    {
+        if (parameterCount == arrayType.Rank)
+            return true;
+
+        return !arrayType.IsVector && parameterCount == arrayType.Rank * 2;
+    }
+
+    private static TypeReference[] CreateRepeatedTypeArray(TypeReference type, int count)
+    {
+        var result = new TypeReference[count];
+        for (int i = 0; i < result.Length; i++)
+            result[i] = type;
+        return result;
+    }
+
+    private static bool HasSameParameterTypes(MethodReference methodReference, TypeReference[] expectedParameterTypes)
+    {
+        if (methodReference.Parameters.Count != expectedParameterTypes.Length)
+            return false;
+
+        for (int i = 0; i < expectedParameterTypes.Length; i++)
+        {
+            if (!methodReference.Parameters[i].ParameterType.IsSameWith(expectedParameterTypes[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsSameRuntimeSignatureType(TypeReference actual, TypeReference expected)
+    {
+        if (expected.IsVoid())
+            return actual.IsVoid();
+
+        return actual.IsSameWith(expected);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1234,7 +1363,7 @@ public partial class ILMethodAnalyzer
                 inst.Operand?.GetType() ?? typeof(void), inst));
             return StackType.Invalid;
         }
-        var paramLen = sig.Parameters.Count + (sig.HasThis ? 1 : 0);
+        var paramLen = sig.Parameters.Count + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0);
         len = paramLen;
         if(args.Length < paramLen)
         {
