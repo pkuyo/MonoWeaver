@@ -62,13 +62,19 @@ public sealed class ILVerificationTests
 
     private static string FormatFailure(VerificationRunResult result, VerifyOptions options)
     {
-        var expected = result.TestCase.ExpectedKind == ExpectedKind.Valid
-            ? "Valid"
-            : "Invalid(" + string.Join('.', result.TestCase.ExpectedVerifierErrors) + ")";
+        var expected = result.TestCase.ExpectedKind switch
+        {
+            ExpectedKind.Valid => "Valid",
+            ExpectedKind.Invalid => "Invalid(" + string.Join('.', result.TestCase.ExpectedVerifierErrors) + ")",
+            ExpectedKind.Warning => "Warning(" + string.Join('.', result.TestCase.ExpectedVerifierErrors) + ")",
+            _ => result.TestCase.ExpectedKind.ToString(),
+        };
         var actual = result.Crashed
             ? "HarnessCrash"
             : result.HasVerifierError
                 ? "Invalid"
+                : result.HasVerifierWarning
+                    ? "Warning"
                 : "Valid";
         var diagnostics = result.Diagnostics.Count == 0
             ? "  <none>"

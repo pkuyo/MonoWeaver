@@ -2,7 +2,7 @@
 <RunSettings>
   <RunConfiguration>
     <EnvironmentVariables>
-      <ILTEST_FILTER>ArrayAddress_Valid</ILTEST_FILTER>
+      <ILTEST_FILTER>FromNestedTryToDisjointTry</ILTEST_FILTER>
     </EnvironmentVariables>
   </RunConfiguration>
 </RunSettings>

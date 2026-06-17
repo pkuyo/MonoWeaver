@@ -949,7 +949,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.BackwardWithoutPredecessor_Invalid_BackwardBranch() cil managed 
+    .method static public hidebysig void Branch.BackwardWithoutPredecessor_Warning_BackwardBranch() cil managed 
     {
         br      MethodEnd
 

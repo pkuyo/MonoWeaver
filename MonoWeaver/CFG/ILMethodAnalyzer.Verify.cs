@@ -24,7 +24,8 @@ public partial class ILMethodAnalyzer
         if (memberReference is MethodReference methodReference &&
             TryCreateArrayRuntimeMethodDefinition(methodReference, out var arrayRuntimeMethod))
             return arrayRuntimeMethod;
-        if (memberReference is not GenericParameter) //GenericParameter不进行Resolve校验
+        var t = memberReference;
+        if (!memberReference.ContainsGenericParameter) //有GenericParameter不进行Resolve校验
         {
             ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference));
         }

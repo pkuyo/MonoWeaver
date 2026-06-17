@@ -9,42 +9,48 @@ namespace MonoWeaver.CFG;
 
 public enum CFGExceptionType
 {
-    None = 0,
+    None = 0, // 无异常。
     
     //Mono cecil相关错误
-    InstructionNull,
-    ExceptionHandlerInvalid,
-    InvalidOpCode,
-    InvalidOperand,
+    InstructionNull, // 指令对象为空。
+    ExceptionHandlerInvalid, // 异常处理表项无效。
+    InvalidOpCode, // 操作码或前缀组合无效。
+    InvalidOperand, // 指令操作数类型无效。
+    CtorExcepted, // 期望构造函数操作数。
     
-    //EH段相关
-    EhRegionOverlap,
-    EhRegionNonTryDuplication,
-    EhNestedInFilter,
-    TryAndHandlerNotInSameEnclosingRegion,
-    InvalidEhTableOrdering,
+    //EH段相关（try catch）
+    EhRegionOverlap, // EH 区间发生交错重叠。
+    EhRegionNonTryDuplication, // 非 try EH 区间重复。
+    EhNestedInFilter, // filter 区间中出现嵌套。
+    TryAndHandlerNotInSameEnclosingRegion, // try 与 handler 不在同一外层区域。
+    InvalidEhTableOrdering, // EH 表顺序不合法。
     
     //CFG相关
-    InvalidInstruction,
-    TypeMismatch,
-    InconsistentFieldAccess,
-    StackUnderflow,
-    StackOverflow,
-    InvalidFallThrough,
-    UninitializedLocal,
-    IncompatibleMergeTypes,
-    InvalidBackwardBranch,
-    IncompatibleMergeDepth,
-    InvalidBrTarget,
-    BrTargetCrossEhRegion,
-    LeaveTargetInvalid,
-    OutOfRange,
+    InvalidInstruction, // 指令语义不合法。
+    TypeMismatch, // 类型不匹配。
+    InconsistentFieldAccess, // 字段访问方式不一致。
+    StackUnderflow, // 求值栈下溢。
+    StackOverflow, // 求值栈超过 maxstack。
+    InvalidExitStackHeight, // 控制流出口栈高度错误。
+    InvalidFallThrough, // 非法顺序落入下一块。
+    UninitializedLocal, // 读取未初始化局部变量。
+    IncompatibleMergeTypes, // 控制流合并点栈类型不兼容。
+    InvalidBackwardBranch, // 后向分支栈状态不合法。
+    IncompatibleMergeDepth, // 控制流合并点栈深度不一致。
+    InvalidBrTarget, // 分支目标无效。
+    BrTargetCrossEhRegion, // 分支跨越 EH 区域边界。
+    LeaveTargetInvalid, // leave 目标无效。
+    OutOfRange, // 索引或目标超出范围。
     
-    ResolveFailed,
-    UnExpected,
+    ResolveFailed, // 元数据引用解析失败。
+    UnExpected, // 未预期的验证状态。
 
-    FieldAccess,
-    MethodAccess
+    //不可验证
+    Unverifiable, // IL 不可验证但可执行。
+    Unverifiable_LocallocStackNotEmpty, // localloc 时求值栈非空。
+
+    FieldAccess, // 字段访问规则错误。
+    MethodAccess // 方法访问规则错误。
 }
 
 public enum DiagnosticSeverity
@@ -87,6 +93,7 @@ public sealed record TypeMismatchContext(
 
 public sealed record InvalidOperandContext(Instruction Instruction, Type Expect, Type Current) : ICFGContext;
 public sealed record OperandOutOfRangeContext(Instruction Instruction) : ICFGContext;
+public sealed record ExitStackHeightContext(Instruction Instruction, int Expect, int Current) : ICFGContext;
 public sealed record NullInstContext(int Index) : ICFGContext;
 public sealed record HandlerContext(ExceptionHandler Handler) : ICFGContext;
 
@@ -130,6 +137,12 @@ public sealed record CFGDiagnostic(
 
             case OperandOutOfRangeContext oc:
                 sb.Append(" @ IL_").Append(oc.Instruction.Offset.ToString("X4"));
+                break;
+
+            case ExitStackHeightContext esh:
+                sb.Append(" @ IL_").Append(esh.Instruction.Offset.ToString("X4"))
+                  .Append(" expect=").Append(esh.Expect)
+                  .Append(" current=").Append(esh.Current);
                 break;
 
             case NullInstContext ni:
@@ -237,7 +250,19 @@ public sealed record CFGDiagnostic(
         => new(exceptionType, severity,
             message ?? "Instruction is invalid",
             new InstContext(inst));
-    
+
+    public static CFGDiagnostic InvalidExitStackHeight(Instruction inst, int expect, int current,
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => new(CFGExceptionType.InvalidExitStackHeight, severity,
+            message ?? $"Invalid exit stack height: expect {expect}, got {current}",
+            new ExitStackHeightContext(inst, expect, current));
+
+    public static CFGDiagnostic InstructionUnverifiable(CFGExceptionType exceptionType, Instruction inst,
+    DiagnosticSeverity severity = DiagnosticSeverity.Warning, string? message = null)
+    => new(exceptionType, severity,
+        message ?? "Instruction is unverifiable",
+        new InstContext(inst));
+
     public static CFGDiagnostic PrefixInvalid(CFGExceptionType exceptionType, Instruction inst, Code prefix,
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
         => new(exceptionType, severity,

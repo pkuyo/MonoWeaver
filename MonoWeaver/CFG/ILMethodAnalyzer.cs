@@ -20,7 +20,7 @@ public enum VerifyOptions
     ByrefEscape = 1 << 5, //TODO:待实现
     AccessTest = 1 << 6,
     Full = Instructions | LocalInit | StackTypes | ByrefEscape | AccessTest,
-    Light = StackBalance | LocalInit | Instructions
+    Light = StackBalance | Instructions
 }
 
 public enum EHRelation
@@ -785,85 +785,6 @@ public partial class ILMethodAnalyzer
                 }
             }
 
-            // 前缀与特殊指令约束
-            switch (inst.OpCode.Code)
-            {
-                case Code.Tail or Code.Constrained or Code.Volatile or Code.Unaligned or Code.Readonly:
-                    {
-                        if (prefix != null)
-                            pPrefix = prefix;
-                        prefix = inst.OpCode.Code;
-
-                        if (inst.OpCode.Code == Code.Unaligned)
-                        {
-                            if (inst.Operand is not byte b || b > 4 || b == 3)
-                            {
-                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(byte), inst.Operand?.GetType() 
-                                    ?? typeof(void), inst));
-                            }
-                        }
-
-                        break;
-                    }
-                case Code.No:
-                    {
-                        prefix = inst.OpCode.Code;
-                        if (inst.Operand is not byte b)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(byte), inst.Operand?.GetType() ?? typeof(void), inst));
-                        }
-                        else
-                        {
-                            noCheck = b;
-                        }
-                        break;
-                    }
-                case Code.Ret:
-                    {
-                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Normal)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
-                                inst, DiagnosticSeverity.Error, "Invalid 'ret' inside EH block."));
-                        }
-                        break;
-                    }
-                case Code.Rethrow:
-                    {
-                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler ||
-                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
-                                .Catch)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
-                                inst, DiagnosticSeverity.Error, "Invalid 'rethrow' outside EH region."));
-                            //不可rethrow
-                        }
-
-                        break;
-                    }
-                case Code.Endfilter:
-                    {
-                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Filter ||
-                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
-                                .Filter)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
-                                inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside filter region."));
-                        }
-                        break;
-                    }
-                case Code.Endfinally:
-                    {
-                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler ||
-                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is
-                                not ExceptionHandlerType.Finally and not ExceptionHandlerType.Fault)
-                        {
-                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction, 
-                                inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside finally region."));
-                        }
-                        break;
-                    }
-                    //在Leave前面ScanInstructionsAndAddBasicBlocks已经进行了校验 
-            }
 
             // 验证调用指令的可解析性 对于inlineBr在前面AddBasicBlock处理了
             switch (inst.OpCode.OperandType)
@@ -878,14 +799,9 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineField:
                     {
-                        if (VerifyFieldOperand(inst, out var field) && ResolveWithDiagnostic(field) is FieldDefinition fd)
+                        if (VerifyFieldOperand(inst, out var field))
                         {
-                            if (fd.Attributes.HasFlag(FieldAttributes.Static) !=
-                                (inst.OpCode.Code is Code.Ldsflda or Code.Ldsfld or Code.Stsfld))
-                            {
-                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InconsistentFieldAccess, inst,
-                                    DiagnosticSeverity.Error, "Field static attribute does not match the access opcode."));
-                            }
+                            ResolveWithDiagnostic(field);
                         }
                         break;
                     }
@@ -983,7 +899,131 @@ public partial class ILMethodAnalyzer
                     break;
             }
 
-        
+            // 前缀与特殊指令约束
+            switch (inst.OpCode.Code)
+            {
+                case Code.Tail or Code.Constrained or Code.Volatile or Code.Unaligned or Code.Readonly:
+                    {
+                        if (prefix != null)
+                            pPrefix = prefix;
+                        prefix = inst.OpCode.Code;
+
+                        if (inst.OpCode.Code == Code.Unaligned)
+                        {
+                            if (inst.Operand is not byte b || b > 4 || b == 3)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(byte), inst.Operand?.GetType()
+                                    ?? typeof(void), inst));
+                            }
+                        }
+
+                        break;
+                    }
+                case Code.No:
+                    {
+                        prefix = inst.OpCode.Code;
+                        if (inst.Operand is not byte b)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(byte), inst.Operand?.GetType() ?? typeof(void), inst));
+                        }
+                        else
+                        {
+                            noCheck = b;
+                        }
+                        break;
+                    }
+                case Code.Ret:
+                    {
+                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Normal)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                inst, DiagnosticSeverity.Error, "Invalid 'ret' inside EH block."));
+                        }
+                        break;
+                    }
+                case Code.Rethrow:
+                    {
+                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler ||
+                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
+                                .Catch)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                inst, DiagnosticSeverity.Error, "Invalid 'rethrow' outside EH region."));
+                            //不可rethrow
+                        }
+
+                        break;
+                    }
+                case Code.Endfilter:
+                    {
+                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Filter ||
+                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is not ExceptionHandlerType
+                                .Filter)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside filter region."));
+                        }
+                        break;
+                    }
+                case Code.Endfinally:
+                    {
+                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler ||
+                            _regionFrames[instEhFrames[i]].Region.Clause.ExceptionHandler.HandlerType is
+                                not ExceptionHandlerType.Finally and not ExceptionHandlerType.Fault)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside finally region."));
+                        }
+                        break;
+                    }
+                case Code.Stfld: //静态/实例fld判别在前面
+                    {
+                        if (inst.Operand is FieldReference fieldRef && fieldRef.Resolve() is FieldDefinition fd)
+                        {
+                            if (fd.Attributes.HasFlag(FieldAttributes.Static))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InconsistentFieldAccess, inst,
+                                    DiagnosticSeverity.Error, "Field static attribute does not match the access opcode."));
+                            }
+                            if (fd.IsInitOnly && (fd.DeclaringType != _method.DeclaringType || (!CecilHelper.IsInitSetter(_method) && _method.Name != ".ctor") || !_method.IsSpecialName))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                    inst, DiagnosticSeverity.Error, "Cannot modify initonly field out of .ctor and init set_property."));
+                            }
+                        }
+                        break;
+                    }
+                case Code.Stsfld: //静态/实例fld判别在前面
+                case Code.Ldsflda:
+                    {
+                        if (inst.Operand is FieldReference fieldRef && fieldRef.Resolve() is FieldDefinition fd )
+                        {
+                            if (!fd.Attributes.HasFlag(FieldAttributes.Static))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InconsistentFieldAccess, inst,
+                                    DiagnosticSeverity.Error, "Field static attribute does not match the access opcode."));
+                            }
+                            if (fd.IsInitOnly && (fd.DeclaringType != _method.DeclaringType || _method.Name != ".cctor" || !_method.IsSpecialName))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                    inst, DiagnosticSeverity.Error, "Cannot modify initonly static field out of .cctor."));
+                            }
+                        }
+
+                        
+                        break;
+                    }
+                case Code.Newobj:
+                    {
+                        if (inst.Operand is MethodReference mf && mf.Name != ".ctor")
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.CtorExcepted, inst,
+                                    DiagnosticSeverity.Error, "Newobj opcode expect constructor."));
+                        }
+                        break;
+                    }
+                    //在Leave前面ScanInstructionsAndAddBasicBlocks已经进行了校验 
+            }
         }
 
         if (prefix != null)
@@ -1064,10 +1104,26 @@ public partial class ILMethodAnalyzer
                 }
                 else
                 {
+                    if (inst.OpCode.Code == Code.Localloc)
+                    {
+                        if (stackHeight > 1)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionUnverifiable(CFGExceptionType.Unverifiable_LocallocStackNotEmpty, inst,
+                                    DiagnosticSeverity.Error), AbortStrategy.NoAbort);
+                        }
+                        else
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionUnverifiable(CFGExceptionType.Unverifiable, inst), AbortStrategy.NoAbort);
+                        }
+                    }
                     var pop = -1;
                     try
                     {
                         pop = inst.PopCount(_method);
+                        if (inst.OpCode.Code is Code.Ret)
+                        {
+                            pop = _method.ReturnCount();
+                        }
                     }
                     catch
                     {
@@ -1141,7 +1197,7 @@ public partial class ILMethodAnalyzer
                                 if (stackHeight != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height")); //这个CLR并不强制执行
                                 }
                             }
                             AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
@@ -1161,7 +1217,7 @@ public partial class ILMethodAnalyzer
                                 if (stackHeight != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height")); //这个CLR并不强制执行
                                 }
                             }
                             AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
@@ -1169,8 +1225,16 @@ public partial class ILMethodAnalyzer
                         AnalyzeCF_AddNextBlock(block, _blockMap[inst.Next], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         endBlock = true;
                         break;
-                    case FlowControl.Throw or FlowControl.Return:
+                    case FlowControl.Throw:
                         endBlock = true;
+                        ValidateExitStackHeight(inst, stackHeight, 1);
+                        break;
+                    case FlowControl.Return:
+                        endBlock = true;
+                        if (inst.OpCode.Code != Code.Endfinally)
+                        {
+                            ValidateExitStackHeight(inst, stackHeight, 0);
+                        }
                         break;
                 }
 
@@ -1436,6 +1500,16 @@ public partial class ILMethodAnalyzer
                         break;
                     case FlowControl.Throw:
                         endBlock = true;
+                
+                        ValidateExitStackHeight(inst, localStack.Count + node.Depth, 1);
+      
+                        break;
+                    case FlowControl.Return:
+                        endBlock = true;
+                        if (inst.OpCode.Code != Code.Endfinally)
+                        {
+                            ValidateExitStackHeight(inst, localStack.Count + node.Depth, 0);
+                        }
                         break;
                 }
                 if (endBlock)
@@ -1444,6 +1518,14 @@ public partial class ILMethodAnalyzer
             }
             ThrowIfNeedAbort(AbortStrategy.AbortNextBlock);
         }
+    }
+
+    private void ValidateExitStackHeight(Instruction inst, int stackHeight, int expectHeight)
+    {
+        if (stackHeight == expectHeight)
+            return;
+
+        ReportDiagnostic(CFGDiagnostic.InvalidExitStackHeight(inst, expectHeight, stackHeight), AbortStrategy.NoAbort);
     }
 
     //校验local是否被初始化，进入该函数需确保VerifyInitLocal为true

@@ -104,12 +104,21 @@ public static partial class CecilHelper
         {
             if (inst.OpCode.Code is Code.Ret)
             {
-                return method.ReturnType.IsVoid()
+                return method.ReturnType.StripType().IsVoid()
                     ? 0 : 1;
             }
-            throw new Exception();
+            throw new Exception(); //TODO:
         }
         return sig.Parameters.Count + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0);
+    }
+
+    public static int ReturnCount(this MethodDefinition method)
+    {
+        if (method.IsRuntimeAsync() && method.ReturnType.FullName is "System.Threading.Tasks.ValueTask" or "System.Threading.Tasks.Task")
+        {
+            return 0;
+        }
+        return method.ReturnType.StripType().IsVoid() ? 0 : 1;
     }
 
     public static int VarPushCount(Instruction inst)
@@ -118,51 +127,12 @@ public static partial class CecilHelper
         {
             throw new Exception(); //TODO:
         }
-        return (sig.ReturnType.IsVoid()) ? 0 : 1;
+        return (sig.ReturnType.StripType().IsVoid()) ? 0 : 1;
     }
 
     private static Func<object, Instruction>? _monoModresolveStrategy = null!;
 
-    private static void BuildMonoModResolveStrategy(Type type)
-    {
-        if (!File.Exists(type.Assembly.Location))
-        {
-            throw new Exception(); //TODO 完善异常说明
-        }
-        var resolver = new DefaultAssemblyResolver();
-        resolver.AddSearchDirectory(type.Assembly.Location);
-
-        using AssemblyDefinition assDef = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("MonoWeaver.Monomod", new Version()),
-            "module", new ModuleParameters()
-            {
-                Kind = ModuleKind.Dll,
-                AssemblyResolver = resolver
-            });
-
-
-
-        var module = assDef.MainModule;
-        TypeDefinition typeDef = new TypeDefinition("MonoWeaver.Monomod", "Helper",
-            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class);
-        MethodDefinition mothodDef = new MethodDefinition("Target", MethodAttributes.Public | MethodAttributes.Static,
-            module.ImportReference(typeof(Instruction)));
-
-        mothodDef.Parameters.Add(new ParameterDefinition(module.ImportReference(type)));
-        var il = mothodDef.Body.GetILProcessor();
-        il.Emit(COpCodes.Ldarg_0);
-        il.Emit(COpCodes.Isinst, module.ImportReference(type));
-        il.Emit(COpCodes.Ldfld, module.ImportReference(type.GetField("Target")));
-        il.Emit(COpCodes.Ret);
-
-        using MemoryStream ms = new MemoryStream();
-        assDef.Write(ms);
-
-        var ass = Assembly.Load(ms.ToArray());
-
-        _monoModresolveStrategy =
-            (Func<object, Instruction>)Delegate.CreateDelegate(typeof(Func<object, Instruction>),
-            ass.ManifestModule.GetType("Helper").GetMethod("Target"));
-    }
+   
     
 
     internal static IEnumerable<Instruction> OperandToTargets(object operand)
@@ -210,5 +180,37 @@ public static partial class CecilHelper
         {
             return $"IL_{inst.Offset:X4}: {inst.OpCode.Name} _____";
         }
+    }
+
+    public static bool HasRequiredModifier(this TypeReference type, string modifierFullName)
+    {
+        while (type is TypeSpecification spec)
+        {
+            if (type is RequiredModifierType req &&
+                req.ModifierType.FullName == modifierFullName)
+            {
+                return true;
+            }
+
+            type = spec.ElementType;
+        }
+
+        return false;
+    }
+
+    public static bool IsRuntimeAsync(this MethodDefinition method)
+    {
+        return (((ushort)method.ImplAttributes) & MethodImplAsync) != 0;
+    }
+
+    private const ushort MethodImplAsync = 0x2000;
+
+    internal static bool IsInitSetter(MethodDefinition method)
+    {
+        return method.IsSpecialName
+            && method.Name.StartsWith("set_")
+            && HasRequiredModifier(
+                method.ReturnType,
+                "System.Runtime.CompilerServices.IsExternalInit");
     }
 }

@@ -1,5 +1,6 @@
 ﻿<Solution>
   <Project Path="MonoWeaver.Demo/MonoWeaver.Fuzz.csproj" />
+  <Project Path="MonoWeaver.ILHookEarlyReturnSample/MonoWeaver.ILHookEarlyReturnSample.csproj" />
   <Project Path="MonoWeaver.MonoMod/MonoWeaver.MonoMod.csproj" />
   <Project Path="MonoWeaver/MonoWeaver.csproj" />
   <Project Path="tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj" />

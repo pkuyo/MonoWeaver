@@ -33,7 +33,7 @@
         ret
     }
 
-    .method private hidebysig instance void Load.LocAllocShouldSuccesWhenSizeIsPresent_Invalid_Unverifiable() cil managed
+    .method private hidebysig instance void Load.LocAllocShouldSuccesWhenSizeIsPresent_Warning_Unverifiable() cil managed
     {
         ldc.i4.2 // size parameter for localloc
         localloc

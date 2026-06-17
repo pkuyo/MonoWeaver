@@ -107,7 +107,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.StoreInitonlyFieldOtherInstance..ctor_Invalid_InitOnly'(class FieldTestsType c) cil managed { ret }
+    .method public hidebysig instance void 'special.StoreInitonlyFieldOtherInstance..ctor_Full_Invalid_InitOnly'(class FieldTestsType c) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(class FieldTestsType c) cil managed
     {
         ldarg.0

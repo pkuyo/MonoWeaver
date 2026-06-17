@@ -8,38 +8,48 @@ internal static class MonoWeaverVerifierAdapter
     {
         var diagnostics = new List<string>();
         var crashed = false;
+        var hasVerifierWarning = false;
+        var hasVerifierError = false;
         string? exceptionText = null;
 
         try
         {
             var analyzer = new ILMethodAnalyzer(testCase.Method, options);
-            diagnostics.AddRange(analyzer.Diagnostics.Select(FormatDiagnostic));
+            AddDiagnostics(analyzer.Diagnostics);
         }
         catch (ILMethodAnalyzer.CfgVerifyException ex)
         {
             // ILMethodAnalyzer uses this as a verification-abort exception after collecting diagnostics.
-            diagnostics.AddRange(ex.Diagnostics.Select(FormatDiagnostic));
+            AddDiagnostics(ex.Diagnostics);
             exceptionText = ex.Message;
         }
         catch (Exception ex)
         {
             crashed = true;
+            hasVerifierError = true;
             exceptionText = ex.ToString();
             diagnostics.Add("[Fatal] HarnessException: " + ex.GetType().FullName + ": " + ex.Message);
         }
 
-        var hasVerifierError = diagnostics.Any(static d =>
-            d.Contains("[Error]", StringComparison.Ordinal) ||
-            d.Contains("[Fatal]", StringComparison.Ordinal));
-
         return new VerificationRunResult
         {
             TestCase = testCase,
+            HasVerifierWarning = hasVerifierWarning,
             HasVerifierError = hasVerifierError,
             Crashed = crashed,
             Diagnostics = diagnostics,
             ExceptionText = exceptionText,
         };
+
+        void AddDiagnostics(IEnumerable<CFGDiagnostic> source)
+        {
+            foreach (var diagnostic in source)
+            {
+                hasVerifierWarning |= diagnostic.Severity == DiagnosticSeverity.Warning;
+                hasVerifierError |= diagnostic.Severity >= DiagnosticSeverity.Error;
+                diagnostics.Add(FormatDiagnostic(diagnostic));
+            }
+        }
     }
 
     private static string FormatDiagnostic(CFGDiagnostic diagnostic)

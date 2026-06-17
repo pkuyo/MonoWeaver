@@ -1,8 +1,12 @@
+using Mono.Cecil;
 using Mono.Cecil.Cil;
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Linq.Expressions;
 using System.Reflection;
+using MethodAttributes = Mono.Cecil.MethodAttributes;
+using TypeAttributes = Mono.Cecil.TypeAttributes;
 
 namespace MonoWeaver.Utils;
 
@@ -15,9 +19,10 @@ public static partial class CecilHelper
 {
     private const string MonoModILLabelFullName = "MonoMod.Cil.ILLabel";
 
-    private delegate Instruction? ILLabelTargetResolver(object label);
+    private delegate Instruction? ILLabelTargetHandler(object label);
 
-    private static readonly ConcurrentDictionary<Type, ILLabelTargetResolver?> ILLabelTargetResolvers = new();
+    private static ILLabelTargetHandler ILLabelTargetResolver = null!;
+    private static object ILLabelResolverLock = new object();
 
     internal static bool TryResolveInstructionTarget(object? operand, out Instruction? target,
         out OperandTargetResolveError error)
@@ -156,16 +161,15 @@ public static partial class CecilHelper
     {
         target = null;
         error = default;
-
-        var resolver = ILLabelTargetResolvers.GetOrAdd(labelType, CreateILLabelTargetResolver);
-        if (resolver is null)
+        BuildMonoModResolveStrategy(labelType);
+        if (ILLabelTargetResolver is null)
         {
             error = InvalidTargetOperand(labelType,
                 $"ILLabel operand type has no Target field: {labelType.FullName}.");
             return false;
         }
 
-        target = resolver(label);
+        target = ILLabelTargetResolver(label);
         if (target is null)
         {
             error = InvalidTargetOperand(typeof(void),
@@ -176,18 +180,53 @@ public static partial class CecilHelper
         return true;
     }
 
-    private static ILLabelTargetResolver? CreateILLabelTargetResolver(Type labelType)
+    private static void BuildMonoModResolveStrategy(Type type)
     {
-        var targetField = labelType.GetField("Target",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-        if (targetField is null || !typeof(Instruction).IsAssignableFrom(targetField.FieldType))
-            return null;
+        lock (ILLabelResolverLock)
+        {
+            if (ILLabelTargetResolver != null)
+            {
+                return;
+            }
+            if (!File.Exists(type.Assembly.Location))
+            {
+                throw new Exception(); //TODO 完善异常说明
+            }
+            var resolver = new DefaultAssemblyResolver();
+            resolver.AddSearchDirectory(type.Assembly.Location);
 
-        var label = Expression.Parameter(typeof(object), "label");
-        var target = Expression.Field(Expression.Convert(label, labelType), targetField);
-        var body = Expression.Convert(target, typeof(Instruction));
-        return Expression.Lambda<ILLabelTargetResolver>(body, label).Compile();
+            using AssemblyDefinition assDef = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("MonoWeaver.Monomod", new Version()),
+                "module", new ModuleParameters()
+                {
+                    Kind = ModuleKind.Dll,
+                    AssemblyResolver = resolver
+                });
+
+
+
+            var module = assDef.MainModule;
+            TypeDefinition typeDef = new TypeDefinition("MonoWeaver.Monomod", "Helper",
+                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class, module.TypeSystem.Object);
+            MethodDefinition methodDef = new MethodDefinition("Target", MethodAttributes.Public | MethodAttributes.Static,
+                module.ImportReference(typeof(Instruction)));
+
+            methodDef.Parameters.Add(new ParameterDefinition(module.TypeSystem.Object));
+            var il = methodDef.Body.GetILProcessor();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, module.ImportReference(type));
+            il.Emit(OpCodes.Callvirt, module.ImportReference(type.GetMethod("get_Target")));
+            il.Emit(OpCodes.Ret);
+            typeDef.Methods.Add(methodDef);
+            module.Types.Add(typeDef);
+            using MemoryStream ms = new MemoryStream();
+            assDef.Write(ms);
+            var ass = Assembly.Load(ms.ToArray());
+
+            ILLabelTargetResolver =
+                (ILLabelTargetHandler)Delegate.CreateDelegate(typeof(ILLabelTargetHandler),
+                ass.ManifestModule.GetTypes()[0].GetMethod("Target"));
+        }
     }
 
     private static bool IsMonoModILLabel(Type type)

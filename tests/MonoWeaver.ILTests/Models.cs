@@ -6,6 +6,7 @@ public enum ExpectedKind
 {
     Valid,
     Invalid,
+    Warning,
 }
 
 public enum MethodTestScope
@@ -27,9 +28,13 @@ public sealed class MethodTestCase
 
     public override string ToString()
     {
-        var expected = ExpectedKind == ExpectedKind.Valid
-            ? "Valid"
-            : "Invalid(" + string.Join('.', ExpectedVerifierErrors) + ")";
+        var expected = ExpectedKind switch
+        {
+            ExpectedKind.Valid => "Valid",
+            ExpectedKind.Invalid => "Invalid(" + string.Join('.', ExpectedVerifierErrors) + ")",
+            ExpectedKind.Warning => "Warning(" + string.Join('.', ExpectedVerifierErrors) + ")",
+            _ => ExpectedKind.ToString(),
+        };
         var scope = Scope == MethodTestScope.Both ? string.Empty : $" [{Scope}]";
         return $"[{AssemblyName}] {FriendlyName}{scope} :: {MethodName} => {expected}";
     }
@@ -38,6 +43,7 @@ public sealed class MethodTestCase
 internal sealed class VerificationRunResult
 {
     public required MethodTestCase TestCase { get; init; }
+    public required bool HasVerifierWarning { get; init; }
     public required bool HasVerifierError { get; init; }
     public required bool Crashed { get; init; }
     public required IReadOnlyList<string> Diagnostics { get; init; }
@@ -48,6 +54,7 @@ internal sealed class VerificationRunResult
     {
         ExpectedKind.Valid => HasVerifierError || Crashed,
         ExpectedKind.Invalid => !HasVerifierError && !Crashed,
+        ExpectedKind.Warning => !HasVerifierWarning || HasVerifierError || Crashed,
         _ => true,
     };
 }

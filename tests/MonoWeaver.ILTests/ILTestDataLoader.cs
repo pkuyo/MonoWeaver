@@ -135,6 +135,8 @@ internal sealed class ILTestDataLoader : IDisposable
         if (index < 0)
             index = methodName.LastIndexOf("_Invalid", StringComparison.Ordinal);
         if (index < 0)
+            index = methodName.LastIndexOf("_Warning", StringComparison.Ordinal);
+        if (index < 0)
             return false;
 
         friendlyName = methodName[..index];
@@ -156,6 +158,15 @@ internal sealed class ILTestDataLoader : IDisposable
             kind = ExpectedKind.Invalid;
             expectedErrors = suffixParts[1]
                 .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return true;
+        }
+
+        if ((suffixParts.Length == 1 || suffixParts.Length == 2) && suffixParts[0] == "Warning")
+        {
+            kind = ExpectedKind.Warning;
+            expectedErrors = suffixParts.Length == 2
+                ? suffixParts[1].Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : Array.Empty<string>();
             return true;
         }
 
