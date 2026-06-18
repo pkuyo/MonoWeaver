@@ -28,6 +28,7 @@ public static partial class CecilTypeSystem
         public static TypeSig Nullable => _coreTypes.Value.Nullable;
         public static TypeSig ICloneable => _coreTypes.Value.ICloneable;
         public static TypeSig ValueType => _coreTypes.Value.ValueType;
+        public static TypeSig Enum => _coreTypes.Value.Enum;
 
         private TypeSig(int id) => _id = id;
 
@@ -66,7 +67,8 @@ public static partial class CecilTypeSystem
                 Create(module.ImportReference(typeof(Array))),
                 Create(module.ImportReference(typeof(Nullable<>))),
                 Create(module.ImportReference(typeof(ICloneable))),
-                Create(module.ImportReference(typeof(ValueType))));
+                Create(module.ImportReference(typeof(ValueType))),
+                Create(module.ImportReference(typeof(Enum))));
         }
 
         private static AssemblyDefinition CreateCoreTypeAssembly()
@@ -109,6 +111,7 @@ public static partial class CecilTypeSystem
         public readonly TypeSig Nullable;
         public readonly TypeSig ICloneable;
         public readonly TypeSig ValueType;
+        public readonly TypeSig Enum;
 
         public CoreTypeSigs(
             TypeSig @object,
@@ -117,7 +120,8 @@ public static partial class CecilTypeSystem
             TypeSig array,
             TypeSig nullable,
             TypeSig iCloneable,
-            TypeSig valueType)
+            TypeSig valueType,
+            TypeSig @enum)
         {
             Object = @object;
             Void = @void;
@@ -126,6 +130,7 @@ public static partial class CecilTypeSystem
             Nullable = nullable;
             ICloneable = iCloneable;
             ValueType = valueType;
+            Enum = @enum;
         }
     }
 

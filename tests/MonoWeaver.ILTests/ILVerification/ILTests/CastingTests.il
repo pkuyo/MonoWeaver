@@ -127,6 +127,28 @@
         stloc.0
         ret
     }
+
+    .method static public hidebysig void Assign.CovariantOpenGenericClassToObjectEnumerable_Valid<class T>(class [System.Runtime]System.Collections.Generic.IEnumerable`1<!!T> source)
+    {
+        .locals init (
+            class [System.Runtime]System.Collections.Generic.IEnumerable`1<object> V_0
+        )
+
+        ldarg.0
+        stloc.0
+        ret
+    }
+
+    .method static public hidebysig void Assign.CovariantOpenGenericUnconstrainedToObjectEnumerable_Full_Invalid_StackUnexpected<T>(class [System.Runtime]System.Collections.Generic.IEnumerable`1<!!T> source)
+    {
+        .locals init (
+            class [System.Runtime]System.Collections.Generic.IEnumerable`1<object> V_0
+        )
+
+        ldarg.0
+        stloc.0
+        ret
+    }
 }
 
 .class public sequential ansi sealed beforefieldinit GenericOtherFieldsType`1<T>
@@ -171,7 +193,7 @@
 
         ldloc.0
         ldarg.1
-        stfld !0 class GenericOtherFieldsType`1<!T>::IntField
+        stfld int32 class GenericOtherFieldsType`1<!T>::IntField
         ret
     }
 

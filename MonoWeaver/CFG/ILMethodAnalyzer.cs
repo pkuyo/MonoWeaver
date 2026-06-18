@@ -831,7 +831,7 @@ public partial class ILMethodAnalyzer
                 case OperandType.InlineArg:
                 case OperandType.ShortInlineArg:
                     {
-                        TryGetParameterType(inst, out _);
+                        TryGetParameterType(inst, out _, out _);
                         break;
                     }
                 case OperandType.InlineBrTarget:
@@ -1294,8 +1294,12 @@ public partial class ILMethodAnalyzer
             
             var leader = block.Leader;
             StackType retType = StackType.Invalid;
+            Code[] prefixBuffer = new Code[2];
             for (var inst = leader; inst != null; inst = inst.Next)
             {
+                prefixBuffer[1] = prefixBuffer[0];
+                prefixBuffer[0] = inst.OpCode.OpCodeType == OpCodeType.Prefix ? inst.OpCode.Code : default;
+                
                 var ts = _method.Module.TypeSystem;
                 var popBehaviour = inst.OpCode.StackBehaviourPop;
                 if(popBehaviour == StackBehaviour.PopAll)
@@ -1303,9 +1307,10 @@ public partial class ILMethodAnalyzer
                     localStack.Clear();
                     node = _root;
                 }
-                var pop = popBehaviour == StackBehaviour.PopAll ? 0 : popBehaviour.PopCount() switch
+                var pop = popBehaviour.PopCount() switch
                 {
                     -1 => 0,
+                    0xFF => 0,
                     var tmpPop => tmpPop
                 };
                 
@@ -1317,19 +1322,19 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.StackBehaviourPop)
                 {
                     case StackBehaviour.Pop0:
-                        retType = VerifyPop0(inst, buffer);
+                        retType = VerifyPop0(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Pop1:
-                        retType = VerifyPop1(inst, buffer);
+                        retType = VerifyPop1(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Popi:
-                        retType = VerifyPopi(inst, buffer);
+                        retType = VerifyPopi(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Popref:
-                        retType = VerifyPopref(inst, buffer);
+                        retType = VerifyPopref(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Popi_popi:
@@ -1353,19 +1358,19 @@ public partial class ILMethodAnalyzer
                         break;
 
                     case StackBehaviour.Popref_popi:
-                        retType = VerifyPopref_popi(inst, buffer);
+                        retType = VerifyPopref_popi(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Popi_pop1:
-                        retType = VerifyPopi_pop1(inst, buffer);
+                        retType = VerifyPopi_pop1(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Popref_pop1:
-                        retType = VerifyPopref_pop1(inst, buffer);
+                        retType = VerifyPopref_pop1(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Pop1_pop1:
-                        retType = VerifyPop1_pop1(inst, buffer);
+                        retType = VerifyPop1_pop1(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Popi_popi_popi:
@@ -1379,15 +1384,23 @@ public partial class ILMethodAnalyzer
                     case StackBehaviour.Popref_popi_popr4:
                     case StackBehaviour.Popref_popi_popr8:
                     case StackBehaviour.Popref_popi_popref:
-                        VerifyPop3(inst, buffer);
+                        VerifyPop3(inst, buffer, prefixBuffer);
                         break;
 
                     case StackBehaviour.Varpop:
-                        retType = VerifyVarPop(inst, ref funcBuffer, out var len);
-                        for(int j = len - 1; j >=0; j--)
+                        retType = VerifyVarPop(inst, ref funcBuffer, out var len, out var hasThis);
+                        for(int j = len - 1; j > 0; j--)
                         {
                             var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
                             VerifyType(type, funcBuffer[j], inst);
+                        }
+                        if (len != 0)
+                        {
+                            var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
+                            if (hasThis && type.IsByRef && funcBuffer[0].IsValueType) //对于ValueType&也可以直接进行thisCall调用
+                                type = type.RefToValue();
+
+                            VerifyType(type, funcBuffer[0], inst);
                         }
                         break;
 

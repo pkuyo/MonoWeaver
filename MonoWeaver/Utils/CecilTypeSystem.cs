@@ -322,7 +322,7 @@ public static partial class CecilTypeSystem
 /// </summary>
 public static partial class CecilTypeSystem
 {
-    private static bool IsAssignableFromRoot(TypeReference? to, TypeReference? from, bool strict)
+    private static bool IsAssignableFromRoot(TypeReference? to, TypeReference? from, bool ilRule)
     {
         var context = _assignabilityContext;
 
@@ -338,7 +338,7 @@ public static partial class CecilTypeSystem
         if (fromKey.Equals(toKey))
             return true;
 
-        var hash = PackAssignableKey(toKey, fromKey, strict);
+        var hash = PackAssignableKey(toKey, fromKey, ilRule);
         if (_assignableCache.TryGetValue(hash, out var cached))
             return cached;
             
@@ -358,7 +358,7 @@ public static partial class CecilTypeSystem
 
         try
         {
-            return IsAssignableFromCore(to, from, strict, context);
+            return IsAssignableFromCore(to, from, ilRule, context);
         }
         finally
         {
@@ -367,18 +367,18 @@ public static partial class CecilTypeSystem
         }
     }
 
-    private static bool IsAssignableFromCore(TypeReference? to, TypeReference? from, bool strict, AssignabilityContext context)
+    private static bool IsAssignableFromCore(TypeReference? to, TypeReference? from, bool ilRule, AssignabilityContext context)
     {
         var cycleVersion = context.CycleVersion;
-        var result = IsAssignableFromInternal(to, from, strict, context);
+        var result = IsAssignableFromInternal(to, from, ilRule, context);
         if (from != null && to != null && context.CycleVersion == cycleVersion)
         {
-             _assignableCache.GetOrAdd(PackAssignableKey(TypeSig.Create(to.StripType()), TypeSig.Create(from.StripType()), strict), result);
+             _assignableCache.GetOrAdd(PackAssignableKey(TypeSig.Create(to.StripType()), TypeSig.Create(from.StripType()), ilRule), result);
         }
         return result;
     }
     
-    private static bool IsAssignableFromInternal(TypeReference? to, TypeReference? from, bool strict, AssignabilityContext context)
+    private static bool IsAssignableFromInternal(TypeReference? to, TypeReference? from, bool ilRule, AssignabilityContext context)
     {
         while (true)
         {
@@ -390,10 +390,10 @@ public static partial class CecilTypeSystem
             //优先处理未闭合
             if (from is GenericParameter fromGp)
             {
-                return IsAssignableFromGenericParam(to, fromGp, strict, context);
+                return IsAssignableFromGenericParam(to, fromGp, ilRule, context);
             }
 
-            if (strict)
+            if (ilRule)
             {
                 if (!to.IsValueType && from.IsValueType) return false;
                 if (to.IsValueType && !from.IsValueType) return false;
@@ -416,7 +416,7 @@ public static partial class CecilTypeSystem
             }
 
 
-            var hash = PackAssignableKey(toKey, fromKey, strict);
+            var hash = PackAssignableKey(toKey, fromKey, ilRule);
 
           
             if (fromKey.Equals(toKey)) 
@@ -438,7 +438,7 @@ public static partial class CecilTypeSystem
             {
                 if (IsOpenGenericDefinition(from))
                 {
-                    return IsAssignableFromCore(to, GenerateGenericInstanceType(from), strict, context);
+                    return IsAssignableFromCore(to, GenerateGenericInstanceType(from), ilRule, context);
                 }
 
                 //byRef
@@ -461,7 +461,7 @@ public static partial class CecilTypeSystem
                 //数组
                 if (from is ArrayType fromArr)
                 {
-                    if (IsAssignableFromArray(to, fromArr, strict, context))
+                    if (IsAssignableFromArray(to, fromArr, ilRule, context))
                         return true;
                 }
 
@@ -471,7 +471,7 @@ public static partial class CecilTypeSystem
                 {
                     //处理逆变/协变
                     if (IsSameWith(toGi.ElementType, fromGi.ElementType) &&
-                        GenericArgsAssignableWithVariance(toGi, fromGi, strict, context))
+                        GenericArgsAssignableWithVariance(toGi, fromGi, ilRule, context))
                     {
                         return true;
                     }
@@ -488,12 +488,12 @@ public static partial class CecilTypeSystem
                 //接口
                 if (toDef?.IsInterface == true)
                 {
-                    if (from.IsValueType && strict) return false;
+                    if (from.IsValueType && ilRule) return false;
 
-                    return ImplementsInterface(from, to, strict, context);
+                    return ImplementsInterface(from, to, ilRule, context);
                 }
 
-                if (from.IsValueType && strict)
+                if (from.IsValueType && ilRule)
                 {
                     return false;
                 }
@@ -590,7 +590,7 @@ public static partial class CecilTypeSystem
     }
 
     private static bool GenericArgsAssignableWithVariance(GenericInstanceType target, GenericInstanceType source,
-        bool strict,
+        bool ilRule,
         AssignabilityContext context)
     {
         if (target.GenericArguments.Count != source.GenericArguments.Count)
@@ -617,17 +617,17 @@ public static partial class CecilTypeSystem
             switch (variance)
             {
                 case GenericParameterAttributes.Covariant: //协变
-                    if ((!DefinitelyRef(tArg) || !DefinitelyRef(sArg)) && !IsSameWith(tArg, sArg))
+                    if ((!IsDefinitelyReferenceType(tArg) || !IsDefinitelyReferenceType(sArg)) && !IsSameWith(tArg, sArg))
                         return false;
-                    if (!IsAssignableFromCore(tArg, sArg, strict, context))
+                    if (!IsAssignableFromCore(tArg, sArg, ilRule, context))
                         return false;
                     break;
 
                 case GenericParameterAttributes.Contravariant: //逆变
-                    if ((!DefinitelyRef(tArg) || !DefinitelyRef(sArg)) && !IsSameWith(tArg, sArg))
+                    if ((!IsDefinitelyReferenceType(tArg) || !IsDefinitelyReferenceType(sArg)) && !IsSameWith(tArg, sArg))
                         return false;
                          
-                    if (!IsAssignableFromCore(sArg, tArg, strict, context)) 
+                    if (!IsAssignableFromCore(sArg, tArg, ilRule, context)) 
                         return false;
                     break;
 
@@ -638,26 +638,58 @@ public static partial class CecilTypeSystem
         }
 
         return true;
+    }
 
-        bool DefinitelyRef(TypeReference x)
+    private static bool IsDefinitelyReferenceType(TypeReference type)
+        => IsDefinitelyReferenceType(type, new HashSet<TypeSig>());
+
+    private static bool IsDefinitelyReferenceType(TypeReference type, HashSet<TypeSig> seenGenericParams)
+    {
+        type = type.StripType();
+
+        if (type is ByReferenceType or PointerType or FunctionPointerType)
+            return false;
+
+        if (type is not GenericParameter gp)
+            return !type.IsValueType; //非泛型可直接确定
+
+        var sig = TypeSig.Create(gp);
+        if (!seenGenericParams.Add(sig))
+            return false;
+
+        var constraints = gp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
+        if ((constraints & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
+            return false; //struct() 直接非ref
+
+        if ((constraints & GenericParameterAttributes.ReferenceTypeConstraint) != 0)
+            return true; //class() 直接ref
+
+        foreach (var constraint in gp.Constraints)
         {
-            // 避免 IFoo<int> -> IFoo<object>
-            x = x.StripType();
-            if (x.IsValueType) return false;
-            if (x is GenericParameter gp)
+            var constraintType = constraint.ConstraintType.StripType();
+            //查看约束进一步判别
+            if (constraintType is GenericParameter constraintGp)//还是泛型参数则递归
             {
-                var sc = gp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
-                if ((sc & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) return false;
-                if ((sc & GenericParameterAttributes.ReferenceTypeConstraint) != 0) return true;
-                return false; // 不确定就按不允许 variance 处理（可能为值类型）
+                if (IsDefinitelyReferenceType(constraintGp, seenGenericParams))
+                    return true;
+                continue;
             }
-            return true;
+
+            var constraintDef = ResolveWithCache(constraintType);
+            if (constraintDef == null || constraintDef.IsInterface || constraintDef.IsValueType)
+                continue;
+
+            var constraintSig = TypeSig.Create(constraintDef);
+            if (constraintSig != TypeSig.Object && constraintSig != TypeSig.ValueType && constraintSig != TypeSig.Enum)
+                return true;
         }
+
+        return false;
     }
 
 
 
-    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool strict, AssignabilityContext context)
+    private static bool IsAssignableFromArray(TypeReference to, ArrayType fromArr, bool ilRule, AssignabilityContext context)
     {
         to = to.StripType();
         var toKey = TypeSig.Create(to);
@@ -678,6 +710,24 @@ public static partial class CecilTypeSystem
         }
 
         // 数组 -> 数组 (处理协变)
+        // T[] -> IEnumerable<T>/ICollection<T>/IList<T>/IReadOnlyCollection<T>/IReadOnlyList<T>
+        // CLR also allows reference-array covariance here, e.g. string[] -> IList<object>.
+        if (fromArr is { Rank: 1 } &&
+            to is GenericInstanceType toGi &&
+            toGi.GenericArguments.Count == 1 &&
+            IsArrayRuntimeGenericInterfaceDefinition(toGi.ElementType))
+        {
+            var toElem = toGi.GenericArguments[0].StripType();
+            var fromElem = fromArr.ElementType.StripType();
+
+            if (IsSameWith(toElem, fromElem))
+                return true;
+
+            if (!IsDefinitelyReferenceType(toElem) || !IsDefinitelyReferenceType(fromElem))
+                return false;
+
+            return IsAssignableFromCore(toElem, fromElem, ilRule, context);
+        }
         if (to is ArrayType toArr)
         {
             if (toArr.Rank != fromArr.Rank || toArr.IsVector != fromArr.IsVector) return false;
@@ -687,14 +737,22 @@ public static partial class CecilTypeSystem
 
             if (!toElem.IsValueType && !fromElem.IsValueType) //引用类型支持协变
             {
-                return IsAssignableFromCore(toElem, fromElem, strict, context);
+                return IsAssignableFromCore(toElem, fromElem, ilRule, context);
             }
             return IsSameWith(toElem, fromElem);
         }
         return false;
     }
 
-    private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool strict,
+    private static bool IsArrayRuntimeGenericInterfaceDefinition(TypeReference type)
+    {
+        type = type.StripType();
+        var def = ResolveWithCache(type) ?? type;
+        return def.Namespace == "System.Collections.Generic" &&
+               def.Name is "IEnumerable`1" or "ICollection`1" or "IList`1" or "IReadOnlyCollection`1" or "IReadOnlyList`1";
+    }
+
+    private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool ilRule,
         AssignabilityContext context)
     {
         // 对每个显式约束：where T : C, IFoo 处理，假定T为每一个约束类型进行赋值比较判断
@@ -702,21 +760,23 @@ public static partial class CecilTypeSystem
         {
             var ct = c.ConstraintType.StripType();
 
-            if (IsAssignableFromCore(to, ct, strict, context))
+            if (IsAssignableFromCore(to, ct, ilRule, context))
                 return true;
         }
 
         var constraint = fromGp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
         var toKey = TypeSig.Create(to);
-        switch (constraint)
+        if ((constraint & GenericParameterAttributes.ReferenceTypeConstraint) != 0)
         {
-            case GenericParameterAttributes.ReferenceTypeConstraint:
-                return toKey == TypeSig.Object;
-            case GenericParameterAttributes.NotNullableValueTypeConstraint:
-                if (strict) return false;
-                return toKey == TypeSig.Object || toKey == TypeSig.ValueType;
+            return toKey == TypeSig.Object;
         }
-        return toKey == TypeSig.Object && !strict;
+
+        if ((constraint & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
+        {
+            if (ilRule) return false;
+            return toKey == TypeSig.Object || toKey == TypeSig.ValueType;
+        }
+        return toKey == TypeSig.Object && !ilRule;
     }
 
 
@@ -814,3 +874,4 @@ public static partial class CecilTypeSystem
         return strict ? key | 0x8000000000000000UL : key;
     }
 }
+

@@ -87,7 +87,7 @@ namespace MonoWeaver.CFG
             {
                 throw new ArgumentNullException("type");
             }
-
+            
             type = type.StripType();
 
  
@@ -177,10 +177,16 @@ namespace MonoWeaver.CFG
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static StackType CreateBoxed(TypeReference type)
         {
-            if (!type.IsValueType)
+            if (!type.IsValueType && type is not GenericParameter)
                 throw new ArgumentException("boxedType must be a value type");
-            
-            return new StackType(type.GetEnumBackingFieldType() is not null ? type.Module.ImportReference(typeof(Enum)) : type.Module.ImportReference(typeof(ValueType)), 
+
+            var stackType = type is GenericParameter
+                ? type.Module.TypeSystem.Object
+                : type.GetEnumBackingFieldType() is not null
+                    ? type.Module.ImportReference(typeof(Enum))
+                    : type.Module.ImportReference(typeof(ValueType));
+
+            return new StackType(stackType,
                 BuiltInType.None, VerificationType.O, StackTypeFlags.None, type);
 
         }
@@ -233,6 +239,8 @@ namespace MonoWeaver.CFG
         //针对Ptr的更多细节处理在外部验证器处理
         public bool IsPtr => VerifyType is VerificationType.BuiltIn && BuiltInType is BuiltInType.I && Type is not null;
 
+        public bool IsByRef => VerifyType == VerificationType.ByRef;
+
         public TypeReference? InnerType
         {
             get
@@ -273,18 +281,22 @@ namespace MonoWeaver.CFG
             if (right.VerifyType != VerifyType)
                 return false;
 
+            if (!right.Flags.HasFlag(StackTypeFlags.ReadOnly) &&
+                Flags.HasFlag(StackTypeFlags.ReadOnly)) //readonly -> non-readonly 不可转换
+                return false; 
+
             //装箱类型处理
             if (IsBoxedType && right.IsBoxedType)
             {
                 return _boxedTypeSig == right._boxedTypeSig;
             }
             else if (right.IsBoxedType)
-            {
+            {   
                 return false;
             }
             else if (IsBoxedType)
             {
-                return BoxedType!.IsILStackAssignableTo(right.Type);
+                return right.Type is not null && BoxedType!.IsAssignableTo(right.Type); //Boxed不走ILAssignable路径
             }
 
             if (BuiltInType == BuiltInType.Null && right.VerifyType == VerificationType.O)
@@ -426,6 +438,35 @@ namespace MonoWeaver.CFG
         }
 
         public override bool Equals(object? obj) => obj is StackType st && Equals(st);
+
+        public override string ToString()
+        {
+            var typeName = ToStringCore();
+            return Flags is StackTypeFlags.None ? typeName : $"{typeName} [{Flags}]";
+        }
+
+        private string ToStringCore()
+        {
+            if (this == Invalid)
+                return "invalid";
+
+            if (this == TypedRef)
+                return "typedref";
+
+            if (BuiltInType is not BuiltInType.None)
+                return IsPtr ? Type?.FullName ?? "<null-ptr>" : BuiltInType.ToString();
+
+            return VerifyType switch
+            {
+                VerificationType.ByRef => $"&{Type?.FullName ?? "<null>"}",
+                VerificationType.O => BoxedType is null
+                    ? $"O({Type?.FullName ?? "null"})"
+                    : $"boxed({BoxedType.FullName})",
+                VerificationType.ValueType => $"valuetype({Type?.FullName ?? "<null>"})",
+                VerificationType.TypedRef => "typedref",
+                _ => VerifyType.ToString()
+            };
+        }
 
         public readonly VerificationType VerifyType;
         public readonly StackTypeFlags Flags;
