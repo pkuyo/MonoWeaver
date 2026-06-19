@@ -311,8 +311,102 @@ public static partial class CecilTypeSystem
     public static bool IsVoid(this TypeReference type)
     => type.MetadataType == MetadataType.Void;
 
+    /// <summary>
+    /// 检查构造类型中的泛型实参是否满足对应泛型参数约束。
+    /// </summary>
+    /// <param name="typeReference"></param>
+    /// <returns></returns>
+    public static bool CheckConstraints(this TypeReference typeReference)
+    {
+        if (typeReference == null) throw new ArgumentNullException(nameof(typeReference));
+        return CheckTypeConstraints(typeReference, null, null, new HashSet<TypeSig>());
+    }
 
+    /// <summary>
+    /// 检查方法引用中的声明类型泛型实参和方法泛型实参是否满足对应泛型参数约束。
+    /// </summary>
+    /// <param name="methodReference"></param>
+    /// <returns></returns>
+    public static bool CheckConstraints(this MethodReference methodReference)
+    {
+        if (methodReference == null) throw new ArgumentNullException(nameof(methodReference));
+        return CheckMethodConstraints(methodReference, new HashSet<TypeSig>());
+    }
 
+    /// <summary>
+    /// 判断 localType 是否可以访问 toType
+    /// </summary>
+    /// <param name="localType"></param>
+    /// <param name="toType"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public static bool CanAccess(this TypeReference localType, TypeReference toType)
+    {
+        if (localType == null) throw new ArgumentNullException(nameof(localType));
+        if (toType == null) throw new ArgumentNullException(nameof(toType));
+        return CanAccessType(localType, toType, new HashSet<TypeSig>());
+    }
+
+    /// <summary>
+    /// 判断 localType 是否可以访问 toMethod
+    /// </summary>
+    /// <param name="localType"></param>
+    /// <param name="toMethod"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public static bool CanAccess(this TypeReference localType, MethodDefinition toMethod)
+    {
+        if (localType == null) throw new ArgumentNullException(nameof(localType));
+        if (toMethod == null) throw new ArgumentNullException(nameof(toMethod));
+
+        if (!CanAccessType(localType, toMethod.DeclaringType, new HashSet<TypeSig>()))
+            return false;
+
+        if (!CanAccessMethodVisibility(localType, toMethod))
+            return false;
+
+        if (!CanAccessType(localType, toMethod.ReturnType, new HashSet<TypeSig>()))
+            return false;
+
+        for (int i = 0; i < toMethod.Parameters.Count; i++)
+        {
+            if (!CanAccessType(localType, toMethod.Parameters[i].ParameterType, new HashSet<TypeSig>()))
+                return false;
+        }
+
+        for (int i = 0; i < toMethod.GenericParameters.Count; i++)
+        {
+            var genericParameter = toMethod.GenericParameters[i];
+            for (int j = 0; j < genericParameter.Constraints.Count; j++)
+            {
+                if (!CanAccessType(localType, genericParameter.Constraints[j].ConstraintType, new HashSet<TypeSig>()))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 判断 localType 是否可以访问 toField
+    /// </summary>
+    /// <param name="localType"></param>
+    /// <param name="toField"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public static bool CanAccess(this TypeReference localType, FieldDefinition toField)
+    {
+        if (localType == null) throw new ArgumentNullException(nameof(localType));
+        if (toField == null) throw new ArgumentNullException(nameof(toField));
+
+        if (!CanAccessType(localType, toField.DeclaringType, new HashSet<TypeSig>()))
+            return false;
+
+        if (!CanAccessFieldVisibility(localType, toField))
+            return false;
+
+        return CanAccessType(localType, toField.FieldType, new HashSet<TypeSig>());
+    }
 }
 
 
@@ -322,6 +416,244 @@ public static partial class CecilTypeSystem
 /// </summary>
 public static partial class CecilTypeSystem
 {
+    private static bool CanAccessType(TypeReference localType, TypeReference toType, HashSet<TypeSig> visiting)
+    {
+        if (toType.MetadataType == MetadataType.Void)
+            return true;
+
+        var sig = TypeSig.Create(toType);
+        if (!visiting.Add(sig))
+            return true;
+
+        try
+        {
+            switch (toType.StripType())
+            {
+                case GenericParameter genericParameter:
+                    for (int i = 0; i < genericParameter.Constraints.Count; i++)
+                    {
+                        if (!CanAccessType(localType, genericParameter.Constraints[i].ConstraintType, visiting))
+                            return false;
+                    }
+                    return true;
+
+                case GenericInstanceType genericInstance:
+                    if (!CanAccessType(localType, genericInstance.ElementType, visiting))
+                        return false;
+
+                    for (int i = 0; i < genericInstance.GenericArguments.Count; i++)
+                    {
+                        if (!CanAccessType(localType, genericInstance.GenericArguments[i], visiting))
+                            return false;
+                    }
+                    return true;
+
+                case ArrayType array:
+                    return CanAccessType(localType, array.ElementType, visiting);
+
+                case ByReferenceType byRef:
+                    return CanAccessType(localType, byRef.ElementType, visiting);
+
+                case PointerType pointer:
+                    return CanAccessType(localType, pointer.ElementType, visiting);
+
+                case FunctionPointerType functionPointer:
+                    if (!CanAccessType(localType, functionPointer.ReturnType, visiting))
+                        return false;
+
+                    for (int i = 0; i < functionPointer.Parameters.Count; i++)
+                    {
+                        if (!CanAccessType(localType, functionPointer.Parameters[i].ParameterType, visiting))
+                            return false;
+                    }
+                    return true;
+            }
+
+            var typeDefinition = ResolveWithCache(toType);
+            return typeDefinition == null || CanAccessTypeDefinition(localType, typeDefinition);
+        }
+        finally
+        {
+            visiting.Remove(sig);
+        }
+    }
+
+    private static bool CanAccessTypeDefinition(TypeReference localType, TypeDefinition toType)
+    {
+        if (toType.IsNested)
+        {
+            var declaringType = toType.DeclaringType;
+            if (declaringType == null)
+                return false;
+
+            if (!CanAccessType(localType, declaringType, new HashSet<TypeSig>()))
+                return false;
+
+            var localDefinition = ResolveWithCache(localType);
+            if (localDefinition == null)
+                return false;
+
+            if (toType.IsNestedPublic)
+                return true;
+
+            if (toType.IsNestedPrivate)
+                return IsInPrivateAccessScope(localDefinition, declaringType);
+
+            if (toType.IsNestedAssembly)
+                return HasAssemblyAccess(localType, toType);
+
+            if (toType.IsNestedFamily)
+                return HasFamilyAccess(localDefinition, declaringType);
+
+            if (toType.IsNestedFamilyOrAssembly)
+                return HasAssemblyAccess(localType, toType) ||
+                       HasFamilyAccess(localDefinition, declaringType);
+
+            if (toType.IsNestedFamilyAndAssembly)
+                return IsSameAssembly(localType, toType) &&
+                       HasFamilyAccess(localDefinition, declaringType);
+
+            return false;
+        }
+
+        return toType.IsPublic || HasAssemblyAccess(localType, toType);
+    }
+
+    private static bool CanAccessMethodVisibility(TypeReference localType, MethodDefinition toMethod)
+    {
+        var declaringType = toMethod.DeclaringType;
+        var localDefinition = ResolveWithCache(localType);
+
+        if (declaringType == null || localDefinition == null)
+            return false;
+
+        if (toMethod.IsPublic)
+            return true;
+
+        if (toMethod.IsPrivate)
+            return IsInPrivateAccessScope(localDefinition, declaringType);
+
+        if (toMethod.IsAssembly)
+            return HasAssemblyAccess(localType, declaringType);
+
+        if (toMethod.IsFamily)
+            return HasFamilyAccess(localDefinition, declaringType);
+
+        if (toMethod.IsFamilyOrAssembly)
+            return HasAssemblyAccess(localType, declaringType) ||
+                   HasFamilyAccess(localDefinition, declaringType);
+
+        if (toMethod.IsFamilyAndAssembly)
+            return IsSameAssembly(localType, declaringType) &&
+                   HasFamilyAccess(localDefinition, declaringType);
+
+        return false;
+    }
+
+
+    private static bool CanAccessFieldVisibility(TypeReference localType, FieldDefinition toField)
+    {
+        var declaringType = toField.DeclaringType;
+        var localDefinition = ResolveWithCache(localType);
+
+        if (declaringType == null || localDefinition == null)
+            return false;
+
+        if (toField.IsPublic)
+            return true;
+
+        if (toField.IsPrivate)
+            return IsInPrivateAccessScope(localDefinition, declaringType);
+
+        if (toField.IsAssembly)
+            return HasAssemblyAccess(localType, declaringType);
+
+        if (toField.IsFamily)
+            return HasFamilyAccess(localDefinition, declaringType);
+
+        if (toField.IsFamilyOrAssembly)
+            return HasAssemblyAccess(localType, declaringType) ||
+                   HasFamilyAccess(localDefinition, declaringType);
+
+        if (toField.IsFamilyAndAssembly)
+            return IsSameAssembly(localType, declaringType) &&
+                   HasFamilyAccess(localDefinition, declaringType);
+
+        return false;
+    }
+    private static bool IsInPrivateAccessScope(TypeDefinition localType, TypeDefinition targetDeclaringType)
+    {
+        for (var local = localType; local != null; local = local.DeclaringType)
+        {
+            for (var target = targetDeclaringType; target != null; target = target.DeclaringType)
+            {
+                if (local.IsSameWith(target))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasFamilyAccess(TypeDefinition localType, TypeDefinition targetDeclaringType)
+    {
+        for (var local = localType; local != null; local = local.DeclaringType)
+        {
+            if (local.IsSameWith(targetDeclaringType) || local.IsAssignableTo(targetDeclaringType))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool HasAssemblyAccess(TypeReference localType, TypeDefinition toType)
+    {
+        return IsSameAssembly(localType, toType) || HasInternalsVisibleTo(toType, localType);
+    }
+
+    private static bool IsSameAssembly(TypeReference localType, TypeDefinition toType)
+    {
+        var localAssembly = ResolveWithCache(localType)?.Module?.Assembly ?? localType.Module?.Assembly;
+        var targetAssembly = toType.Module?.Assembly;
+        return AssemblyNamesEqual(localAssembly?.Name, targetAssembly?.Name);
+    }
+
+    private static bool HasInternalsVisibleTo(TypeDefinition toType, TypeReference localType)
+    {
+        var targetAssembly = toType.Module?.Assembly;
+        var localAssemblyName = ResolveWithCache(localType)?.Module?.Assembly?.Name?.Name ??
+                                localType.Module?.Assembly?.Name?.Name;
+
+        if (targetAssembly == null || string.IsNullOrWhiteSpace(localAssemblyName))
+            return false;
+
+        for (int i = 0; i < targetAssembly.CustomAttributes.Count; i++)
+        {
+            var attribute = targetAssembly.CustomAttributes[i];
+            if (attribute.AttributeType.FullName != "System.Runtime.CompilerServices.InternalsVisibleToAttribute" ||
+                attribute.ConstructorArguments.Count != 1 ||
+                attribute.ConstructorArguments[0].Value is not string friendAssembly)
+            {
+                continue;
+            }
+
+            var commaIndex = friendAssembly.IndexOf(',');
+            var friendName = (commaIndex >= 0 ? friendAssembly.Substring(0, commaIndex) : friendAssembly).Trim();
+            if (string.Equals(friendName, localAssemblyName, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool AssemblyNamesEqual(AssemblyNameDefinition? left, AssemblyNameDefinition? right)
+    {
+        if (left == null || right == null)
+            return false;
+
+        return string.Equals(left.Name, right.Name, StringComparison.Ordinal);
+    }
+
     private static bool IsAssignableFromRoot(TypeReference? to, TypeReference? from, bool ilRule)
     {
         var context = _assignabilityContext;
@@ -780,6 +1112,408 @@ public static partial class CecilTypeSystem
     }
 
 
+    private static bool CheckMethodConstraints(MethodReference methodReference, HashSet<TypeSig> visiting)
+    {
+        var typeContext = methodReference.DeclaringType as GenericInstanceType;
+        var methodContext = methodReference as GenericInstanceMethod;
+
+        if (methodReference.DeclaringType != null &&
+            !CheckTypeConstraints(methodReference.DeclaringType, null, null, visiting))
+        {
+            return false;
+        }
+
+        if (methodContext != null && !CheckGenericInstanceMethodConstraints(methodContext, typeContext, visiting))
+            return false;
+
+        if (!CheckTypeConstraints(methodReference.ReturnType, typeContext, methodContext, visiting))
+            return false;
+
+        for (int i = 0; i < methodReference.Parameters.Count; i++)
+        {
+            if (!CheckTypeConstraints(methodReference.Parameters[i].ParameterType, typeContext, methodContext, visiting))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool CheckTypeConstraints(TypeReference type, GenericInstanceType? typeContext,
+        GenericInstanceMethod? methodContext, HashSet<TypeSig> visiting)
+    {
+        if (type == null) return false;
+
+        type = TryInflateGenericType(type, typeContext, methodContext);
+
+        switch (type)
+        {
+            case OptionalModifierType optional:
+                return CheckTypeConstraints(optional.ModifierType, typeContext, methodContext, visiting) &&
+                       CheckTypeConstraints(optional.ElementType, typeContext, methodContext, visiting);
+
+            case RequiredModifierType required:
+                return CheckTypeConstraints(required.ModifierType, typeContext, methodContext, visiting) &&
+                       CheckTypeConstraints(required.ElementType, typeContext, methodContext, visiting);
+
+            case PinnedType pinned:
+                return CheckTypeConstraints(pinned.ElementType, typeContext, methodContext, visiting);
+
+            case SentinelType sentinel:
+                return CheckTypeConstraints(sentinel.ElementType, typeContext, methodContext, visiting);
+        }
+
+        type = type.StripType();
+
+        switch (type)
+        {
+            case GenericParameter:
+                return true;
+
+            case GenericInstanceType genericInstance:
+            {
+                var sig = TypeSig.Create(genericInstance);
+                if (!visiting.Add(sig))
+                    return true;
+
+                try
+                {
+                    return CheckGenericInstanceTypeConstraints(genericInstance, typeContext, methodContext, visiting);
+                }
+                finally
+                {
+                    visiting.Remove(sig);
+                }
+            }
+
+            case ArrayType array:
+                return CheckTypeConstraints(array.ElementType, typeContext, methodContext, visiting);
+
+            case ByReferenceType byRef:
+                return CheckTypeConstraints(byRef.ElementType, typeContext, methodContext, visiting);
+
+            case PointerType pointer:
+                return CheckTypeConstraints(pointer.ElementType, typeContext, methodContext, visiting);
+
+            case FunctionPointerType functionPointer:
+                if (!CheckTypeConstraints(functionPointer.ReturnType, typeContext, methodContext, visiting))
+                    return false;
+
+                for (int i = 0; i < functionPointer.Parameters.Count; i++)
+                {
+                    if (!CheckTypeConstraints(functionPointer.Parameters[i].ParameterType, typeContext, methodContext, visiting))
+                        return false;
+                }
+
+                return true;
+        }
+
+        return type.DeclaringType == null ||
+               CheckTypeConstraints(type.DeclaringType, typeContext, methodContext, visiting);
+    }
+
+    private static bool CheckGenericInstanceTypeConstraints(GenericInstanceType genericInstance,
+        GenericInstanceType? typeContext, GenericInstanceMethod? methodContext, HashSet<TypeSig> visiting)
+    {
+        if (genericInstance.DeclaringType != null &&
+            !CheckTypeConstraints(genericInstance.DeclaringType, typeContext, methodContext, visiting))
+        {
+            return false;
+        }
+
+        var typeDefinition = ResolveWithCache(genericInstance.ElementType);
+        var genericParameters = typeDefinition?.GenericParameters ?? genericInstance.ElementType.GenericParameters;
+        if (genericParameters.Count != genericInstance.GenericArguments.Count)
+            return false;
+
+        for (int i = 0; i < genericParameters.Count; i++)
+        {
+            var argument = TryInflateGenericType(genericInstance.GenericArguments[i], typeContext, methodContext);
+            if (!CheckGenericArgumentSatisfiesParameter(argument, genericParameters[i], genericInstance, methodContext, visiting))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool CheckGenericInstanceMethodConstraints(GenericInstanceMethod genericMethod,
+        GenericInstanceType? typeContext, HashSet<TypeSig> visiting)
+    {
+        var methodDefinition = TryResolve(genericMethod.ElementMethod);
+        var genericParameters = methodDefinition?.GenericParameters ?? genericMethod.ElementMethod.GenericParameters;
+        if (genericParameters.Count != genericMethod.GenericArguments.Count)
+            return false;
+
+        for (int i = 0; i < genericParameters.Count; i++)
+        {
+            var argument = TryInflateGenericType(genericMethod.GenericArguments[i], typeContext, genericMethod);
+            if (!CheckGenericArgumentSatisfiesParameter(argument, genericParameters[i], typeContext, genericMethod, visiting))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool CheckGenericArgumentSatisfiesParameter(TypeReference argument, GenericParameter parameter,
+        GenericInstanceType? typeContext, GenericInstanceMethod? methodContext, HashSet<TypeSig> visiting)
+    {
+        argument = TryInflateGenericType(argument, typeContext, methodContext).StripType();
+
+        if (!CheckTypeConstraints(argument, typeContext, methodContext, visiting))
+            return false;
+
+        var special = parameter.Attributes & GenericParameterAttributes.SpecialConstraintMask;
+        if ((special & GenericParameterAttributes.ReferenceTypeConstraint) != 0 &&
+            !IsDefinitelyReferenceType(argument))
+        {
+            return false;
+        }
+
+        if ((special & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0 &&
+            !IsDefinitelyNonNullableValueType(argument))
+        {
+            return false;
+        }
+
+        if ((special & GenericParameterAttributes.DefaultConstructorConstraint) != 0 &&
+            !HasPublicDefaultConstructor(argument))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < parameter.Constraints.Count; i++)
+        {
+            var constraintType = TryInflateGenericType(parameter.Constraints[i].ConstraintType, typeContext, methodContext).StripType();
+            if (!CheckTypeConstraints(constraintType, typeContext, methodContext, visiting))
+                return false;
+
+            if (!constraintType.IsAssignableFrom(argument))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static TypeReference TryInflateGenericType(TypeReference typeToInflate, GenericInstanceType? typeContext,
+        GenericInstanceMethod? methodContext)
+    {
+        switch (typeToInflate)
+        {
+            case ByReferenceType byRef:
+                return new ByReferenceType(TryInflateGenericType(byRef.ElementType, typeContext, methodContext));
+
+            case PointerType ptr:
+                return new PointerType(TryInflateGenericType(ptr.ElementType, typeContext, methodContext));
+
+            case OptionalModifierType modifier:
+                return new OptionalModifierType(
+                    TryInflateGenericType(modifier.ModifierType, typeContext, methodContext),
+                    TryInflateGenericType(modifier.ElementType, typeContext, methodContext));
+
+            case RequiredModifierType required:
+                return new RequiredModifierType(
+                    TryInflateGenericType(required.ModifierType, typeContext, methodContext),
+                    TryInflateGenericType(required.ElementType, typeContext, methodContext));
+
+            case PinnedType pinned:
+                return new PinnedType(TryInflateGenericType(pinned.ElementType, typeContext, methodContext));
+
+            case SentinelType sentinel:
+                return new SentinelType(TryInflateGenericType(sentinel.ElementType, typeContext, methodContext));
+
+            case GenericParameter gp:
+                return TryGetGenericParameterArgument(gp, typeContext, methodContext, out var argument)
+                    ? argument
+                    : typeToInflate;
+
+            case GenericInstanceType git:
+            {
+                var element = TryInflateGenericType(git.ElementType, typeContext, methodContext);
+                var result = new GenericInstanceType(element);
+                for (int i = 0; i < git.GenericArguments.Count; i++)
+                    result.GenericArguments.Add(TryInflateGenericType(git.GenericArguments[i], typeContext, methodContext));
+                return result;
+            }
+
+            case ArrayType arrayType:
+            {
+                var inflatedElement = TryInflateGenericType(arrayType.ElementType, typeContext, methodContext);
+                var result = arrayType.IsVector
+                    ? new ArrayType(inflatedElement)
+                    : new ArrayType(inflatedElement, arrayType.Rank);
+                for (int i = 0; i < arrayType.Dimensions.Count; i++)
+                {
+                    var dimension = arrayType.Dimensions[i];
+                    result.Dimensions.Add(new ArrayDimension(dimension.LowerBound, dimension.UpperBound));
+                }
+                return result;
+            }
+        }
+
+        return typeToInflate;
+    }
+
+    private static bool TryGetGenericParameterArgument(GenericParameter genericParameter,
+        GenericInstanceType? typeContext, GenericInstanceMethod? methodContext, out TypeReference argument)
+    {
+        argument = null!;
+
+        if (genericParameter.Owner is TypeReference ownerType)
+            return TryGetTypeGenericArgument(ownerType, genericParameter.Position, typeContext, out argument);
+
+        if (genericParameter.Owner is MethodReference ownerMethod)
+            return TryGetMethodGenericArgument(ownerMethod, genericParameter.Position, methodContext, out argument);
+
+        return false;
+    }
+
+    private static bool TryGetTypeGenericArgument(TypeReference ownerType, int position,
+        GenericInstanceType? typeContext, out TypeReference argument)
+    {
+        argument = null!;
+        var current = typeContext;
+        var guard = 0;
+
+        while (current != null && guard++ < 64)
+        {
+            if (IsSameGenericParameterOwner(ownerType, current.ElementType) &&
+                current.GenericArguments.Count > position)
+            {
+                argument = current.GenericArguments[position];
+                return true;
+            }
+
+            if (current.DeclaringType is GenericInstanceType declaringInstance)
+            {
+                current = declaringInstance;
+                continue;
+            }
+
+            if (current.ElementType.DeclaringType is GenericInstanceType elementDeclaringInstance)
+            {
+                current = elementDeclaringInstance;
+                continue;
+            }
+
+            break;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetMethodGenericArgument(MethodReference ownerMethod, int position,
+        GenericInstanceMethod? methodContext, out TypeReference argument)
+    {
+        argument = null!;
+        if (methodContext == null || methodContext.GenericArguments.Count <= position)
+            return false;
+
+        if (!IsSameGenericParameterOwner(ownerMethod, methodContext.ElementMethod))
+            return false;
+
+        argument = methodContext.GenericArguments[position];
+        return true;
+    }
+
+    private static bool IsSameGenericParameterOwner(TypeReference ownerType, TypeReference contextType)
+    {
+        ownerType = GetGenericOwnerElementType(ownerType);
+        contextType = GetGenericOwnerElementType(contextType);
+        return ownerType.IsSameWith(contextType);
+    }
+
+    private static TypeReference GetGenericOwnerElementType(TypeReference type)
+    {
+        try
+        {
+            return type.GetElementType();
+        }
+        catch
+        {
+            return type;
+        }
+    }
+
+    private static bool IsSameGenericParameterOwner(MethodReference ownerMethod, MethodReference contextMethod)
+    {
+        if (ReferenceEquals(ownerMethod, contextMethod))
+            return true;
+
+        var ownerDefinition = TryResolve(ownerMethod);
+        var contextDefinition = TryResolve(contextMethod);
+        if (ownerDefinition != null && contextDefinition != null)
+        {
+            return ownerDefinition.MetadataToken.ToInt32() == contextDefinition.MetadataToken.ToInt32() &&
+                   ownerDefinition.Module?.Mvid == contextDefinition.Module?.Mvid;
+        }
+
+        return ownerMethod.Name == contextMethod.Name &&
+               ownerMethod.GenericParameters.Count == contextMethod.GenericParameters.Count &&
+               ownerMethod.Parameters.Count == contextMethod.Parameters.Count &&
+               ownerMethod.HasThis == contextMethod.HasThis &&
+               ownerMethod.CallingConvention == contextMethod.CallingConvention &&
+               ownerMethod.DeclaringType.IsSameWith(contextMethod.DeclaringType);
+    }
+
+    private static bool IsDefinitelyNonNullableValueType(TypeReference type)
+    {
+        type = type.StripType();
+
+        if (type is ByReferenceType or PointerType or FunctionPointerType)
+            return false;
+
+        if (type is GenericParameter gp)
+        {
+            var special = gp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
+            return (special & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0;
+        }
+
+        var definition = ResolveWithCache(type);
+        if (!type.IsValueType && definition?.IsValueType != true)
+            return false;
+
+        return !IsNullableValueType(type);
+    }
+
+    private static bool HasPublicDefaultConstructor(TypeReference type)
+    {
+        type = type.StripType();
+
+        if (type is ByReferenceType or PointerType or FunctionPointerType)
+            return false;
+
+        if (type is GenericParameter gp)
+        {
+            var special = gp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
+            return (special & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0 ||
+                   (special & GenericParameterAttributes.DefaultConstructorConstraint) != 0;
+        }
+
+        var definition = ResolveWithCache(type);
+        if (type.IsValueType || definition?.IsValueType == true)
+            return true;
+
+        if (definition == null || definition.IsInterface || definition.IsAbstract)
+            return false;
+
+        for (int i = 0; i < definition.Methods.Count; i++)
+        {
+            var method = definition.Methods[i];
+            if (method.IsConstructor && !method.IsStatic && method.IsPublic && method.Parameters.Count == 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsNullableValueType(TypeReference type)
+    {
+        type = type.StripType();
+        if (type is not GenericInstanceType genericInstance)
+            return false;
+
+        var nullableType = ResolveWithCache(genericInstance.ElementType) ?? genericInstance.ElementType;
+        return TypeSig.Create(nullableType) == TypeSig.Nullable;
+    }
 
 
 
@@ -844,6 +1578,7 @@ public static partial class CecilTypeSystem
     {
         return t is not GenericInstanceType && t.HasGenericParameters;
     }
+
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

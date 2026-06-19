@@ -373,7 +373,7 @@
         ret
     }
 
-    .method public static void Casting.BoxToUnsatisfiedConstraint_Full_Invalid_UnsatisfiedBoxOperand(class GenericTypeWithConstrained<class [System.Runtime]System.Object> c) cil managed
+    .method public static void Casting.BoxToUnsatisfiedConstraint_Invalid_UnsatisfiedBoxOperand(class GenericTypeWithConstrained<class [System.Runtime]System.Object> c) cil managed
     {
         ldarg.0
         box     class GenericTypeWithConstrained<class [System.Runtime]System.Object>

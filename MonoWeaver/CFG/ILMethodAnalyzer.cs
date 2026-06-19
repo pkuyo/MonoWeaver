@@ -206,6 +206,8 @@ public partial class ILMethodAnalyzer
 
     private AbortStrategy _abortVerificationStrategy;
 
+    private bool _initThis = false;
+
 
 
     public bool VerifyStackType => _verifyOptions.HasFlag(VerifyOptions.StackTypes);
@@ -229,6 +231,7 @@ public partial class ILMethodAnalyzer
         _verifyOptions = verifyOptions;
         _method = method;
         _needInitAnalysis = !_method.Body.InitLocals;
+        _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
         VerifyMethod();
     }
 
@@ -243,7 +246,9 @@ public partial class ILMethodAnalyzer
         _nodeIntern.Clear();
         _blocks.Clear();
         Diagnostics.Clear();
+        _entryblocks.Clear();
         _currentErrorCount = 0;
+        _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
         VerifyMethod();
         return this;
     }
@@ -791,17 +796,23 @@ public partial class ILMethodAnalyzer
             {
                 case OperandType.InlineMethod:
                     {
-                        if (VerifyMethodOperand(inst, out var mf))
+                        if (VerifyMethodOperand(inst, out var mf) && ResolveWithDiagnostic(mf) is MethodDefinition md)
                         {
-                            ResolveWithDiagnostic(mf);
+                            if (!_method.DeclaringType.CanAccess(md))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.MethodAccessViolation(inst, _method.DeclaringType, md));
+                            }
                         }
                         break;
                     }
                 case OperandType.InlineField:
                     {
-                        if (VerifyFieldOperand(inst, out var field))
+                        if (VerifyFieldOperand(inst, out var field) && ResolveWithDiagnostic(field) is FieldDefinition fd)
                         {
-                            ResolveWithDiagnostic(field);
+                            if (!_method.DeclaringType.CanAccess(fd))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.FieldAccessViolation(inst, _method.DeclaringType, fd));
+                            }
                         }
                         break;
                     }
@@ -815,9 +826,12 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineType:
                     {
-                        if (VerifyTypeOperand(inst, out var type))
+                        if (VerifyTypeOperand(inst, out var type) && ResolveWithDiagnostic(type) is TypeDefinition td)
                         {
-                            ResolveWithDiagnostic(type);
+                            if (!_method.DeclaringType.CanAccess(td))
+                            {
+                                ReportDiagnostic(CFGDiagnostic.TypeAccessViolation(inst, _method.DeclaringType, td));
+                            }
                         }
                         break;
                     }
@@ -899,6 +913,8 @@ public partial class ILMethodAnalyzer
                     break;
             }
 
+            VerifyGenericConstraints(inst);
+
             // 前缀与特殊指令约束
             switch (inst.OpCode.Code)
             {
@@ -972,7 +988,7 @@ public partial class ILMethodAnalyzer
                                 not ExceptionHandlerType.Finally and not ExceptionHandlerType.Fault)
                         {
                             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
-                                inst, DiagnosticSeverity.Error, "Invalid 'endfilter' outside finally region."));
+                                inst, DiagnosticSeverity.Error, "Invalid 'endfinally' outside finally region."));
                         }
                         break;
                     }
@@ -1032,6 +1048,52 @@ public partial class ILMethodAnalyzer
                 _method.Body.Instructions.Last(), prefix.Value));
         }
         ThrowIfNeedAbort(AbortStrategy.AbortNextStep);
+    }
+
+    private void VerifyGenericConstraints(Instruction inst)
+    {
+        switch (inst.OpCode.Code)
+        {
+            case Code.Call:
+            case Code.Callvirt:
+            case Code.Newobj:
+                if (inst.Operand is MethodReference calledMethod)
+                    VerifyMethodConstraints(inst, calledMethod, "called method");
+                break;
+
+            case Code.Ldftn:
+            case Code.Ldvirtftn:
+                if (inst.Operand is MethodReference functionPointerMethod)
+                    VerifyMethodConstraints(inst, functionPointerMethod, "function pointer method");
+                break;
+
+            case Code.Box:
+                if (inst.Operand is TypeReference boxType)
+                    VerifyTypeConstraints(inst, boxType, null, "box type operand");
+                break;
+
+            case Code.Stfld:
+            case Code.Stsfld:
+                if (inst.Operand is FieldReference field)
+                    VerifyTypeConstraints(inst, field.DeclaringType, field, "field parent type");
+                break;
+        }
+    }
+
+    private void VerifyMethodConstraints(Instruction inst, MethodReference method, string target)
+    {
+        if (method.CheckConstraints())
+            return;
+
+        ReportDiagnostic(CFGDiagnostic.TypeConstraintViolation(inst, method.DeclaringType, method, target));
+    }
+
+    private void VerifyTypeConstraints(Instruction inst, TypeReference type, MemberReference? member, string target)
+    {
+        if (type.CheckConstraints())
+            return;
+
+        ReportDiagnostic(CFGDiagnostic.TypeConstraintViolation(inst, type, member, target));
     }
 
     private bool TryResolveBranchTargets(Instruction inst, out Instruction[] targets)
@@ -1254,7 +1316,7 @@ public partial class ILMethodAnalyzer
         var funcBuffer = new StackType[8];
         var usedBlocks = new HashSet<BasicBlock>();
         
-        foreach (var block in _blocks)
+        foreach (var block in _entryblocks)
         {
             if (usedBlocks.Contains(block)) continue;
             AnalyzeBlocksControlFlow(block, usedBlocks, buffer, funcBuffer);
@@ -1274,9 +1336,9 @@ public partial class ILMethodAnalyzer
             AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, StackType.Create(_method.Module.TypeSystem.Object),
                 entryBlock.Leader);
         }
-        else if (entryBlock.Kind is RegionKind.Handler && entryBlock.Region.Clause.ExceptionHandler.CatchType is not null)
+        else if (entryBlock.Kind is RegionKind.Handler)
         {
-            AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, entryBlock.Region.Clause.ExceptionHandler.CatchType,
+            AnalyzeCF_EvalStackPush(localStack, ref entryStackNode, entryBlock.Region.Clause.ExceptionHandler.CatchType ?? _method.Module.TypeSystem.Object,
                 entryBlock.Leader);
         }
         
@@ -1322,19 +1384,19 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.StackBehaviourPop)
                 {
                     case StackBehaviour.Pop0:
-                        retType = VerifyPop0(inst, buffer, prefixBuffer);
+                        retType = VerifyPop0(inst, buffer[0], prefixBuffer);
                         break;
 
                     case StackBehaviour.Pop1:
-                        retType = VerifyPop1(inst, buffer, prefixBuffer);
+                        retType = VerifyPop1(inst, buffer[0], prefixBuffer);
                         break;
 
                     case StackBehaviour.Popi:
-                        retType = VerifyPopi(inst, buffer, prefixBuffer);
+                        retType = VerifyPopi(inst, buffer[0], prefixBuffer, localStack.Count + node.Depth);
                         break;
 
                     case StackBehaviour.Popref:
-                        retType = VerifyPopref(inst, buffer, prefixBuffer);
+                        retType = VerifyPopref(inst, buffer[0], prefixBuffer);
                         break;
 
                     case StackBehaviour.Popi_popi:
@@ -1388,6 +1450,26 @@ public partial class ILMethodAnalyzer
                         break;
 
                     case StackBehaviour.Varpop:
+                        if (inst.OpCode.Code is Code.Ret)
+                        {
+                            if (!_method.ReturnType.IsVoid())
+                            {
+                                var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
+                                if (!type.StackValueEqualsTo(_method.ReturnType))
+                                {
+                                    ReportStackTypeMismatch(_method.ReturnType, type, inst);
+                                }
+                                else
+                                {
+                                    if (_method.ReturnType.IsByReference && !type.Flags.HasFlag(StackTypeFlags.PermanentHome))
+                                    {
+                                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.ReturnTempPtr, inst));
+                                    }
+                                }
+                            }
+                            break;
+
+                        }
                         retType = VerifyVarPop(inst, ref funcBuffer, out var len, out var hasThis);
                         for(int j = len - 1; j > 0; j--)
                         {
@@ -1400,15 +1482,26 @@ public partial class ILMethodAnalyzer
                             if (hasThis && type.IsByRef && funcBuffer[0].IsValueType) //对于ValueType&也可以直接进行thisCall调用
                                 type = type.RefToValue();
 
+                            if (!_initThis 
+                                && type.Flags.HasFlag(StackTypeFlags.ThisPtr) 
+                                && inst.Operand is MethodReference mf
+                                && mf.Resolve() is { } md
+                                && (md.DeclaringType.IsSameWith(_method.DeclaringType.BaseType) || md.DeclaringType.IsSameWith(_method.DeclaringType))
+                                && md.IsSpecialName
+                                && hasThis
+                                && md.Name == ".ctor")
+                            {
+                                _initThis = true;
+                            }
                             VerifyType(type, funcBuffer[0], inst);
                         }
                         break;
 
                     case StackBehaviour.PopAll:
                         break;
-
                     default:
-                        throw new ArgumentOutOfRangeException();
+                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                        break;
                 }
 
                 switch (inst.OpCode.StackBehaviourPush)
@@ -1434,7 +1527,8 @@ public partial class ILMethodAnalyzer
                         AnalyzeCF_EvalStackPush(localStack, ref node, retType, inst);
                         break;
                     default:
-                        throw new ArgumentOutOfRangeException();
+                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                        break;
                 }
                 if (VerifyLocalInit)
                 {
@@ -1445,18 +1539,22 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:
-                        if (_blockMap.TryGetValue(inst.Next, out var ehBlock))
+                        if (_blockMap.TryGetValue(inst.Next, out var fallThrougthBlock))
                         {
-                            switch (ehBlock.Kind)
+                            if (block.Kind is RegionKind.Handler or RegionKind.Filter && fallThrougthBlock != block)
                             {
-                                case RegionKind.Handler:
-                                case RegionKind.Filter:
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidFallThrough, inst));
+                                endBlock = true;
+                                break;
+                            }
+                            switch (fallThrougthBlock.Kind)
+                            {
+                                case RegionKind.Handler or RegionKind.Filter when block.Region != fallThrougthBlock.Region:
                                     ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidFallThrough, inst));
                                     endBlock = true;
                                     break;
                                 case RegionKind.Try:
-                                    AnalyzeCF_AppendStack(localStack, ref node);
-                                    AnalyzeCF_AddNextBlock(block, ehBlock, bfsBlocks, node, initLocals, usedBlocks);
+                                    AnalyzeCF_AddNextBlock(block, fallThrougthBlock, bfsBlocks, node, initLocals, usedBlocks);
                                     endBlock = true;
                                     break;
                             }
@@ -1513,7 +1611,6 @@ public partial class ILMethodAnalyzer
                         break;
                     case FlowControl.Throw:
                         endBlock = true;
-                
                         ValidateExitStackHeight(inst, localStack.Count + node.Depth, 1);
       
                         break;
@@ -1522,6 +1619,10 @@ public partial class ILMethodAnalyzer
                         if (inst.OpCode.Code != Code.Endfinally)
                         {
                             ValidateExitStackHeight(inst, localStack.Count + node.Depth, 0);
+                            if (!_initThis)
+                            {
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitThisReturn, inst));
+                            }
                         }
                         break;
                 }
@@ -1691,8 +1792,9 @@ public partial class ILMethodAnalyzer
                 DiagnosticSeverity.Fatal));
             return StackType.Invalid;
         }
+        var result = node.Type;
         node = node.Parent;
-        return node.Type;
+        return result;
     }
 
     private void AnalyzeCF_EvalStackPush(Stack<StackType> localStack,

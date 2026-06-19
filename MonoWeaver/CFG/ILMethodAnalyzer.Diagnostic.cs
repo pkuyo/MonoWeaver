@@ -28,6 +28,7 @@ public enum CFGExceptionType
     //CFG相关
     InvalidInstruction, // 指令语义不合法。
     TypeMismatch, // 类型不匹配。
+    TypeConstraintViolation, // 类型实参不满足泛型约束。
     InconsistentFieldAccess, // 字段访问方式不一致。
     StackUnderflow, // 求值栈下溢。
     StackOverflow, // 求值栈超过 maxstack。
@@ -41,7 +42,9 @@ public enum CFGExceptionType
     BrTargetCrossEhRegion, // 分支跨越 EH 区域边界。
     LeaveTargetInvalid, // leave 目标无效。
     OutOfRange, // 索引或目标超出范围。
-    
+    UninitializedThis, // 读取未初始化 this。
+    UninitThisReturn, // 方法返回时 this 未初始化。
+    ReturnTempPtr, // 返回临时指针
     ResolveFailed, // 元数据引用解析失败。
     UnExpected, // 未预期的验证状态。
 
@@ -49,6 +52,7 @@ public enum CFGExceptionType
     Unverifiable, // IL 不可验证但可执行。
     Unverifiable_LocallocStackNotEmpty, // localloc 时求值栈非空。
 
+    TypeAccess, // 类型访问规则错误。
     FieldAccess, // 字段访问规则错误。
     MethodAccess // 方法访问规则错误。
 }
@@ -91,6 +95,19 @@ public sealed record TypeMismatchContext(
     TypeReference? CurrentType = null,
     int? ParameterIndex = null) : ICFGContext;
 
+public sealed record TypeConstraintContext(
+    Instruction Instruction,
+    TypeReference? Type,
+    MemberReference? Member,
+    string Target) : ICFGContext;
+
+public sealed record AccessContext(
+    Instruction Instruction,
+    TypeReference LocalType,
+    TypeReference? TargetType,
+    MemberReference? Member,
+    string Target) : ICFGContext;
+
 public sealed record InvalidOperandContext(Instruction Instruction, Type Expect, Type Current) : ICFGContext;
 public sealed record OperandOutOfRangeContext(Instruction Instruction) : ICFGContext;
 public sealed record ExitStackHeightContext(Instruction Instruction, int Expect, int Current) : ICFGContext;
@@ -127,6 +144,25 @@ public sealed record CFGDiagnostic(
                   .Append(" current=").Append(tm.Current);
                 if (tm.ParameterIndex is { } parameterIndex)
                     sb.Append(" parameter=").Append(parameterIndex);
+                break;
+
+            case TypeConstraintContext tc:
+                sb.Append(" @ IL_").Append(tc.Instruction.Offset.ToString("X4"))
+                  .Append(" target=").Append(tc.Target);
+                if (tc.Type != null)
+                    sb.Append(" type=").Append(tc.Type.FullName);
+                if (tc.Member != null)
+                    sb.Append(" member=").Append(tc.Member.FullName);
+                break;
+
+            case AccessContext ac:
+                sb.Append(" @ IL_").Append(ac.Instruction.Offset.ToString("X4"))
+                  .Append(" target=").Append(ac.Target)
+                  .Append(" local=").Append(ac.LocalType.FullName);
+                if (ac.TargetType != null)
+                    sb.Append(" type=").Append(ac.TargetType.FullName);
+                if (ac.Member != null)
+                    sb.Append(" member=").Append(ac.Member.FullName);
                 break;
 
             case InvalidOperandContext io:
@@ -176,6 +212,52 @@ public sealed record CFGDiagnostic(
             message ?? $"Type mismatch: expect {expect.FullName}, got {current?.FullName ?? "<null>"}",
             new TypeMismatchContext(inst, TypeMismatchKind.Type, expect.FullName,
                 current?.FullName ?? "<null>", expect, current));
+
+    public static CFGDiagnostic TypeConstraintViolation(Instruction inst, TypeReference? type,
+        MemberReference? member = null, string target = "type",
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => new(CFGExceptionType.TypeConstraintViolation, severity,
+            message ?? FormatTypeConstraintViolationMessage(type, member, target),
+            new TypeConstraintContext(inst, type, member, target));
+
+    private static string FormatTypeConstraintViolationMessage(TypeReference? type, MemberReference? member, string target)
+    {
+        var subject = member?.FullName ?? type?.FullName ?? "<unknown>";
+        return $"Generic constraint violation on {target}: {subject}";
+    }
+
+    public static CFGDiagnostic TypeAccessViolation(Instruction inst, TypeReference localType,
+        TypeReference targetType, MemberReference? member = null, string target = "type",
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => AccessViolation(CFGExceptionType.TypeAccess, inst, localType, targetType, member,
+            target, severity, message);
+
+    public static CFGDiagnostic FieldAccessViolation(Instruction inst, TypeReference localType,
+        FieldReference field, TypeReference? targetType = null, string target = "field",
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => AccessViolation(CFGExceptionType.FieldAccess, inst, localType,
+            targetType ?? field.DeclaringType, field, target, severity, message);
+
+    public static CFGDiagnostic MethodAccessViolation(Instruction inst, TypeReference localType,
+        MethodReference method, TypeReference? targetType = null, string target = "method",
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => AccessViolation(CFGExceptionType.MethodAccess, inst, localType,
+            targetType ?? method.DeclaringType, method, target, severity, message);
+
+    public static CFGDiagnostic AccessViolation(CFGExceptionType exceptionType, Instruction inst,
+        TypeReference localType, TypeReference? targetType, MemberReference? member = null,
+        string target = "member", DiagnosticSeverity severity = DiagnosticSeverity.Error,
+        string? message = null)
+        => new(exceptionType, severity,
+            message ?? FormatAccessViolationMessage(localType, targetType, member, target),
+            new AccessContext(inst, localType, targetType, member, target));
+
+    private static string FormatAccessViolationMessage(TypeReference localType,
+        TypeReference? targetType, MemberReference? member, string target)
+    {
+        var subject = member?.FullName ?? targetType?.FullName ?? "<unknown>";
+        return $"Access violation on {target}: {subject} is not accessible from {localType.FullName}";
+    }
 
     public static CFGDiagnostic StackTypeMismatch(string expect, string current, Instruction inst,
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)

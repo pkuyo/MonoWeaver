@@ -91,9 +91,9 @@ namespace MonoWeaver.CFG
             type = type.StripType();
 
  
-            if (type is PointerType ptrType)
+            if (type.IsPointer || type.IsFunctionPointer)
             {
-                return CreatePtr(ptrType);
+                return CreatePtr(type);
             }
             else if (type is ByReferenceType refType)
             {

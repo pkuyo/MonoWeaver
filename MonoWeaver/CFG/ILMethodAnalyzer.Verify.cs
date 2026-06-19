@@ -436,7 +436,7 @@ public partial class ILMethodAnalyzer
     /// TypeReference走隐式类型转换
     /// 否则built in会出现问题
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void VerifyType(StackType acutal, StackType expect, Instruction inst)
+    private void VerifyType(in StackType acutal, in StackType expect, Instruction inst)
     {
         if (!acutal.StackValueEqualsTo(expect))
         {
@@ -446,7 +446,7 @@ public partial class ILMethodAnalyzer
 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void VerifyValueType(StackType type1, Instruction inst)
+    private void VerifyValueType(in StackType type1, Instruction inst)
     {
         if (type1.Type is GenericParameter)
         {
@@ -463,7 +463,7 @@ public partial class ILMethodAnalyzer
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private StackType VerifyNum(StackType type1, Instruction inst)
+    private StackType VerifyNum(in StackType type1, Instruction inst)
     {
         if (!IsNumericStackType(type1))
         {
@@ -532,12 +532,12 @@ public partial class ILMethodAnalyzer
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsNumericStackType(StackType type)
+    private static bool IsNumericStackType(in StackType type)
         => type.VerifyType is VerificationType.BuiltIn
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I8 or BuiltInType.I or BuiltInType.F;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsIntegerStackType(StackType type)
+    private static bool IsIntegerStackType(in StackType type)
         => type.VerifyType is VerificationType.BuiltIn
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I8 or BuiltInType.I;
 
@@ -624,12 +624,12 @@ public partial class ILMethodAnalyzer
     private static TypeReference InflateFieldType(FieldReference field)
         => InflateMethodSigType(field.FieldType, field.DeclaringType as GenericInstanceType);
 
-    private void ReportStackTypeMismatch(StackType expected, StackType actual, Instruction inst)
+    private void ReportStackTypeMismatch(in StackType expected, in StackType actual, Instruction inst)
     {
         ReportStackTypeMismatch(expected.ToString(), actual, inst);
     }
 
-    private void ReportStackTypeMismatch(string expected, StackType actual, Instruction inst, DiagnosticSeverity severity = DiagnosticSeverity.Error)
+    private void ReportStackTypeMismatch(string expected, in StackType actual, Instruction inst, DiagnosticSeverity severity = DiagnosticSeverity.Error)
     {
         ReportDiagnostic(CFGDiagnostic.StackTypeMismatch(expected, actual.ToString(), inst, severity));
     }
@@ -647,7 +647,7 @@ public partial class ILMethodAnalyzer
         };
     }
 
-    private StackType VerifyPop0(Instruction inst, StackType[] stacks, Code[] prefix)
+    private StackType VerifyPop0(Instruction inst, in StackType type, Code[] prefix)
     {
         var module = _method.Module;
 
@@ -705,7 +705,7 @@ public partial class ILMethodAnalyzer
             case Code.Ldsflda:
                 {
                     if (VerifyFieldOperand(inst, out var field))
-                        return StackType.CreateByRef(InflateFieldType(field));
+                        return StackType.CreateByRef(InflateFieldType(field), StackTypeFlags.PermanentHome);
                     return StackType.Invalid;
                 }
 
@@ -744,8 +744,15 @@ public partial class ILMethodAnalyzer
             case Code.Ldarga_S:
             case Code.Ldarga:
                 {
+            
                     if (TryGetParameterType(inst, out var paramType, out var flags))
+                    {
+                        if (flags.HasFlag(StackTypeFlags.ThisPtr) && !_initThis)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitializedThis, inst));
+                        }
                         return StackType.CreateByRef(paramType, flags);
+                    }
                     return StackType.Invalid;
                 }
 
@@ -777,7 +784,7 @@ public partial class ILMethodAnalyzer
                 return StackType.Invalid;
         }
     }
-    private StackType VerifyPop1(Instruction inst, StackType[] stacks, Code[] prefix)
+    private StackType VerifyPop1(Instruction inst, in StackType type, Code[] prefix)
     {
         var module = _method.Module;
         switch (inst.OpCode.Code)
@@ -789,8 +796,12 @@ public partial class ILMethodAnalyzer
             case Code.Stloc_S:
             case Code.Stloc:
                 {
+                    if (type.Flags.HasFlag(StackTypeFlags.ThisPtr) && !_initThis)
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitializedThis, inst));
+                    }
                     if (TryGetVariableType(inst, out var variableType))
-                        VerifyType(stacks[0], variableType, inst);
+                        VerifyType(type, variableType, inst);
                     return StackType.Invalid;
                 }
             case Code.Box:
@@ -799,19 +810,19 @@ public partial class ILMethodAnalyzer
                         return StackType.Create(module.TypeSystem.Object);
 
                     var expected = StackType.Create(boxType);
-                    if (!stacks[0].StackValueEqualsTo(expected))
+                    if (!type.StackValueEqualsTo(expected))
                     {
-                        ReportStackTypeMismatch(expected, stacks[0], inst);
+                        ReportStackTypeMismatch(expected, type, inst);
                     }
 
-                    if (stacks[0].Type is not GenericParameter) //泛型参数忽略校验
-                        VerifyValueType(stacks[0], inst);
+                    if (type.Type is not GenericParameter) //泛型参数忽略校验
+                        VerifyValueType(type, inst);
                     
                     return StackType.CreateBoxed(boxType);
                 }
             case Code.Ckfinite:
                 {
-                    VerifyType(stacks[0], StackType.F, inst);
+                    VerifyType(type, StackType.F, inst);
                     return StackType.F;
                 }
             case Code.Conv_I1:
@@ -847,30 +858,30 @@ public partial class ILMethodAnalyzer
             case Code.Conv_Ovf_U4_Un:
             case Code.Conv_Ovf_U8_Un:
             case Code.Conv_Ovf_U_Un:
-                return VerifyNum(stacks[0], inst);
+                return VerifyNum(type, inst);
             case Code.Dup:
-                return stacks[0];
+                return type;
             case Code.Neg:
-                return VerifyNum(stacks[0], inst);
+                return VerifyNum(type, inst);
             case Code.Not:
                 {
-                    VerifyInt(stacks[0], inst);
-                    return stacks[0];
+                    VerifyInt(type, inst);
+                    return type;
                 }
             case Code.Pop:
                 return StackType.Invalid;
             case Code.Refanytype:
                 {
-                    VerifyType(stacks[0], module.TypeSystem.TypedReference, inst);
+                    VerifyType(type, module.TypeSystem.TypedReference, inst);
                     return module.ImportReference(typeof(RuntimeTypeHandle));
                 }
             case Code.Refanyval:
                 {
                     if (!VerifyTypeOperand(inst, out var targetType))
                         return StackType.Invalid;
-                    if (stacks[0].VerifyType != VerificationType.TypedRef)
+                    if (type.VerifyType != VerificationType.TypedRef)
                     {
-                        ReportStackTypeMismatch(StackType.TypedRef, stacks[0], inst);
+                        ReportStackTypeMismatch(StackType.TypedRef, type, inst);
                         return StackType.Invalid;
                     }
                     return StackType.CreateByRef(targetType);
@@ -878,8 +889,18 @@ public partial class ILMethodAnalyzer
             case Code.Starg_S:
             case Code.Starg:
                 {
-                    if (TryGetParameterType(inst, out var parameterType, out _))
-                        VerifyType(stacks[0], parameterType, inst);
+                    if (type.Flags.HasFlag(StackTypeFlags.ThisPtr) && !_initThis)
+                    {
+                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitializedThis, inst));
+                    }
+                    if (TryGetParameterType(inst, out var parameterType, out var flag))
+                    {
+                        if ((flag & StackTypeFlags.ThisPtr) != 0 && !_initThis)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UninitializedThis, inst));
+                        }
+                        VerifyType(type, parameterType, inst);
+                    }
                     return StackType.Invalid; 
                 }
             case Code.Stsfld:
@@ -887,7 +908,7 @@ public partial class ILMethodAnalyzer
                     if (!VerifyFieldOperand(inst, out var field))
                         return StackType.Invalid;
 
-                    VerifyType(stacks[0], InflateFieldType(field), inst);
+                    VerifyType(type, InflateFieldType(field), inst);
                     return StackType.Invalid;
                 }
             default:
@@ -898,10 +919,10 @@ public partial class ILMethodAnalyzer
         return StackType.Invalid;
     }
 
-    private StackType VerifyPopi(Instruction inst, StackType[] stacks, Code[] prefix)
+    private StackType VerifyPopi(Instruction inst, in StackType type, Code[] prefix, int stackHeight)
     {
         var module = _method.Module;
-        var value = stacks[0];
+        var value = type;
         switch (inst.OpCode.Code)
         {
             case Code.Brfalse_S:
@@ -983,6 +1004,15 @@ public partial class ILMethodAnalyzer
                 }
 
             case Code.Localloc:
+                if (stackHeight > 1)
+                {
+                    ReportDiagnostic(CFGDiagnostic.InstructionUnverifiable(CFGExceptionType.Unverifiable_LocallocStackNotEmpty, inst,
+                            DiagnosticSeverity.Error), AbortStrategy.NoAbort);
+                }
+                else
+                {
+                    ReportDiagnostic(CFGDiagnostic.InstructionUnverifiable(CFGExceptionType.Unverifiable, inst), AbortStrategy.NoAbort);
+                }
                 VerifyInt(value, inst);
                 return StackType.I;
 
@@ -1179,10 +1209,9 @@ public partial class ILMethodAnalyzer
         }
     }
 
-    private StackType VerifyPopref(Instruction inst, StackType[] stacks, Code[] prefix)
+    private StackType VerifyPopref(Instruction inst, in StackType type, Code[] prefix)
     {
         var module = _method.Module;
-        var type = stacks[0];
         if (inst.OpCode.Code is Code.Ldfld or Code.Ldflda)
         {
             if ((type.VerifyType is not VerificationType.O and not VerificationType.ByRef and not VerificationType.ValueType) &&
@@ -1216,7 +1245,7 @@ public partial class ILMethodAnalyzer
                         {
                             ReportStackTypeMismatch("reference type", type, inst);
                         }
-                        return StackType.CreateByRef(targetType);
+                        return StackType.CreateByRef(targetType, StackTypeFlags.PermanentHome);
                     }
                     return StackType.Invalid;
                 }
@@ -1259,7 +1288,8 @@ public partial class ILMethodAnalyzer
                         {
                             ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, type.Type, inst));
                         }
-                        return StackType.CreateByRef(InflateFieldType(field));
+                        return StackType.CreateByRef(InflateFieldType(field), 
+                            (type.Flags.HasFlag(StackTypeFlags.PermanentHome) || type.VerifyType == VerificationType.O) ? StackTypeFlags.PermanentHome : StackTypeFlags.None);
                     }
                     return StackType.Invalid;
                 }
@@ -1327,7 +1357,7 @@ public partial class ILMethodAnalyzer
                     if (VerifyTypeOperand(inst, out var type))
                     {
                         VerifyType(eleType, type, inst);
-                        return StackType.CreateByRef(type, PrefixToFlags(prefix));
+                        return StackType.CreateByRef(type, PrefixToFlags(prefix) | StackTypeFlags.PermanentHome);
                     }
                     return StackType.Invalid;
                 }
@@ -1373,21 +1403,6 @@ public partial class ILMethodAnalyzer
         hasThis = false;
         if (inst.Operand is not IMethodSignature sig)
         {
-            if (inst.OpCode.Code is Code.Ret)
-            {
-                if (_method.ReturnType.IsVoid())
-                {
-                    len = 0;
-                    return StackType.Invalid;
-                }
-
-                len = 1;
-                if (args.Length < len)
-                    Array.Resize(ref args, len);
-                args[0] = _method.ReturnType;
-                return StackType.Invalid;
-            }
-
             len = 0;
             ReportDiagnostic(CFGDiagnostic.InvalidOperand(typeof(IMethodSignature),
                 inst.Operand?.GetType() ?? typeof(void), inst));
@@ -1395,7 +1410,7 @@ public partial class ILMethodAnalyzer
         }
         var paramLen = sig.Parameters.Count + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0);
         len = paramLen;
-        if(args.Length < paramLen)
+        if (args.Length < paramLen)
         {
             Array.Resize(ref args, paramLen);
         }
@@ -1405,6 +1420,7 @@ public partial class ILMethodAnalyzer
             hasThis = sig.HasThis;
             if (sig is MethodReference methodRef)
                 args[i++] = methodRef.DeclaringType;
+
             else
                 args[i++] = StackType.Invalid; //不知道this是什么 理论上calli不会出现有this的
         }
@@ -1417,8 +1433,15 @@ public partial class ILMethodAnalyzer
         if (inst.OpCode.Code == Code.Newobj && sig is MethodReference ctor)
             return StackType.Create(ctor.DeclaringType);
 
-        return (sig.ReturnType.IsVoid()) 
-            ? StackType.Invalid : StackType.Create(InflateMethodSigType(sig.ReturnType, methodContext));
+        if (sig.ReturnType.IsVoid())
+        {
+            return StackType.Invalid;
+        }
+        else
+        {
+            var type = InflateMethodSigType(sig.ReturnType, methodContext);
+            return StackType.Create(type, type.IsByReference ? StackTypeFlags.PermanentHome : StackTypeFlags.None);
+        }
     }
 
 
@@ -1430,7 +1453,7 @@ public partial class ILMethodAnalyzer
     }
 
 
-    private void VerifyComparable(StackType a, StackType b, Instruction inst, CompareKind kind)
+    private void VerifyComparable(in StackType a, in StackType b, Instruction inst, CompareKind kind)
     {
         if (IsComparable(a, b, kind))
             return;
@@ -1438,7 +1461,7 @@ public partial class ILMethodAnalyzer
         ReportStackTypeMismatch("comparable pair", a, inst);
     }
 
-    private static bool IsComparable(StackType a, StackType b, CompareKind kind)
+    private static bool IsComparable(in StackType a, in StackType b, CompareKind kind)
     {
         if (IsSamePrimitive(a, b))
             return true;
@@ -1467,7 +1490,7 @@ public partial class ILMethodAnalyzer
         OverflowUnsigned,    // add.ovf.un/sub.ovf.un/mul.ovf.un
     }
 
-    private StackType VerifyBinary(StackType left, StackType right, Instruction inst, BinaryKind kind)
+    private StackType VerifyBinary(in StackType left, in StackType right, Instruction inst, BinaryKind kind)
     {
         return kind switch
         {
@@ -1481,7 +1504,7 @@ public partial class ILMethodAnalyzer
     }
 
     
-    private StackType VerifyNumericBinary(StackType left, StackType right, Instruction inst, bool allowFloat)
+    private StackType VerifyNumericBinary(in StackType left, in StackType right, Instruction inst, bool allowFloat)
     {
         //I4/I <-> I4/I
         //I8 <-> I8
@@ -1506,7 +1529,7 @@ public partial class ILMethodAnalyzer
     }
 
 
-    private StackType VerifyArithmetic(StackType left, StackType right, Instruction inst)
+    private StackType VerifyArithmetic(in StackType left, in StackType right, Instruction inst)
     {
         var code = inst.OpCode.Code;
 
@@ -1535,12 +1558,12 @@ public partial class ILMethodAnalyzer
         return VerifyNumericBinary(left, right, inst, allowFloat: true);
     }
 
-    private StackType VerifyIntegerBinary(StackType left, StackType right, Instruction inst)
+    private StackType VerifyIntegerBinary(in StackType left, in StackType right, Instruction inst)
     {
         return VerifyNumericBinary(left, right, inst, allowFloat: false);
     }
 
-    private StackType VerifyShift(StackType left, StackType right, Instruction inst)
+    private StackType VerifyShift(in StackType left, in StackType right, Instruction inst)
     {
         // R -> I4/I
         if (!IsIntegerNative(right))
@@ -1559,7 +1582,7 @@ public partial class ILMethodAnalyzer
         };
     }
 
-    private StackType VerifyOverflow(StackType left, StackType right, Instruction inst, bool unsigned)
+    private StackType VerifyOverflow(in StackType left, in StackType right, Instruction inst, bool unsigned)
     {
         var code = inst.OpCode.Code;
 
@@ -1591,37 +1614,37 @@ public partial class ILMethodAnalyzer
         return VerifyNumericBinary(left, right, inst, allowFloat: false);
     }
 
-    private StackType ReportInvalidBinary(StackType actual, Instruction inst)
+    private StackType ReportInvalidBinary(in StackType actual, Instruction inst)
     {
         ReportStackTypeMismatch("valid binary operand", actual, inst);
         return StackType.Invalid;
     }
 
-    private static bool IsSamePrimitive(StackType a, StackType b)
+    private static bool IsSamePrimitive(in StackType a, in StackType b)
     => a.VerifyType is VerificationType.BuiltIn
        && b.VerifyType is VerificationType.BuiltIn
        && a.BuiltInType == b.BuiltInType;
 
-    private static bool IsI4NativePair(StackType a, StackType b)
+    private static bool IsI4NativePair(in StackType a, in StackType b)
         => IsBuiltInPair(a, b, BuiltInType.I4, BuiltInType.I);
 
-    private static bool IsNativeByRefPair(StackType a, StackType b)
+    private static bool IsNativeByRefPair(in StackType a, in StackType b)
         => (a.BuiltInType == BuiltInType.I && b.VerifyType == VerificationType.ByRef)
            || (b.BuiltInType == BuiltInType.I && a.VerifyType == VerificationType.ByRef);
 
-    private static bool IsByRefPair(StackType a, StackType b)
+    private static bool IsByRefPair(in StackType a, in StackType b)
         => a.VerifyType == VerificationType.ByRef && b.VerifyType == VerificationType.ByRef;
 
-    private static bool IsObjRefPair(StackType a, StackType b)
+    private static bool IsObjRefPair(in StackType a, in StackType b)
         => a.VerifyType == VerificationType.O && b.VerifyType == VerificationType.O;
 
-    private static bool IsBuiltInPair(StackType a, StackType b, BuiltInType x, BuiltInType y)
+    private static bool IsBuiltInPair(in StackType a, in StackType b, BuiltInType x, BuiltInType y)
         => a.VerifyType == VerificationType.BuiltIn
            && b.VerifyType == VerificationType.BuiltIn
            && ((a.BuiltInType == x && b.BuiltInType == y)
                || (a.BuiltInType == y && b.BuiltInType == x));
 
-    private void VerifyIndirectAddress(StackType address, Instruction inst)
+    private void VerifyIndirectAddress(in StackType address, Instruction inst)
     {
         if (IsIntegerNative(address) || address.VerifyType == VerificationType.ByRef)
             return;
@@ -1629,7 +1652,8 @@ public partial class ILMethodAnalyzer
         ReportStackTypeMismatch("I4, native int, or byref address", address, inst);
     }
 
-    private void VerifyTypedAddress(StackType address, TypeReference targetType, Instruction inst)
+
+    private void VerifyTypedAddress(in StackType address, TypeReference targetType, Instruction inst)
     {
         if (IsIntegerNative(address))
             return;
@@ -1637,7 +1661,7 @@ public partial class ILMethodAnalyzer
         VerifyByRef(address, targetType, inst);
     }
 
-    private static bool IsIntegerNative(StackType type)
+    private static bool IsIntegerNative(in StackType type)
         => type.VerifyType == VerificationType.BuiltIn
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I;
 }

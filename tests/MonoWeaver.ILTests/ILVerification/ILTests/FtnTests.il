@@ -212,7 +212,7 @@
         ret
     }
 
-    .method static public hidebysig void LdFtn.IntForStaticClassRefConstraint_Full_Invalid_UnsatisfiedMethodParentInst() cil managed
+    .method static public hidebysig void LdFtn.IntForStaticClassRefConstraint_Invalid_UnsatisfiedMethodParentInst() cil managed
     {
         // var a = new System.Action(GenericTestClass<int>.StaticMethod);
         // a();
@@ -224,7 +224,7 @@
         ret
     }
 
-    .method static public hidebysig void LdFtn.IntForStaticMethodRefConstraint_Full_Invalid_UnsatisfiedMethodInst() cil managed
+    .method static public hidebysig void LdFtn.IntForStaticMethodRefConstraint_Invalid_UnsatisfiedMethodInst() cil managed
     {
         // var a = new System.Action(TestClass.StaticMethod<int>);
         // a();
@@ -394,7 +394,7 @@
         ret
     }
 
-    .method static public hidebysig void NewObj.IntForRefConstraint_Full_Invalid_UnsatisfiedMethodParentInst() cil managed
+    .method static public hidebysig void NewObj.IntForRefConstraint_Invalid_UnsatisfiedMethodParentInst() cil managed
     {
         // GenericTestClass<int> c = new GenericTestClass<int>();
 

@@ -2,7 +2,7 @@
 <RunSettings>
   <RunConfiguration>
     <EnvironmentVariables>
-      <ILTEST_FILTER>StorePlainFieldInThisGenericType_Valid</ILTEST_FILTER>
+      <ILTEST_FILTER>Dispatcher_Valid</ILTEST_FILTER>
     </EnvironmentVariables>
   </RunConfiguration>
 </RunSettings>

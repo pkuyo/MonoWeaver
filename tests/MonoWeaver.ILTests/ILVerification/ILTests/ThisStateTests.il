@@ -103,19 +103,6 @@
 .class public auto ansi beforefieldinit LoadStoreVarTestsType
         extends [System.Runtime]System.Object
 {
-    .method public hidebysig instance void 'special.StoreLocUninit..ctor_Full_Invalid_StackUninit'() cil managed { ret }
-    .method public hidebysig specialname rtspecialname instance void .ctor() cil managed 
-    {
-        .locals init (
-            [0] int32
-        )
-
-        ldc.i4.0
-        stloc.0
-        ldarg.0
-        call    instance void [System.Runtime]System.Object::.ctor()
-        ret
-    }
 
     .method public hidebysig instance void 'special.StoreThisUninit..ctor_Full_Invalid_ThisUninitStore'(int32) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(int32) cil managed 

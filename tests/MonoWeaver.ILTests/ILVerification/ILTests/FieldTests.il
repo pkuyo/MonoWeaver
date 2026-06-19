@@ -39,7 +39,7 @@
         ret
     }
 
-    .method public instance void Stsfld.UnsatisfiedParentConstraints_Full_Invalid_UnsatisfiedFieldParentInst() cil managed
+    .method public instance void Stsfld.UnsatisfiedParentConstraints_Invalid_UnsatisfiedFieldParentInst() cil managed
     {
         ldc.i4.0
         stsfld   int32 class ConstrainedClass`1<int32>::StaticField
