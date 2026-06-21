@@ -54,7 +54,7 @@
         ret
     }
 
-    .method public hidebysig instance void Call.BaseMethodModThisLdarga_Full_Invalid_ThisMismatch() cil managed
+    .method public hidebysig instance void Call.BaseMethodModThisLdarga_Full_Warning_ThisMismatch() cil managed
     {
         ldarg.0
         call    instance void SimpleClass::VirtualMethod()
@@ -63,7 +63,7 @@
         ret
     }
 
-    .method public hidebysig instance void Call.BaseMethodModThisStarg_Full_Invalid_ThisMismatch() cil managed
+    .method public hidebysig instance void Call.BaseMethodModThisStarg_Full_Warning_ThisMismatch() cil managed
     {
         ldarg.0
         call    instance void SimpleClass::VirtualMethod()
@@ -128,7 +128,7 @@
         ret
     }
 
-    .method public hidebysig instance void Call.ExternBaseMethod_Full_Invalid_ThisMismatch(class DerivedClass c) cil managed
+    .method public hidebysig instance void Call.ExternBaseMethod_Full_Warning_ThisMismatch(class DerivedClass c) cil managed
     {
         ldarg.1
         call    instance void SimpleClass::VirtualMethod()

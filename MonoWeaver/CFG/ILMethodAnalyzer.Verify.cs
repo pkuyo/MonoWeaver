@@ -102,7 +102,8 @@ public partial class ILMethodAnalyzer
             CallingConvention = methodReference.CallingConvention,
             ExplicitThis = methodReference.ExplicitThis,
             HasThis = methodReference.HasThis,
-            ImplAttributes = MethodImplAttributes.Runtime
+            ImplAttributes = MethodImplAttributes.Runtime,
+            DeclaringType = module.ImportReference(typeof(Array)).Resolve(), //TODO: 优化
         };
 
         for (int i = 0; i < expectedParameterTypes.Length; i++)
@@ -515,10 +516,10 @@ public partial class ILMethodAnalyzer
             ReportStackTypeMismatch("byref type", type1, inst);
         }
      
-        else if(type1.Type is null || !type1.Type.IsSameWith(expectType))
+        else if(type1.Type is null || !expectType.IsILStackAssignableTo(type1.Type))
         {
-            ReportDiagnostic(CFGDiagnostic.TypeMismatch(expectType,
-                type1.Type, inst));
+            ReportDiagnostic(CFGDiagnostic.TypeMismatch(
+                type1.Type, expectType, inst));
         }
     }
 
@@ -542,11 +543,10 @@ public partial class ILMethodAnalyzer
            && type.BuiltInType is BuiltInType.I4 or BuiltInType.I8 or BuiltInType.I;
 
 
-    private void VerifyMethodSig(MethodReference actual, MethodDefinition expect, Instruction inst,
-        GenericInstanceType? expectContext = null)
+    private void VerifyMethodSig(IMethodSignature actual, MethodDefinition expect, Instruction inst,
+        GenericInstanceType? expectContext = null, int actualParameterOffset = 0)
     {
-        var actualContext = actual.DeclaringType as GenericInstanceType;
-        var actualReturnType = InflateMethodSigType(actual.ReturnType, actualContext);
+        var actualReturnType = actual.ReturnType;
         var expectReturnType = InflateMethodSigType(expect.ReturnType, expectContext);
         if (!actualReturnType.IsILStackAssignableTo(expectReturnType))
         {
@@ -554,24 +554,40 @@ public partial class ILMethodAnalyzer
                 TypeMismatchKind.MethodReturnType, expectReturnType, actualReturnType, inst));
         }
 
-        if (actual.Parameters.Count != expect.Parameters.Count)
+        var actualParameterCount = actual.Parameters.Count - actualParameterOffset;
+        if (actualParameterCount < 0)
+            actualParameterCount = 0;
+
+        if (actualParameterCount != expect.Parameters.Count)
         {
             ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(
                 TypeMismatchKind.MethodParameterCount, expect.Parameters.Count.ToString(),
-                actual.Parameters.Count.ToString(), inst));
+                actualParameterCount.ToString(), inst));
             return;
         }
 
-        for(int i = 0; i < actual.Parameters.Count; i++)
+        for(int i = 0; i < expect.Parameters.Count; i++)
         {
             var expectParameterType = InflateMethodSigType(expect.Parameters[i].ParameterType, expectContext);
-            var actualParameterType = InflateMethodSigType(actual.Parameters[i].ParameterType, actualContext);
+            var actualParameterType = actual.Parameters[i + actualParameterOffset].ParameterType;
             if (!expectParameterType.IsILStackAssignableTo(actualParameterType))
             {
                 ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(
                     TypeMismatchKind.MethodParameterType, expectParameterType, actualParameterType, inst, i));
             }
         }
+    }
+
+    private void VerifyDelegateCtorSig(FunctionPointerType functionPointer, MethodDefinition invoke,
+        in StackType target, Instruction inst, GenericInstanceType? delegateContext)
+    {
+        var parameterOffset = target == StackType.Null ? 0 : 1;
+        if (parameterOffset != 0 && functionPointer.Parameters.Count > 0)
+        {
+            VerifyType(target, StackType.Create(functionPointer.Parameters[0].ParameterType), inst);
+        }
+
+        VerifyMethodSig(functionPointer, invoke, inst, delegateContext, parameterOffset);
     }
 
     private static TypeReference InflateMethodSigType(TypeReference type, GenericInstanceType? context)
@@ -623,6 +639,106 @@ public partial class ILMethodAnalyzer
 
     private static TypeReference InflateFieldType(FieldReference field)
         => InflateMethodSigType(field.FieldType, field.DeclaringType as GenericInstanceType);
+
+    private void VerifyFamilyInstanceFieldAccess(Instruction inst, in StackType instance, FieldDefinition field)
+    {
+        if (!NeedFamilyInstanceAccessCheck(field))
+            return;
+
+        if (!IsValidFamilyInstanceAccess(instance, field.DeclaringType))
+        {
+            ReportDiagnostic(CFGDiagnostic.FieldAccessViolation(inst, _method.DeclaringType, field,
+                message: "Family instance field access must use an instance of the current type or a derived type."));
+        }
+    }
+
+    private void VerifyFamilyInstanceMethodAccess(Instruction inst, in StackType instance, MethodDefinition method)
+    {
+        if (!NeedFamilyInstanceAccessCheck(method))
+            return;
+
+        if (!IsValidFamilyInstanceAccess(instance, method.DeclaringType))
+        {
+            ReportDiagnostic(CFGDiagnostic.MethodAccessViolation(inst, _method.DeclaringType, method,
+                message: "Family instance method access must use an instance of the current type or a derived type."));
+        }
+    }
+
+    private bool NeedFamilyInstanceAccessCheck(FieldDefinition field)
+    {
+        if (field.IsStatic || !HasFamilyAccessPath(field.DeclaringType))
+            return false;
+
+        if (field.IsFamily)
+            return true;
+
+        if (field.IsFamilyAndAssembly)
+            return HasAssemblyAccessPath(field.DeclaringType);
+
+        return field.IsFamilyOrAssembly && !HasAssemblyAccessPath(field.DeclaringType);
+    }
+
+    private bool NeedFamilyInstanceAccessCheck(MethodDefinition method)
+    {
+        if (!method.HasThis || !HasFamilyAccessPath(method.DeclaringType))
+            return false;
+
+        if (method.IsFamily)
+            return true;
+
+        if (method.IsFamilyAndAssembly)
+            return HasAssemblyAccessPath(method.DeclaringType);
+
+        return method.IsFamilyOrAssembly && !HasAssemblyAccessPath(method.DeclaringType);
+    }
+
+    private bool IsValidFamilyInstanceAccess(in StackType instance, TypeDefinition memberDeclaringType)
+    {
+        var instanceType = GetFamilyInstanceType(instance);
+        if (instanceType == null)
+            return false;
+
+        for (var contextType = _method.DeclaringType; contextType != null; contextType = contextType.DeclaringType)
+        {
+            if (!IsFamilyAccessContext(contextType, memberDeclaringType))
+                continue;
+
+            if (instanceType.IsAssignableTo(contextType))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static TypeReference? GetFamilyInstanceType(in StackType instance)
+    {
+        if (instance.IsBoxedType)
+            return instance.BoxedType;
+
+        if (instance.VerifyType is VerificationType.O or VerificationType.ValueType or VerificationType.ByRef)
+            return instance.Type;
+
+        return null;
+    }
+
+    private bool HasFamilyAccessPath(TypeDefinition memberDeclaringType)
+    {
+        for (var contextType = _method.DeclaringType; contextType != null; contextType = contextType.DeclaringType)
+        {
+            if (IsFamilyAccessContext(contextType, memberDeclaringType))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsFamilyAccessContext(TypeDefinition contextType, TypeDefinition memberDeclaringType)
+        => contextType.IsSameWith(memberDeclaringType) || contextType.IsAssignableTo(memberDeclaringType);
+
+    private bool HasAssemblyAccessPath(TypeDefinition memberDeclaringType)
+        => IsSameAssembly(_method.DeclaringType, memberDeclaringType) ||
+           HasInternalsVisibleTo(memberDeclaringType, _method.DeclaringType);
+
 
     private void ReportStackTypeMismatch(in StackType expected, in StackType actual, Instruction inst)
     {
@@ -727,8 +843,10 @@ public partial class ILMethodAnalyzer
                 return module.ImportReference(typeof(RuntimeArgumentHandle));
 
             case Code.Ldftn:
-                return StackType.I;
-
+                if (VerifyMethodOperand(inst, out var method))
+                    return StackType.CreatePtr(method);
+                return StackType.Invalid;
+   
             case Code.Ldarg_0:
             case Code.Ldarg_1:
             case Code.Ldarg_2:
@@ -737,7 +855,11 @@ public partial class ILMethodAnalyzer
             case Code.Ldarg:
                 {
                     if (TryGetParameterType(inst, out var paramType, out var flags))
+                    {
+                        if (flags.HasFlag(StackTypeFlags.ThisPtr) && _method.DeclaringType.IsValueType)
+                            return StackType.CreateByRef(paramType, flags);
                         return StackType.Create(paramType, flags);
+                    }
                     return StackType.Invalid;
                 }
 
@@ -957,23 +1079,43 @@ public partial class ILMethodAnalyzer
             case Code.Ldind_I4:
             case Code.Ldind_U4:
                 VerifyIndirectAddress(value, inst);
+                if (value.IsByRef)
+                {
+                    VerifyType(value.RefToValue(), StackType.I4, inst);
+                }
                 return StackType.I4;
 
             case Code.Ldind_I8:
                 VerifyIndirectAddress(value, inst);
+                if (value.IsByRef)
+                    VerifyByRef(value, module.TypeSystem.Int64, inst);
                 return StackType.I8;
-
             case Code.Ldind_I:
                 VerifyIndirectAddress(value, inst);
+                if (value.IsByRef)
+                    VerifyByRef(value, module.TypeSystem.IntPtr, inst);
                 return StackType.I;
 
             case Code.Ldind_R4:
+                VerifyIndirectAddress(value, inst);
+                if (value.IsByRef)
+                    VerifyByRef(value, module.TypeSystem.Single, inst);
+                return StackType.F;
             case Code.Ldind_R8:
                 VerifyIndirectAddress(value, inst);
+                if (value.IsByRef)
+                    VerifyByRef(value, module.TypeSystem.Double, inst);
                 return StackType.F;
 
             case Code.Ldind_Ref:
                 VerifyIndirectAddress(value, inst);
+                if(value.IsByRef)
+                {
+                    var t = value.RefToValue();
+                    if (t.VerifyType != VerificationType.O)
+                        ReportStackTypeMismatch("reference type&", value, inst);
+                    return t;
+                }
                 return module.TypeSystem.Object;
 
             case Code.Ldobj:
@@ -1139,9 +1281,18 @@ public partial class ILMethodAnalyzer
         switch (inst.OpCode.Code)
         {
             case Code.Stfld:
-                if (!VerifyFieldOperand(inst, out var field))
+                if (!VerifyFieldOperand(inst, out var field) || ResolveWithDiagnostic(field) is not FieldDefinition fd)
                     return StackType.Invalid;
-
+                VerifyFamilyInstanceFieldAccess(inst, obj, fd);
+                if (fd.IsInitOnly && 
+                    fd.DeclaringType == _method.DeclaringType &&
+                    (CecilHelper.IsInitSetter(_method) || _method.Name == ".ctor") && 
+                    _method.IsSpecialName &&
+                    !stacks[1].Flags.HasFlag(StackTypeFlags.ThisPtr))
+                {
+                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InitOnlyFieldAccess,
+                        inst, DiagnosticSeverity.Error, "Cannot modify initonly field out of .ctor and init set_property."));
+                }
                 VerifyType(value, InflateFieldType(field), inst);
                 if (!obj.IsPtr)
                 {
@@ -1264,6 +1415,9 @@ public partial class ILMethodAnalyzer
                 {
                     if (VerifyFieldOperand(inst, out var field))
                     {
+                        if (ResolveWithDiagnostic(field) is FieldDefinition fd)
+                            VerifyFamilyInstanceFieldAccess(inst, type, fd);
+
                         if (type == StackType.Null)
                         {
                             ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, null, inst, DiagnosticSeverity.Warning));
@@ -1280,6 +1434,9 @@ public partial class ILMethodAnalyzer
                 {
                     if (VerifyFieldOperand(inst, out var field))
                     {
+                        if (ResolveWithDiagnostic(field) is FieldDefinition fd)
+                            VerifyFamilyInstanceFieldAccess(inst, type, fd);
+
                         if (type == StackType.Null)
                         {
                             ReportDiagnostic(CFGDiagnostic.TypeMismatch(field.DeclaringType, null, inst, DiagnosticSeverity.Warning));
@@ -1307,24 +1464,32 @@ public partial class ILMethodAnalyzer
                 {
                     if (VerifyMethodOperand(inst, out var method))
                     {
-                        VerifyType(type, method.DeclaringType, inst);
+                        if (type.IsBoxedType && method.DeclaringType.IsValueType)
+                            VerifyType(type.BoxedType!, method.DeclaringType, inst);
+                        else
+                            VerifyType(type, method.DeclaringType, inst);
+                        
                         var methodDef = ResolveWithDiagnostic(method) as MethodDefinition;
-                        //对于下一句为 newobj instance void SomeDelegate::.ctor(object, native int)的情况时特殊处理进行验证
-                        if (inst.Next is { } nextInst &&
-                            nextInst.OpCode.Code == Code.Newobj &&
-                            methodDef != null &&
-                            nextInst.Operand is MethodReference ctorMethod &&
-                            ctorMethod.DeclaringType.IsAssignableTo(module.ImportReference(typeof(Delegate))/*TODO: 这里暂时不知道如何优化*/) &&
-                            ResolveWithDiagnostic(ctorMethod.DeclaringType) is TypeDefinition delegateType)
+                        if (methodDef != null)
                         {
-                            var invoke = delegateType.Methods.FirstOrDefault(m =>
-                                    m.Name == "Invoke" &&
-                                    !m.IsStatic);
-                            if (invoke != null)
-                            {
-                                VerifyMethodSig(method, invoke, inst, ctorMethod.DeclaringType as GenericInstanceType);
-                            }
+                            VerifyFamilyInstanceMethodAccess(inst, type, methodDef);
                         }
+                        ////对于下一句为 newobj instance void SomeDelegate::.ctor(object, native int)的情况时特殊处理进行验证
+                        //if (inst.Next is { } nextInst &&
+                        //    nextInst.OpCode.Code == Code.Newobj &&
+                        //    methodDef != null &&
+                        //    nextInst.Operand is MethodReference ctorMethod &&
+                        //    ctorMethod.DeclaringType.IsAnyDelegate() &&
+                        //    ResolveWithDiagnostic(ctorMethod.DeclaringType) is TypeDefinition delegateType)
+                        //{
+                        //    var invoke = delegateType.Methods.FirstOrDefault(m =>
+                        //            m.Name == "Invoke" &&
+                        //            !m.IsStatic);
+                        //    if (invoke != null)
+                        //    {
+                        //        VerifyMethodSig(method, invoke, inst, ctorMethod.DeclaringType as GenericInstanceType);
+                        //    }
+                        //}
                     }
                     
                     return StackType.I;
@@ -1336,6 +1501,47 @@ public partial class ILMethodAnalyzer
         return StackType.Invalid;
     }
 
+    private void VerifyPopi_Pop1(Instruction inst, StackType[] stacks)
+    {
+        var address = stacks[1];
+        var value = stacks[0];
+        VerifyIndirectAddress(address, inst);
+        
+        switch (inst.OpCode.Code)
+        {
+            case Code.Stind_Ref:
+                if (address.IsByRef)
+                {
+                    VerifyType(value, address.Type!, inst);
+                }
+                else
+                {
+                    //TODO：不可验证
+                }
+                break;
+            case Code.Stind_I1:
+            case Code.Stind_I2:
+            case Code.Stind_I4:
+            case Code.Stind_I:
+                VerifyType(value, StackType.I4, inst);
+                break;
+            case Code.Stind_I8:
+                VerifyType(value, StackType.I8, inst);
+                break;
+            case Code.Stind_R4:
+                VerifyType(value, StackType.F, inst);
+                break;
+            case Code.Stind_R8:
+                VerifyType(value, StackType.F, inst);
+                break;
+            case Code.Cpobj:
+                VerifyIndirectAddress(value, inst);
+                break;
+            default:
+                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
+                break;
+        }
+    }
     private StackType VerifyPopref_popi(Instruction inst, StackType[] stacks, Code[] prefix)
     {
         //TODO: 这里没有校验数组是否兼容对应元素数据
@@ -1419,7 +1625,7 @@ public partial class ILMethodAnalyzer
         {
             hasThis = sig.HasThis;
             if (sig is MethodReference methodRef)
-                args[i++] = methodRef.DeclaringType;
+                args[i++] = methodRef.DeclaringType.IsValueType ? StackType.CreateByRef(methodRef.DeclaringType) : methodRef.DeclaringType;
 
             else
                 args[i++] = StackType.Invalid; //不知道this是什么 理论上calli不会出现有this的

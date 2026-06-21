@@ -138,6 +138,30 @@ namespace MonoWeaver.CFG
             return new StackType(type, BuiltInType.I, VerificationType.BuiltIn, flag);
         }
 
+        public static StackType CreatePtr(MethodReference method, StackTypeFlags flag = StackTypeFlags.None)
+        {
+            var fnptr = new FunctionPointerType
+            {
+                ReturnType = method.ReturnType,
+                CallingConvention = MethodCallingConvention.Default,
+                HasThis = false
+            };
+
+            if (method.HasThis)
+            {
+                var declaringType = method.DeclaringType;
+                fnptr.Parameters.Add(new ParameterDefinition(declaringType.IsValueType
+                    ? new ByReferenceType(declaringType)
+                    : declaringType));
+            }
+
+            foreach(var para in method.Parameters) 
+                fnptr.Parameters.Add(para);
+
+            //未托管指针内可能指向FunctionPointer 不取ElementType
+            return new StackType(fnptr, BuiltInType.I, VerificationType.BuiltIn, flag);
+        }   
+
         public static StackType CreateByRef(TypeReference type, StackTypeFlags flag = StackTypeFlags.None)
         {
             type = type.StripType();

@@ -208,7 +208,7 @@ public partial class ILMethodAnalyzer
 
     private bool _initThis = false;
 
-
+    private bool _modifiesThis = false;
 
     public bool VerifyStackType => _verifyOptions.HasFlag(VerifyOptions.StackTypes);
 
@@ -232,6 +232,7 @@ public partial class ILMethodAnalyzer
         _method = method;
         _needInitAnalysis = !_method.Body.InitLocals;
         _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
+        _modifiesThis = false;
         VerifyMethod();
     }
 
@@ -249,6 +250,7 @@ public partial class ILMethodAnalyzer
         _entryblocks.Clear();
         _currentErrorCount = 0;
         _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
+        _modifiesThis = false;
         VerifyMethod();
         return this;
     }
@@ -798,9 +800,9 @@ public partial class ILMethodAnalyzer
                     {
                         if (VerifyMethodOperand(inst, out var mf) && ResolveWithDiagnostic(mf) is MethodDefinition md)
                         {
-                            if (!_method.DeclaringType.CanAccess(md))
+                            if (!_method.DeclaringType.CanAccess(mf, md))
                             {
-                                ReportDiagnostic(CFGDiagnostic.MethodAccessViolation(inst, _method.DeclaringType, md));
+                                ReportDiagnostic(CFGDiagnostic.MethodAccessViolation(inst, _method.DeclaringType, mf));
                             }
                         }
                         break;
@@ -809,9 +811,9 @@ public partial class ILMethodAnalyzer
                     {
                         if (VerifyFieldOperand(inst, out var field) && ResolveWithDiagnostic(field) is FieldDefinition fd)
                         {
-                            if (!_method.DeclaringType.CanAccess(fd))
+                            if (!_method.DeclaringType.CanAccess(field, fd))
                             {
-                                ReportDiagnostic(CFGDiagnostic.FieldAccessViolation(inst, _method.DeclaringType, fd));
+                                ReportDiagnostic(CFGDiagnostic.FieldAccessViolation(inst, _method.DeclaringType, field));
                             }
                         }
                         break;
@@ -826,11 +828,11 @@ public partial class ILMethodAnalyzer
                     }
                 case OperandType.InlineType:
                     {
-                        if (VerifyTypeOperand(inst, out var type) && ResolveWithDiagnostic(type) is TypeDefinition td)
+                        if (VerifyTypeOperand(inst, out var type) && ResolveWithDiagnostic(type) is TypeDefinition)
                         {
-                            if (!_method.DeclaringType.CanAccess(td))
+                            if (!_method.DeclaringType.CanAccess(type))
                             {
-                                ReportDiagnostic(CFGDiagnostic.TypeAccessViolation(inst, _method.DeclaringType, td));
+                                ReportDiagnostic(CFGDiagnostic.TypeAccessViolation(inst, _method.DeclaringType, type));
                             }
                         }
                         break;
@@ -845,7 +847,12 @@ public partial class ILMethodAnalyzer
                 case OperandType.InlineArg:
                 case OperandType.ShortInlineArg:
                     {
-                        TryGetParameterType(inst, out _, out _);
+                        if(TryGetParameterType(inst, out _, out var flag) && 
+                            flag.HasFlag(StackTypeFlags.ThisPtr) &&
+                            inst.OpCode.Code is Code.Ldarga or Code.Ldarga_S or Code.Starg or Code.Starg_S)
+                        {
+                            _modifiesThis = true;
+                        }
                         break;
                     }
                 case OperandType.InlineBrTarget:
@@ -1003,7 +1010,7 @@ public partial class ILMethodAnalyzer
                             }
                             if (fd.IsInitOnly && (fd.DeclaringType != _method.DeclaringType || (!CecilHelper.IsInitSetter(_method) && _method.Name != ".ctor") || !_method.IsSpecialName))
                             {
-                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InitOnlyFieldAccess,
                                     inst, DiagnosticSeverity.Error, "Cannot modify initonly field out of .ctor and init set_property."));
                             }
                         }
@@ -1021,7 +1028,7 @@ public partial class ILMethodAnalyzer
                             }
                             if (fd.IsInitOnly && (fd.DeclaringType != _method.DeclaringType || _method.Name != ".cctor" || !_method.IsSpecialName))
                             {
-                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InitOnlyFieldAccess,
                                     inst, DiagnosticSeverity.Error, "Cannot modify initonly static field out of .cctor."));
                             }
                         }
@@ -1035,6 +1042,15 @@ public partial class ILMethodAnalyzer
                         {
                             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.CtorExcepted, inst,
                                     DiagnosticSeverity.Error, "Newobj opcode expect constructor."));
+                        }
+                        break;
+                    }
+                case Code.Ldvirtftn:
+                    {
+                        if (inst.Operand is MethodReference mf && mf.Resolve() is { } md && md.IsStatic)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LdvirtftnOnStatic, inst,
+                                    DiagnosticSeverity.Error, "Ldvirtftn opcode expect instance-method"));
                         }
                         break;
                     }
@@ -1326,7 +1342,7 @@ public partial class ILMethodAnalyzer
     private void AnalyzeBlocksControlFlow(BasicBlock entryBlock, 
         HashSet<BasicBlock> usedBlocks,  StackType[] buffer, StackType[] funcBuffer)
     {
-        var localStack = new Stack<StackType>(_method.Body.MaxStackSize);
+        var localStack = new ListStack<StackType>(_method.Body.MaxStackSize);
         var entryStackNode = _root;
         var initLocals = VerifyLocalInit ? new BitArray(_method.Body.Variables.Count) : null;
         entryBlock.initLocals = VerifyLocalInit ? new BitArray(_method.Body.Variables.Count) : null;
@@ -1359,9 +1375,6 @@ public partial class ILMethodAnalyzer
             Code[] prefixBuffer = new Code[2];
             for (var inst = leader; inst != null; inst = inst.Next)
             {
-                prefixBuffer[1] = prefixBuffer[0];
-                prefixBuffer[0] = inst.OpCode.OpCodeType == OpCodeType.Prefix ? inst.OpCode.Code : default;
-                
                 var ts = _method.Module.TypeSystem;
                 var popBehaviour = inst.OpCode.StackBehaviourPop;
                 if(popBehaviour == StackBehaviour.PopAll)
@@ -1392,7 +1405,7 @@ public partial class ILMethodAnalyzer
                         break;
 
                     case StackBehaviour.Popi:
-                        retType = VerifyPopi(inst, buffer[0], prefixBuffer, localStack.Count + node.Depth);
+                        retType = VerifyPopi(inst, buffer[0], prefixBuffer, localStack.Count + node.Depth + pop);
                         break;
 
                     case StackBehaviour.Popref:
@@ -1400,25 +1413,11 @@ public partial class ILMethodAnalyzer
                         break;
 
                     case StackBehaviour.Popi_popi:
-                        VerifyType(buffer[0], ts.Int32, inst);
-                        VerifyType(buffer[1], ts.Int32, inst);
-                        break;
-
                     case StackBehaviour.Popi_popi8:
-                        VerifyType(buffer[0], ts.Int32, inst);
-                        VerifyType(buffer[1], ts.Int64, inst);
-                        break;
-
                     case StackBehaviour.Popi_popr4:
-                        VerifyType(buffer[0], ts.Int32, inst);
-                        VerifyType(buffer[1], ts.Single, inst);
-                        break;
-
                     case StackBehaviour.Popi_popr8:
-                        VerifyType(buffer[0], ts.Int32, inst);
-                        VerifyType(buffer[1], ts.Double, inst);
+                        VerifyPopi_Pop1(inst, buffer);
                         break;
-
                     case StackBehaviour.Popref_popi:
                         retType = VerifyPopref_popi(inst, buffer, prefixBuffer);
                         break;
@@ -1452,16 +1451,36 @@ public partial class ILMethodAnalyzer
                     case StackBehaviour.Varpop:
                         if (inst.OpCode.Code is Code.Ret)
                         {
-                            if (!_method.ReturnType.IsVoid())
+                            var returnType = _method.ReturnType;
+                            if (_method.IsRuntimeAsync() && returnType.Resolve() is { } td)
                             {
-                                var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
-                                if (!type.StackValueEqualsTo(_method.ReturnType))
+                                var sig = CecilTypeSystem.TypeSig.Create(td);
+                                if (sig == CecilTypeSystem.TypeSig.SystemThreading.Task ||
+                                    sig == CecilTypeSystem.TypeSig.SystemThreading.ValueTask)
                                 {
-                                    ReportStackTypeMismatch(_method.ReturnType, type, inst);
+                                    returnType = _method.Module.TypeSystem.Void;
+                                }
+                                else if (sig == CecilTypeSystem.TypeSig.SystemThreading.TaskT ||
+                                    sig == CecilTypeSystem.TypeSig.SystemThreading.ValueTaskT)
+                                {
+                                    if (returnType is GenericInstanceType gType)
+                                        returnType = gType.GenericArguments[0];
                                 }
                                 else
                                 {
-                                    if (_method.ReturnType.IsByReference && !type.Flags.HasFlag(StackTypeFlags.PermanentHome))
+                                    ReportStackTypeMismatch("any Task/ValueTask types", returnType, inst);
+                                }
+                            }
+                            if (!returnType.IsVoid())
+                            {
+                                var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
+                                if (!type.StackValueEqualsTo(returnType))
+                                {
+                                    ReportStackTypeMismatch(returnType, type, inst);
+                                }
+                                else
+                                {
+                                    if (returnType.IsByReference && !type.Flags.HasFlag(StackTypeFlags.PermanentHome))
                                     {
                                         ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.ReturnTempPtr, inst));
                                     }
@@ -1471,29 +1490,66 @@ public partial class ILMethodAnalyzer
 
                         }
                         retType = VerifyVarPop(inst, ref funcBuffer, out var len, out var hasThis);
-                        for(int j = len - 1; j > 0; j--)
+                        StackType lastTwo = StackType.Invalid;
+                        for (int j = len - 1; j > 0; j--)
                         {
                             var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
                             VerifyType(type, funcBuffer[j], inst);
+                            if (j == 1)
+                            {
+                                lastTwo = type;
+                            }
                         }
                         if (len != 0)
                         {
                             var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
-                            if (hasThis && type.IsByRef && funcBuffer[0].IsValueType) //对于ValueType&也可以直接进行thisCall调用
-                                type = type.RefToValue();
 
-                            if (!_initThis 
-                                && type.Flags.HasFlag(StackTypeFlags.ThisPtr) 
-                                && inst.Operand is MethodReference mf
-                                && mf.Resolve() is { } md
-                                && (md.DeclaringType.IsSameWith(_method.DeclaringType.BaseType) || md.DeclaringType.IsSameWith(_method.DeclaringType))
-                                && md.IsSpecialName
-                                && hasThis
-                                && md.Name == ".ctor")
+                            if (inst.Operand is MethodReference mf && mf.Resolve() is { } md)
                             {
-                                _initThis = true;
+                                if (!_initThis
+                                    && type.Flags.HasFlag(StackTypeFlags.ThisPtr)
+                                    && (md.DeclaringType.IsSameWith(_method.DeclaringType.BaseType) || md.DeclaringType.IsSameWith(_method.DeclaringType))
+                                    && md.IsSpecialName
+                                    && hasThis
+                                    && md.Name == ".ctor")
+                                {
+                                    _initThis = true;
+                                }
+
+                                if (md.IsVirtual && (!type.Flags.HasFlag(StackTypeFlags.ThisPtr) || _modifiesThis) && inst.OpCode.Code == Code.Call)
+                                {
+                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.Unverifiable_ThisMismatched, inst, DiagnosticSeverity.Warning,
+                                        "The 'this' parameter to the call must be the calling method's 'this' parameter."));
+                                }
+
+                                if (hasThis)
+                                {
+                                    VerifyFamilyInstanceMethodAccess(inst, type, md);
+                                }
+
+                                if (inst.OpCode.Code == Code.Newobj && md.DeclaringType.IsAnyDelegate() && lastTwo.Type is FunctionPointerType fnptr)
+                                {
+                                    var invoke = md.DeclaringType.Methods.FirstOrDefault(m =>
+                                        m.Name == "Invoke" &&
+                                        !m.IsStatic);
+                                    if (invoke != null)
+                                    {
+                                        VerifyDelegateCtorSig(fnptr, invoke, type, inst,
+                                            mf.DeclaringType as GenericInstanceType);
+                                    }
+                                }
                             }
-                            VerifyType(type, funcBuffer[0], inst);
+
+                            if (hasThis && type.Flags.HasFlag(StackTypeFlags.ReadOnly)
+                                && type.IsByRef && funcBuffer[0].IsByRef) //针对Readonly & 的this调用特殊处理
+                            {
+                                VerifyType(type.RefToValue(), funcBuffer[0].RefToValue(), inst);
+                            }
+                            else
+                            {
+                                VerifyType(type, funcBuffer[0], inst);
+                            }
+                            
                         }
                         break;
 
@@ -1575,7 +1631,7 @@ public partial class ILMethodAnalyzer
                                 if (node.Depth != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height"));
                                 }
                             }
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
@@ -1598,7 +1654,7 @@ public partial class ILMethodAnalyzer
                                 if (node.Depth != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], message: "Backward branch without predecessor instructions must be 0 stack height"));
+                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height"));
                                 }
                             }
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
@@ -1628,6 +1684,8 @@ public partial class ILMethodAnalyzer
                 }
                 if (endBlock)
                     break;
+                prefixBuffer[1] = prefixBuffer[0];
+                prefixBuffer[0] = inst.OpCode.OpCodeType == OpCodeType.Prefix ? inst.OpCode.Code : default;
                 ThrowIfNeedAbort(AbortStrategy.AbortNextStep);
             }
             ThrowIfNeedAbort(AbortStrategy.AbortNextBlock);
@@ -1780,7 +1838,7 @@ public partial class ILMethodAnalyzer
         }
     }
 
-    private StackType AnalyzeCF_EvalStackPop(Stack<StackType> localStack,
+    private StackType AnalyzeCF_EvalStackPop(ListStack<StackType> localStack,
         ref EvalStackNode node, Instruction inst)
     {
         if (localStack.Count != 0)
@@ -1797,7 +1855,7 @@ public partial class ILMethodAnalyzer
         return result;
     }
 
-    private void AnalyzeCF_EvalStackPush(Stack<StackType> localStack,
+    private void AnalyzeCF_EvalStackPush(ListStack<StackType> localStack,
         ref EvalStackNode node, StackType type, Instruction inst)
     {
         if (localStack.Count + node.Depth + 1 > _method.Body.MaxStackSize)
@@ -1813,16 +1871,16 @@ public partial class ILMethodAnalyzer
         localStack.Push(type);
     }
 
-    private void AnalyzeCF_AppendStack(Stack<StackType> localStack, 
+    private void AnalyzeCF_AppendStack(ListStack<StackType> localStack, 
         ref EvalStackNode node)
     {
-        while (localStack.Count != 0)
+        foreach (var child in localStack.BottomToTop())
         {
-            var type = localStack.Pop();
             var prev = node;
-            node = node.AppendChild(type);
-            _nodeIntern.Add((type, prev), node);
+            node = node.AppendChild(child);
+            _nodeIntern.Add((child, prev), node);
         }
+        localStack.Clear();
     }
 
     private EHFrame EhBlockByInstruction(int instIndex)

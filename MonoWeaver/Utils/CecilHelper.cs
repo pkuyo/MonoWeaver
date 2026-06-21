@@ -114,7 +114,9 @@ public static partial class CecilHelper
 
     public static int ReturnCount(this MethodDefinition method)
     {
-        if (method.IsRuntimeAsync() && method.ReturnType.FullName is "System.Threading.Tasks.ValueTask" or "System.Threading.Tasks.Task")
+        if (method.IsRuntimeAsync() && CecilTypeSystem.TypeSig.Create(method.ReturnType) is { } sig && 
+            (sig == CecilTypeSystem.TypeSig.SystemThreading.ValueTask ||
+            sig == CecilTypeSystem.TypeSig.SystemThreading.Task))
         {
             return 0;
         }

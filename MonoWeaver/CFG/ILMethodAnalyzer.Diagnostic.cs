@@ -30,6 +30,7 @@ public enum CFGExceptionType
     TypeMismatch, // 类型不匹配。
     TypeConstraintViolation, // 类型实参不满足泛型约束。
     InconsistentFieldAccess, // 字段访问方式不一致。
+    InitOnlyFieldAccess, // 只读字段访问不一致,
     StackUnderflow, // 求值栈下溢。
     StackOverflow, // 求值栈超过 maxstack。
     InvalidExitStackHeight, // 控制流出口栈高度错误。
@@ -46,12 +47,13 @@ public enum CFGExceptionType
     UninitThisReturn, // 方法返回时 this 未初始化。
     ReturnTempPtr, // 返回临时指针
     ResolveFailed, // 元数据引用解析失败。
+    LdvirtftnOnStatic, //对Static函数使用Ldvirtftn
     UnExpected, // 未预期的验证状态。
 
     //不可验证
     Unverifiable, // IL 不可验证但可执行。
     Unverifiable_LocallocStackNotEmpty, // localloc 时求值栈非空。
-
+    Unverifiable_ThisMismatched, // 错误的this传参到call调用非virtual函数
     TypeAccess, // 类型访问规则错误。
     FieldAccess, // 字段访问规则错误。
     MethodAccess // 方法访问规则错误。
@@ -206,11 +208,11 @@ public sealed record CFGDiagnostic(
         return sb.ToString();
     }
     
-    public static CFGDiagnostic TypeMismatch(TypeReference expect, TypeReference? current, Instruction inst,
+    public static CFGDiagnostic TypeMismatch(TypeReference? expect, TypeReference? current, Instruction inst,
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
         => new(CFGExceptionType.TypeMismatch, severity,
-            message ?? $"Type mismatch: expect {expect.FullName}, got {current?.FullName ?? "<null>"}",
-            new TypeMismatchContext(inst, TypeMismatchKind.Type, expect.FullName,
+            message ?? $"Type mismatch: expect {expect?.FullName ?? "<null>"}, got {current?.FullName ?? "<null>"}",
+            new TypeMismatchContext(inst, TypeMismatchKind.Type, expect?.FullName ?? "<null>",
                 current?.FullName ?? "<null>", expect, current));
 
     public static CFGDiagnostic TypeConstraintViolation(Instruction inst, TypeReference? type,

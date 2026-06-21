@@ -1,4 +1,4 @@
-using Mono.Cecil;
+ï»¿using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MonoWeaver.CFG;
 using System;
@@ -21,8 +21,8 @@ namespace MonoWeaver.Utils;
 
 
 /// <summary>
-/// Ìá¹©ÀàĞÍÏµÍ³Ïà¹ØµÄ¹¦ÄÜ£¬ÀıÈçÀàĞÍ±È½Ï¡¢ÀàĞÍ¹ØÏµÅĞ¶Ï¡¢»ñÈ¡»ùÀàºÍ½Ó¿ÚµÈ¡£
-/// ×Ö¶Î¡¢ÀàĞÍ¶¨Òå
+/// æä¾›ç±»å‹ç³»ç»Ÿç›¸å…³çš„åŠŸèƒ½ï¼Œä¾‹å¦‚ç±»å‹æ¯”è¾ƒã€ç±»å‹å…³ç³»åˆ¤æ–­ã€è·å–åŸºç±»å’Œæ¥å£ç­‰ã€‚
+/// å­—æ®µã€ç±»å‹å®šä¹‰
 /// </summary>
 public static partial class CecilTypeSystem
 {
@@ -102,14 +102,14 @@ public static partial class CecilTypeSystem
 
 
 /// <summary>
-/// Ìá¹©ÀàĞÍÏµÍ³Ïà¹ØµÄ¹¦ÄÜ£¬ÀıÈçÀàĞÍ±È½Ï¡¢ÀàĞÍ¹ØÏµÅĞ¶Ï¡¢»ñÈ¡»ùÀàºÍ½Ó¿ÚµÈ¡£
-/// ¹«¹²½Ó¿Ú²¿·Ö
+/// æä¾›ç±»å‹ç³»ç»Ÿç›¸å…³çš„åŠŸèƒ½ï¼Œä¾‹å¦‚ç±»å‹æ¯”è¾ƒã€ç±»å‹å…³ç³»åˆ¤æ–­ã€è·å–åŸºç±»å’Œæ¥å£ç­‰ã€‚
+/// å…¬å…±æ¥å£éƒ¨åˆ†
 /// </summary>
 public static partial class CecilTypeSystem
 {
     /// <summary>
-    /// ÅĞ¶Ï from ÊÇ·ñ¿ÉÒÔ¸³Öµ¸ø to£¬¿¼ÂÇ IL Õ»ÉÏµÄÀàĞÍ×ª»»£¨ÀıÈç byte -> int£©
-    /// µ«²»¿¼ÂÇ Byte Sbyte Uint16¶¼×ª»¯ÎªI4ÕâÖÖµÄµÈ¼Û£¨ÔÚ `MonoWeaver.CFG.StackType` ÊµÏÖ¸Ã¹¦ÄÜ£©
+    /// åˆ¤æ–­ from æ˜¯å¦å¯ä»¥èµ‹å€¼ç»™ toï¼Œè€ƒè™‘ IL æ ˆä¸Šçš„ç±»å‹è½¬æ¢ï¼ˆä¾‹å¦‚ byte -> intï¼‰
+    /// ä½†ä¸è€ƒè™‘ Byte Sbyte Uint16éƒ½è½¬åŒ–ä¸ºI4è¿™ç§çš„ç­‰ä»·ï¼ˆåœ¨ `MonoWeaver.CFG.StackType` å®ç°è¯¥åŠŸèƒ½ï¼‰
     /// </summary>
     /// <param name="from"></param>
     /// <param name="to"></param>
@@ -118,7 +118,7 @@ public static partial class CecilTypeSystem
     => IsAssignableFromRoot(to, from, true);
 
     /// <summary>
-    /// ÅĞ¶Ï from ÊÇ·ñ¿ÉÒÔ¸³Öµ¸ø to£¬²»¿¼ÂÇ IL Õ»ÉÏµÄÀàĞÍ×ª»»£¨ÀıÈç byte -> int£©
+    /// åˆ¤æ–­ from æ˜¯å¦å¯ä»¥èµ‹å€¼ç»™ toï¼Œä¸è€ƒè™‘ IL æ ˆä¸Šçš„ç±»å‹è½¬æ¢ï¼ˆä¾‹å¦‚ byte -> intï¼‰
     /// </summary>
     /// <param name="from"></param>
     /// <param name="to"></param>
@@ -127,8 +127,8 @@ public static partial class CecilTypeSystem
         => IsAssignableFromRoot(to, from, false);
 
     /// <summary>
-    /// ÅĞ¶Ï from ÊÇ·ñ¿ÉÒÔ¸³Öµ¸ø to£¬¿¼ÂÇ IL Õ»ÉÏµÄÀàĞÍ×ª»»£¨ÀıÈç byte -> int£©
-    /// µ«²»¿¼ÂÇ Byte Sbyte Uint16¶¼×ª»¯ÎªI4ÕâÖÖµÄµÈ¼Û£¨ÔÚ `MonoWeaver.CFG.StackType` ÊµÏÖ¸Ã¹¦ÄÜ£©
+    /// åˆ¤æ–­ from æ˜¯å¦å¯ä»¥èµ‹å€¼ç»™ toï¼Œè€ƒè™‘ IL æ ˆä¸Šçš„ç±»å‹è½¬æ¢ï¼ˆä¾‹å¦‚ byte -> intï¼‰
+    /// ä½†ä¸è€ƒè™‘ Byte Sbyte Uint16éƒ½è½¬åŒ–ä¸ºI4è¿™ç§çš„ç­‰ä»·ï¼ˆåœ¨ `MonoWeaver.CFG.StackType` å®ç°è¯¥åŠŸèƒ½ï¼‰
     /// </summary>
     /// <param name="to"></param>
     /// <param name="from"></param>
@@ -137,7 +137,7 @@ public static partial class CecilTypeSystem
         => IsAssignableFromRoot(to, from, true);
 
     /// <summary>
-    /// ÅĞ¶Ï from ÊÇ·ñ¿ÉÒÔ¸³Öµ¸ø to£¬²»¿¼ÂÇ IL Õ»ÉÏµÄÀàĞÍ×ª»»£¨ÀıÈç byte -> int£©
+    /// åˆ¤æ–­ from æ˜¯å¦å¯ä»¥èµ‹å€¼ç»™ toï¼Œä¸è€ƒè™‘ IL æ ˆä¸Šçš„ç±»å‹è½¬æ¢ï¼ˆä¾‹å¦‚ byte -> intï¼‰
     /// </summary>
     /// <param name="to"></param>
     /// <param name="from"></param>
@@ -146,7 +146,7 @@ public static partial class CecilTypeSystem
         => IsAssignableFromRoot(to, from, false);
 
     /// <summary>
-    /// È¥³ıÀàĞÍĞŞÊÎ·û£¬»ñÈ¡Êµ¼ÊÀàĞÍ£¬ÀıÈç List`1& -> List`1£¬List`1 modopt(int32) -> List`1
+    /// å»é™¤ç±»å‹ä¿®é¥°ç¬¦ï¼Œè·å–å®é™…ç±»å‹ï¼Œä¾‹å¦‚ List`1& -> List`1ï¼ŒList`1 modopt(int32) -> List`1
     /// </summary>
     /// <param name="t"></param>
     /// <returns></returns>
@@ -161,13 +161,13 @@ public static partial class CecilTypeSystem
                 case RequiredModifierType rmt: t = rmt.ElementType; continue;
                 case PinnedType pt: t = pt.ElementType; continue;
                 case SentinelType st: t = st.ElementType; continue;
-                default: return t; //ÕâÀï²»´¦ÀíbyrefµÈÔÚil¶ÑÕ»ÄÚ²»µÈ¼ÛµÄÀàĞÍ
+                default: return t; //è¿™é‡Œä¸å¤„ç†byrefç­‰åœ¨ilå †æ ˆå†…ä¸ç­‰ä»·çš„ç±»å‹
             }
         }
     }
 
     /// <summary>
-    /// »ñÈ¡Ã¶¾ÙµÄµ×²ãÀàĞÍ£¬Èç¹û²»ÊÇÃ¶¾ÙÔò·µ»Ø null
+    /// è·å–æšä¸¾çš„åº•å±‚ç±»å‹ï¼Œå¦‚æœä¸æ˜¯æšä¸¾åˆ™è¿”å› null
     /// </summary>
     /// <param name="typeRef"></param>
     /// <returns></returns>
@@ -192,7 +192,7 @@ public static partial class CecilTypeSystem
     }
 
     /// <summary>
-    /// »ñÈ¡»ùÀà£¬Ö§³Ö´¦ÀíÊı×éºÍ·ºĞÍ²ÎÊıµÈÌØÊâÇé¿ö
+    /// è·å–åŸºç±»ï¼Œæ”¯æŒå¤„ç†æ•°ç»„å’Œæ³›å‹å‚æ•°ç­‰ç‰¹æ®Šæƒ…å†µ
     /// </summary>
     /// <param name="type"></param>
     /// <returns></returns>
@@ -212,7 +212,7 @@ public static partial class CecilTypeSystem
     }
 
     /// <summary>
-    /// »ñÈ¡ËùÓĞ»ùÀà£¬°´ÕÕ´Ó½üµ½Ô¶µÄË³Ğò·µ»Ø£¬²»°üº¬×ÔÉí
+    /// è·å–æ‰€æœ‰åŸºç±»ï¼ŒæŒ‰ç…§ä»è¿‘åˆ°è¿œçš„é¡ºåºè¿”å›ï¼Œä¸åŒ…å«è‡ªèº«
     /// </summary>
     /// <param name="type"></param>
     /// <param name="withBoxing"></param>
@@ -231,7 +231,7 @@ public static partial class CecilTypeSystem
     }
 
     /// <summary>
-    /// ²éÕÒ¹²ÓĞ»ùÀà
+    /// æŸ¥æ‰¾å…±æœ‰åŸºç±»
     /// </summary>
     /// <param name="a0"></param>
     /// <param name="b0"></param>
@@ -261,8 +261,8 @@ public static partial class CecilTypeSystem
 
 
     /// <summary>
-    /// ÊÕ¼¯ËùÓĞ½Ó¿Ú£¬°üº¬Ö±½ÓÊµÏÖµÄºÍ¼ä½ÓÊµÏÖµÄ£¨»ùÀàÊµÏÖµÄ£©£¬²»°üº¬ÖØ¸´Ïî£¬½á¹û·ÅÔÚ resultBuffer ÖĞ
-    /// »áÌî³ä·ºĞÍ²ÎÊı
+    /// æ”¶é›†æ‰€æœ‰æ¥å£ï¼ŒåŒ…å«ç›´æ¥å®ç°çš„å’Œé—´æ¥å®ç°çš„ï¼ˆåŸºç±»å®ç°çš„ï¼‰ï¼Œä¸åŒ…å«é‡å¤é¡¹ï¼Œç»“æœæ”¾åœ¨ resultBuffer ä¸­
+    /// ä¼šå¡«å……æ³›å‹å‚æ•°
     /// </summary>
     /// <param name="type"></param>
     /// <param name="resultBuffer"></param>
@@ -274,7 +274,7 @@ public static partial class CecilTypeSystem
 
 
     /// <summary>
-    /// ÅĞ¶ÏÁ½¸öÀàĞÍÊÇ·ñÏàÍ¬
+    /// åˆ¤æ–­ä¸¤ä¸ªç±»å‹æ˜¯å¦ç›¸åŒ
     /// </summary>
     /// <param name="a"></param>
     /// <param name="b"></param>
@@ -290,7 +290,7 @@ public static partial class CecilTypeSystem
 
 
     /// <summary>
-    /// ÅĞ¶ÏÊÇ·ñÎªÃ¶¾ÙÀàĞÍ
+    /// åˆ¤æ–­æ˜¯å¦ä¸ºæšä¸¾ç±»å‹
     /// </summary>
     /// <param name="typeRef"></param>
     /// <returns></returns>
@@ -303,16 +303,16 @@ public static partial class CecilTypeSystem
 
 
     /// <summary>
-    /// ÅĞ¶ÏÊÇ·ñÎª void ÀàĞÍ
+    /// åˆ¤æ–­æ˜¯å¦ä¸º void ç±»å‹
     /// </summary>
     /// <param name="type"></param>
     /// <returns></returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsVoid(this TypeReference type)
-    => type.MetadataType == MetadataType.Void;
+    => type.StripType().MetadataType == MetadataType.Void;
 
     /// <summary>
-    /// ¼ì²é¹¹ÔìÀàĞÍÖĞµÄ·ºĞÍÊµ²ÎÊÇ·ñÂú×ã¶ÔÓ¦·ºĞÍ²ÎÊıÔ¼Êø¡£
+    /// æ£€æŸ¥æ„é€ ç±»å‹ä¸­çš„æ³›å‹å®å‚æ˜¯å¦æ»¡è¶³å¯¹åº”æ³›å‹å‚æ•°çº¦æŸã€‚
     /// </summary>
     /// <param name="typeReference"></param>
     /// <returns></returns>
@@ -323,7 +323,7 @@ public static partial class CecilTypeSystem
     }
 
     /// <summary>
-    /// ¼ì²é·½·¨ÒıÓÃÖĞµÄÉùÃ÷ÀàĞÍ·ºĞÍÊµ²ÎºÍ·½·¨·ºĞÍÊµ²ÎÊÇ·ñÂú×ã¶ÔÓ¦·ºĞÍ²ÎÊıÔ¼Êø¡£
+    /// æ£€æŸ¥æ–¹æ³•å¼•ç”¨ä¸­çš„å£°æ˜ç±»å‹æ³›å‹å®å‚å’Œæ–¹æ³•æ³›å‹å®å‚æ˜¯å¦æ»¡è¶³å¯¹åº”æ³›å‹å‚æ•°çº¦æŸã€‚
     /// </summary>
     /// <param name="methodReference"></param>
     /// <returns></returns>
@@ -334,7 +334,7 @@ public static partial class CecilTypeSystem
     }
 
     /// <summary>
-    /// ÅĞ¶Ï localType ÊÇ·ñ¿ÉÒÔ·ÃÎÊ toType
+    /// åˆ¤æ–­ localType æ˜¯å¦å¯ä»¥è®¿é—® toType
     /// </summary>
     /// <param name="localType"></param>
     /// <param name="toType"></param>
@@ -348,7 +348,7 @@ public static partial class CecilTypeSystem
     }
 
     /// <summary>
-    /// ÅĞ¶Ï localType ÊÇ·ñ¿ÉÒÔ·ÃÎÊ toMethod
+    /// åˆ¤æ–­ localType æ˜¯å¦å¯ä»¥è®¿é—® toMethod
     /// </summary>
     /// <param name="localType"></param>
     /// <param name="toMethod"></param>
@@ -359,36 +359,43 @@ public static partial class CecilTypeSystem
         if (localType == null) throw new ArgumentNullException(nameof(localType));
         if (toMethod == null) throw new ArgumentNullException(nameof(toMethod));
 
-        if (!CanAccessType(localType, toMethod.DeclaringType, new HashSet<TypeSig>()))
-            return false;
-
-        if (!CanAccessMethodVisibility(localType, toMethod))
-            return false;
-
-        if (!CanAccessType(localType, toMethod.ReturnType, new HashSet<TypeSig>()))
-            return false;
-
-        for (int i = 0; i < toMethod.Parameters.Count; i++)
-        {
-            if (!CanAccessType(localType, toMethod.Parameters[i].ParameterType, new HashSet<TypeSig>()))
-                return false;
-        }
-
-        for (int i = 0; i < toMethod.GenericParameters.Count; i++)
-        {
-            var genericParameter = toMethod.GenericParameters[i];
-            for (int j = 0; j < genericParameter.Constraints.Count; j++)
-            {
-                if (!CanAccessType(localType, genericParameter.Constraints[j].ConstraintType, new HashSet<TypeSig>()))
-                    return false;
-            }
-        }
-
-        return true;
+        return CanAccessMethodReference(localType, toMethod, toMethod);
     }
 
     /// <summary>
-    /// ÅĞ¶Ï localType ÊÇ·ñ¿ÉÒÔ·ÃÎÊ toField
+    /// åˆ¤æ–­ localType æ˜¯å¦å¯ä»¥è®¿é—® toMethod
+    /// </summary>
+    /// <param name="localType"></param>
+    /// <param name="toMethod"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public static bool CanAccess(this TypeReference localType, MethodReference toMethod)
+    {
+        if (localType == null) throw new ArgumentNullException(nameof(localType));
+        if (toMethod == null) throw new ArgumentNullException(nameof(toMethod));
+
+        return CanAccessMethodReference(localType, toMethod, TryResolve(toMethod));
+    }
+
+    /// <summary>
+    /// åˆ¤æ–­ localType æ˜¯å¦å¯ä»¥è®¿é—® toMethod
+    /// </summary>
+    /// <param name="localType"></param>
+    /// <param name="toMethod"></param>
+    /// <param name="resolvedMethod"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public static bool CanAccess(this TypeReference localType, MethodReference toMethod, MethodDefinition resolvedMethod)
+    {
+        if (localType == null) throw new ArgumentNullException(nameof(localType));
+        if (toMethod == null) throw new ArgumentNullException(nameof(toMethod));
+        if (resolvedMethod == null) throw new ArgumentNullException(nameof(resolvedMethod));
+
+        return CanAccessMethodReference(localType, toMethod, resolvedMethod);
+    }
+
+    /// <summary>
+    /// åˆ¤æ–­ localType æ˜¯å¦å¯ä»¥è®¿é—® toField
     /// </summary>
     /// <param name="localType"></param>
     /// <param name="toField"></param>
@@ -399,20 +406,47 @@ public static partial class CecilTypeSystem
         if (localType == null) throw new ArgumentNullException(nameof(localType));
         if (toField == null) throw new ArgumentNullException(nameof(toField));
 
-        if (!CanAccessType(localType, toField.DeclaringType, new HashSet<TypeSig>()))
-            return false;
-
-        if (!CanAccessFieldVisibility(localType, toField))
-            return false;
-
-        return CanAccessType(localType, toField.FieldType, new HashSet<TypeSig>());
+        return CanAccessFieldReference(localType, toField, toField);
     }
+
+    /// <summary>
+    /// åˆ¤æ–­ localType æ˜¯å¦å¯ä»¥è®¿é—® toField
+    /// </summary>
+    /// <param name="localType"></param>
+    /// <param name="toField"></param>
+    /// <param name="resolvedField"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public static bool CanAccess(this TypeReference localType, FieldReference toField, FieldDefinition resolvedField)
+    {
+        if (localType == null) throw new ArgumentNullException(nameof(localType));
+        if (toField == null) throw new ArgumentNullException(nameof(toField));
+        if (resolvedField == null) throw new ArgumentNullException(nameof(resolvedField));
+
+        return CanAccessFieldReference(localType, toField, resolvedField);
+    }
+
+    public static bool IsAnyDelegate(this TypeReference reference)
+    {
+        var rSig = TypeSig.Create(reference);
+        if (rSig == TypeSig.Delegate || rSig == TypeSig.MulticastDelegate)
+            return true;
+
+        if (ResolveWithCache(reference) is TypeDefinition td && td.BaseType() is { } pt)
+        {
+            var pSig = TypeSig.Create(pt);
+            if (pSig == TypeSig.Delegate || pSig == TypeSig.MulticastDelegate)
+                return true;
+        }
+        return false;
+    }
+    
 }
 
 
 
 /// <summary>
-/// ÀàĞÍ¹ØÏµÅĞ¶ÏÊµÏÖ²¿·ÖÒÔ¼°ÆäËûË½ÓĞº¯Êı
+/// ç±»å‹å…³ç³»åˆ¤æ–­å®ç°éƒ¨åˆ†ä»¥åŠå…¶ä»–ç§æœ‰å‡½æ•°
 /// </summary>
 public static partial class CecilTypeSystem
 {
@@ -476,6 +510,72 @@ public static partial class CecilTypeSystem
         {
             visiting.Remove(sig);
         }
+    }
+
+    private static bool CanAccessMethodReference(TypeReference localType, MethodReference toMethod,
+        MethodDefinition? toMethodDefinition)
+    {
+        var typeContext = toMethod.DeclaringType as GenericInstanceType;
+        var methodContext = toMethod as GenericInstanceMethod;
+
+        if (toMethod.DeclaringType != null &&
+            !CanAccessType(localType, toMethod.DeclaringType, new HashSet<TypeSig>()))
+            return false;
+
+        if (toMethodDefinition != null && !CanAccessMethodVisibility(localType, toMethodDefinition))
+            return false;
+
+        var returnType = TryInflateGenericType(toMethod.ReturnType, typeContext, methodContext);
+        if (!CanAccessType(localType, returnType, new HashSet<TypeSig>()))
+            return false;
+
+        for (int i = 0; i < toMethod.Parameters.Count; i++)
+        {
+            var parameterType = TryInflateGenericType(toMethod.Parameters[i].ParameterType, typeContext, methodContext);
+            if (!CanAccessType(localType, parameterType, new HashSet<TypeSig>()))
+                return false;
+        }
+
+        if (methodContext != null)
+        {
+            for (int i = 0; i < methodContext.GenericArguments.Count; i++)
+            {
+                var argument = TryInflateGenericType(methodContext.GenericArguments[i], typeContext, methodContext);
+                if (!CanAccessType(localType, argument, new HashSet<TypeSig>()))
+                    return false;
+            }
+        }
+
+        var genericParameters = toMethodDefinition?.GenericParameters ?? toMethod.GenericParameters;
+        for (int i = 0; i < genericParameters.Count; i++)
+        {
+            var genericParameter = genericParameters[i];
+            for (int j = 0; j < genericParameter.Constraints.Count; j++)
+            {
+                var constraintType = TryInflateGenericType(genericParameter.Constraints[j].ConstraintType,
+                    typeContext, methodContext);
+                if (!CanAccessType(localType, constraintType, new HashSet<TypeSig>()))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool CanAccessFieldReference(TypeReference localType, FieldReference toField,
+        FieldDefinition toFieldDefinition)
+    {
+        var typeContext = toField.DeclaringType as GenericInstanceType;
+
+        if (toField.DeclaringType != null &&
+            !CanAccessType(localType, toField.DeclaringType, new HashSet<TypeSig>()))
+            return false;
+
+        if (!CanAccessFieldVisibility(localType, toFieldDefinition))
+            return false;
+
+        var fieldType = TryInflateGenericType(toField.FieldType, typeContext, null);
+        return CanAccessType(localType, fieldType, new HashSet<TypeSig>());
     }
 
     private static bool CanAccessTypeDefinition(TypeReference localType, TypeDefinition toType)
@@ -579,7 +679,7 @@ public static partial class CecilTypeSystem
             return IsSameAssembly(localType, declaringType) &&
                    HasFamilyAccess(localDefinition, declaringType);
 
-        return false;
+        return true; //TODO:ä¸æ˜ç¡®åŸå› å­˜åœ¨å‡ä¸ºfalseçš„public
     }
     private static bool IsInPrivateAccessScope(TypeDefinition localType, TypeDefinition targetDeclaringType)
     {
@@ -611,14 +711,14 @@ public static partial class CecilTypeSystem
         return IsSameAssembly(localType, toType) || HasInternalsVisibleTo(toType, localType);
     }
 
-    private static bool IsSameAssembly(TypeReference localType, TypeDefinition toType)
+    internal static bool IsSameAssembly(TypeReference localType, TypeDefinition toType)
     {
         var localAssembly = ResolveWithCache(localType)?.Module?.Assembly ?? localType.Module?.Assembly;
         var targetAssembly = toType.Module?.Assembly;
         return AssemblyNamesEqual(localAssembly?.Name, targetAssembly?.Name);
     }
 
-    private static bool HasInternalsVisibleTo(TypeDefinition toType, TypeReference localType)
+    internal static bool HasInternalsVisibleTo(TypeDefinition toType, TypeReference localType)
     {
         var targetAssembly = toType.Module?.Assembly;
         var localAssemblyName = ResolveWithCache(localType)?.Module?.Assembly?.Name?.Name ??
@@ -719,7 +819,7 @@ public static partial class CecilTypeSystem
             to = to.StripType();
             from = from.StripType();
 
-            //ÓÅÏÈ´¦ÀíÎ´±ÕºÏ
+            //ä¼˜å…ˆå¤„ç†æœªé—­åˆ
             if (from is GenericParameter fromGp)
             {
                 return IsAssignableFromGenericParam(to, fromGp, ilRule, context);
@@ -738,8 +838,8 @@ public static partial class CecilTypeSystem
             {
                 return from is not ByReferenceType
                        && from is not PointerType
-                       && from is not FunctionPointerType; //ÒÑ¾­ÔÚÉÏÃæÅÅ³ıÖµÀàĞÍºÍÒıÓÃÀàĞÍÑÏ¸ñÅĞ±ğ
-                                                           //ÕâÀï²»ĞèÒª¶îÍâÅĞ¶Ï
+                       && from is not FunctionPointerType; //å·²ç»åœ¨ä¸Šé¢æ’é™¤å€¼ç±»å‹å’Œå¼•ç”¨ç±»å‹ä¸¥æ ¼åˆ¤åˆ«
+                                                           //è¿™é‡Œä¸éœ€è¦é¢å¤–åˆ¤æ–­
             }
 
             if (fromKey == TypeSig.Object)
@@ -781,7 +881,7 @@ public static partial class CecilTypeSystem
                     return false;
                 }
 
-                //Ö¸Õë
+                //æŒ‡é’ˆ
                 if (from is PointerType fromPtr)
                 {
                     if (to is PointerType toPtr)
@@ -790,7 +890,7 @@ public static partial class CecilTypeSystem
                 }
 
 
-                //Êı×é
+                //æ•°ç»„
                 if (from is ArrayType fromArr)
                 {
                     if (IsAssignableFromArray(to, fromArr, ilRule, context))
@@ -798,10 +898,10 @@ public static partial class CecilTypeSystem
                 }
 
 
-                //·ºĞÍ
+                //æ³›å‹
                 if (to is GenericInstanceType toGi && from is GenericInstanceType fromGi)
                 {
-                    //´¦ÀíÄæ±ä/Ğ­±ä
+                    //å¤„ç†é€†å˜/åå˜
                     if (IsSameWith(toGi.ElementType, fromGi.ElementType) &&
                         GenericArgsAssignableWithVariance(toGi, fromGi, ilRule, context))
                     {
@@ -817,7 +917,7 @@ public static partial class CecilTypeSystem
                     return IsSameWith(instTo.GenericArguments[0], from);
                 }
 
-                //½Ó¿Ú
+                //æ¥å£
                 if (toDef?.IsInterface == true)
                 {
                     if (from.IsValueType && ilRule) return false;
@@ -846,7 +946,7 @@ public static partial class CecilTypeSystem
         {
             if (TypeSig.Create(iface) == toInterfaceSig) return true;
 
-            // ´¦ÀíÄæ±ä/Ğ­±ä
+            // å¤„ç†é€†å˜/åå˜
             if (toInterface is GenericInstanceType toGi &&
                 iface is GenericInstanceType fromGi &&
                 IsSameWith(toGi.ElementType, fromGi.ElementType) &&
@@ -866,8 +966,8 @@ public static partial class CecilTypeSystem
 
         if (type is GenericInstanceType gi) return gi;
 
-        // ÕâÀïµÄÓïÒåÊÇ£º°Ñ ¡°·ºĞÍ¶¨Òå¡± ±ä³É ¡°ÓÃ×ÔÉí GenericParameter ×÷Îª²ÎÊıµÄÊµÀı¡±
-        // ÀıÈç IEnumerable`1 => IEnumerable<!0>
+        // è¿™é‡Œçš„è¯­ä¹‰æ˜¯ï¼šæŠŠ â€œæ³›å‹å®šä¹‰â€ å˜æˆ â€œç”¨è‡ªèº« GenericParameter ä½œä¸ºå‚æ•°çš„å®ä¾‹â€
+        // ä¾‹å¦‚ IEnumerable`1 => IEnumerable<!0>
         var result = new GenericInstanceType(type);
         foreach (var gp in type.GenericParameters)
             result.GenericArguments.Add(gp);
@@ -881,7 +981,7 @@ public static partial class CecilTypeSystem
         var mod = arr.Module ?? throw new InvalidOperationException("ArrayType.Module is null.");
         var elem = arr.ElementType.StripType();
 
-        // Ö»ÓĞÒ»Î»Êı×é²ÅÓĞÕâĞ©·ºĞÍ½Ó¿Ú
+        // åªæœ‰ä¸€ä½æ•°ç»„æ‰æœ‰è¿™äº›æ³›å‹æ¥å£
         if (arr is { Rank: 1 })
         {
             if(_arrayInfs.TryGetValue(mod, out var array))
@@ -941,21 +1041,21 @@ public static partial class CecilTypeSystem
             var sArg = source.GenericArguments[i].StripType();
 
 
-            if (sArg.IsArray && !sArg.IsValueType && tArg.IsArray && !tArg.IsValueType) //ÒıÓÃÊı×é¶ÔÓÚÆäËû½Ó¿Ú°´Ğ­±ä´¦Àí
+            if (sArg.IsArray && !sArg.IsValueType && tArg.IsArray && !tArg.IsValueType) //å¼•ç”¨æ•°ç»„å¯¹äºå…¶ä»–æ¥å£æŒ‰åå˜å¤„ç†
             {
                 variance = GenericParameterAttributes.Covariant;
             }
 
             switch (variance)
             {
-                case GenericParameterAttributes.Covariant: //Ğ­±ä
+                case GenericParameterAttributes.Covariant: //åå˜
                     if ((!IsDefinitelyReferenceType(tArg) || !IsDefinitelyReferenceType(sArg)) && !IsSameWith(tArg, sArg))
                         return false;
                     if (!IsAssignableFromCore(tArg, sArg, ilRule, context))
                         return false;
                     break;
 
-                case GenericParameterAttributes.Contravariant: //Äæ±ä
+                case GenericParameterAttributes.Contravariant: //é€†å˜
                     if ((!IsDefinitelyReferenceType(tArg) || !IsDefinitelyReferenceType(sArg)) && !IsSameWith(tArg, sArg))
                         return false;
                          
@@ -963,7 +1063,7 @@ public static partial class CecilTypeSystem
                         return false;
                     break;
 
-                default: // ³£¹æ
+                default: // å¸¸è§„
                     if (!IsSameWith(tArg, sArg)) return false;
                     break;
             }
@@ -983,7 +1083,7 @@ public static partial class CecilTypeSystem
             return false;
 
         if (type is not GenericParameter gp)
-            return !type.IsValueType; //·Ç·ºĞÍ¿ÉÖ±½ÓÈ·¶¨
+            return !type.IsValueType; //éæ³›å‹å¯ç›´æ¥ç¡®å®š
 
         var sig = TypeSig.Create(gp);
         if (!seenGenericParams.Add(sig))
@@ -991,16 +1091,16 @@ public static partial class CecilTypeSystem
 
         var constraints = gp.Attributes & GenericParameterAttributes.SpecialConstraintMask;
         if ((constraints & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
-            return false; //struct() Ö±½Ó·Çref
+            return false; //struct() ç›´æ¥éref
 
         if ((constraints & GenericParameterAttributes.ReferenceTypeConstraint) != 0)
-            return true; //class() Ö±½Óref
+            return true; //class() ç›´æ¥ref
 
         foreach (var constraint in gp.Constraints)
         {
             var constraintType = constraint.ConstraintType.StripType();
-            //²é¿´Ô¼Êø½øÒ»²½ÅĞ±ğ
-            if (constraintType is GenericParameter constraintGp)//»¹ÊÇ·ºĞÍ²ÎÊıÔòµİ¹é
+            //æŸ¥çœ‹çº¦æŸè¿›ä¸€æ­¥åˆ¤åˆ«
+            if (constraintType is GenericParameter constraintGp)//è¿˜æ˜¯æ³›å‹å‚æ•°åˆ™é€’å½’
             {
                 if (IsDefinitelyReferenceType(constraintGp, seenGenericParams))
                     return true;
@@ -1032,7 +1132,7 @@ public static partial class CecilTypeSystem
             return true;
         }
 
-        // T[] -> ·Ç·ºĞÍ IEnumerable/ICollection/IList
+        // T[] -> éæ³›å‹ IEnumerable/ICollection/IList
         if (toKey == TypeSig.SystemCollections.IEnumerable
             || toKey == TypeSig.SystemCollections.ICollection
             || toKey == TypeSig.SystemCollections.IList
@@ -1041,7 +1141,7 @@ public static partial class CecilTypeSystem
             return true;
         }
 
-        // Êı×é -> Êı×é (´¦ÀíĞ­±ä)
+        // æ•°ç»„ -> æ•°ç»„ (å¤„ç†åå˜)
         // T[] -> IEnumerable<T>/ICollection<T>/IList<T>/IReadOnlyCollection<T>/IReadOnlyList<T>
         // CLR also allows reference-array covariance here, e.g. string[] -> IList<object>.
         if (fromArr is { Rank: 1 } &&
@@ -1067,7 +1167,7 @@ public static partial class CecilTypeSystem
             var toElem = toArr.ElementType.StripType();
             var fromElem = fromArr.ElementType.StripType();
 
-            if (!toElem.IsValueType && !fromElem.IsValueType) //ÒıÓÃÀàĞÍÖ§³ÖĞ­±ä
+            if (!toElem.IsValueType && !fromElem.IsValueType) //å¼•ç”¨ç±»å‹æ”¯æŒåå˜
             {
                 return IsAssignableFromCore(toElem, fromElem, ilRule, context);
             }
@@ -1087,7 +1187,7 @@ public static partial class CecilTypeSystem
     private static bool IsAssignableFromGenericParam(TypeReference to, GenericParameter fromGp, bool ilRule,
         AssignabilityContext context)
     {
-        // ¶ÔÃ¿¸öÏÔÊ½Ô¼Êø£ºwhere T : C, IFoo ´¦Àí£¬¼Ù¶¨TÎªÃ¿Ò»¸öÔ¼ÊøÀàĞÍ½øĞĞ¸³Öµ±È½ÏÅĞ¶Ï
+        // å¯¹æ¯ä¸ªæ˜¾å¼çº¦æŸï¼šwhere T : C, IFoo å¤„ç†ï¼Œå‡å®šTä¸ºæ¯ä¸€ä¸ªçº¦æŸç±»å‹è¿›è¡Œèµ‹å€¼æ¯”è¾ƒåˆ¤æ–­
         foreach (var c in fromGp.Constraints)
         {
             var ct = c.ConstraintType.StripType();
@@ -1518,7 +1618,7 @@ public static partial class CecilTypeSystem
 
 
     /// <summary>
-    /// ³¢ÊÔÌî³ä·ºĞÍ
+    /// å°è¯•å¡«å……æ³›å‹
     /// </summary>
     /// <param name="typeToInflate"></param>
     /// <param name="context"></param>
@@ -1540,7 +1640,7 @@ public static partial class CecilTypeSystem
         if (typeToInflate is GenericParameter gp)
         {
             if (gp.Owner is TypeReference ownerRef && IsSameWith(ownerRef, context.ElementType) &&
-                context.GenericArguments.Count > gp.Position) //À´Ô´Ò»ÖÂ»ñÈ¡·ºĞÍ²ÎÊı
+                context.GenericArguments.Count > gp.Position) //æ¥æºä¸€è‡´è·å–æ³›å‹å‚æ•°
             {
                 return context.GenericArguments[gp.Position];
             }
@@ -1549,8 +1649,8 @@ public static partial class CecilTypeSystem
 
         if (typeToInflate is GenericInstanceType git)
         {
-            var element = TryInflateGenericType(git.ElementType, context); //Ìæ»»Íâ²¿²ÎÊı Outer<T>.Inner<U> ->  Outer<int>.Inner<U> 
-            var result = new GenericInstanceType(element); //´´½¨¿Õ·ºĞÍ£¬²¢Ìî³äÄÚÈİ
+            var element = TryInflateGenericType(git.ElementType, context); //æ›¿æ¢å¤–éƒ¨å‚æ•° Outer<T>.Inner<U> ->  Outer<int>.Inner<U>
+            var result = new GenericInstanceType(element); //åˆ›å»ºç©ºæ³›å‹ï¼Œå¹¶å¡«å……å†…å®¹
             foreach (var argument in git.GenericArguments)
             {
                 var inflatedArgument = TryInflateGenericType(argument, context);
@@ -1587,8 +1687,8 @@ public static partial class CecilTypeSystem
         if (t is null)
             return null;
 
-        // Mono.Cecil µÄResolve()Õë¶ÔTypeSpecification»áµ÷ÓÃGetElementType().
-        // »º´æµÄ»°ĞèÒªList`1ÕâÖÖdef¶ø²»ÊÇÔªËØdef.
+        // Mono.Cecil çš„Resolve()é’ˆå¯¹TypeSpecificationä¼šè°ƒç”¨GetElementType().
+        // ç¼“å­˜çš„è¯éœ€è¦List`1è¿™ç§defè€Œä¸æ˜¯å…ƒç´ def.
         TypeReference keyType;
         try
         {

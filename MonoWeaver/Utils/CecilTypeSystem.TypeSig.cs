@@ -1,5 +1,6 @@
 ﻿using Mono.Cecil;
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -29,7 +30,8 @@ public static partial class CecilTypeSystem
         public static TypeSig ICloneable => _coreTypes.Value.ICloneable;
         public static TypeSig ValueType => _coreTypes.Value.ValueType;
         public static TypeSig Enum => _coreTypes.Value.Enum;
-
+        public static TypeSig Delegate => _coreTypes.Value.Delegate;
+        public static TypeSig MulticastDelegate => _coreTypes.Value.MulticastDelegate;
         private TypeSig(int id) => _id = id;
 
         public static TypeSig Create(TypeReference t)
@@ -68,7 +70,9 @@ public static partial class CecilTypeSystem
                 Create(module.ImportReference(typeof(Nullable<>))),
                 Create(module.ImportReference(typeof(ICloneable))),
                 Create(module.ImportReference(typeof(ValueType))),
-                Create(module.ImportReference(typeof(Enum))));
+                Create(module.ImportReference(typeof(Enum))), 
+                Create(module.ImportReference(typeof(Delegate))),
+                Create(module.ImportReference(typeof(MulticastDelegate))));
         }
 
         private static AssemblyDefinition CreateCoreTypeAssembly()
@@ -100,6 +104,52 @@ public static partial class CecilTypeSystem
                     Create(module.ImportReference(typeof(global::System.Collections.IStructuralComparable))));
             }
         }
+
+        internal static class SystemThreading
+        {
+            private static readonly Lazy<SystemThreadingTypeSigs> _types =
+                new(CreateTypeSigs, LazyThreadSafetyMode.ExecutionAndPublication);
+
+            public static TypeSig Task => _types.Value.Task;
+            public static TypeSig ValueTask => _types.Value.ValueTask;
+            public static TypeSig TaskT => _types.Value.TaskT;
+            public static TypeSig ValueTaskT => _types.Value.ValueTaskT;
+
+            private static SystemThreadingTypeSigs CreateTypeSigs()
+            {
+                using var assembly = CreateCoreTypeAssembly();
+                var module = assembly.MainModule;
+                var task = module.ImportReference(typeof(global::System.Threading.Tasks.Task));
+                var taskT = module.ImportReference(typeof(global::System.Threading.Tasks.Task<>));
+                var valueTask = CreateValueTaskReference(module, "ValueTask", task.Scope, false);
+                var valueTaskT = CreateValueTaskReference(module, "ValueTask`1", task.Scope, true);
+
+                return new SystemThreadingTypeSigs(
+                    Create(task),
+                    Create(valueTask),
+                    Create(taskT),
+                    Create(valueTaskT));
+            }
+
+            private static TypeReference CreateValueTaskReference(
+                ModuleDefinition module,
+                string name,
+                IMetadataScope scope,
+                bool hasGenericParameter)
+            {
+                var type = new TypeReference(
+                    "System.Threading.Tasks",
+                    name,
+                    module,
+                    scope,
+                    true);
+
+                if (hasGenericParameter)
+                    type.GenericParameters.Add(new GenericParameter("TResult", type));
+
+                return type;
+            }
+        }
     }
 
     private readonly struct CoreTypeSigs
@@ -112,6 +162,8 @@ public static partial class CecilTypeSystem
         public readonly TypeSig ICloneable;
         public readonly TypeSig ValueType;
         public readonly TypeSig Enum;
+        public readonly TypeSig Delegate;
+        public readonly TypeSig MulticastDelegate;
 
         public CoreTypeSigs(
             TypeSig @object,
@@ -121,7 +173,9 @@ public static partial class CecilTypeSystem
             TypeSig nullable,
             TypeSig iCloneable,
             TypeSig valueType,
-            TypeSig @enum)
+            TypeSig @enum,
+            TypeSig @delegate,
+            TypeSig multicastDelegate)
         {
             Object = @object;
             Void = @void;
@@ -131,9 +185,29 @@ public static partial class CecilTypeSystem
             ICloneable = iCloneable;
             ValueType = valueType;
             Enum = @enum;
+            Delegate = @delegate;
+            MulticastDelegate = multicastDelegate;
         }
     }
+    private readonly struct SystemThreadingTypeSigs
+    {
+        public readonly TypeSig Task;
+        public readonly TypeSig ValueTask;
+        public readonly TypeSig TaskT;
+        public readonly TypeSig ValueTaskT;
 
+        public SystemThreadingTypeSigs(
+          TypeSig task,
+          TypeSig valueTask,
+          TypeSig taskT,
+          TypeSig valueTaskT)
+        {
+            Task = task;
+            ValueTask = valueTask;
+            TaskT = taskT;
+            ValueTaskT = valueTaskT;
+        }
+    }
     private readonly struct SystemCollectionsGenericTypeSigs
     {
         public readonly TypeSig IEnumerable;
