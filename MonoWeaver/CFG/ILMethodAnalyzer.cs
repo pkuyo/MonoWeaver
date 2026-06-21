@@ -220,6 +220,7 @@ public partial class ILMethodAnalyzer
 
     public MethodDefinition Method => _method;
 
+    public bool CecilFault { get; private set; } = false;
 
     public ILMethodAnalyzer(MethodDefinition method, VerifyOptions verifyOptions = VerifyOptions.Light)
     {
@@ -230,7 +231,16 @@ public partial class ILMethodAnalyzer
 
         _verifyOptions = verifyOptions;
         _method = method;
-        _needInitAnalysis = !_method.Body.InitLocals;
+        try
+        {
+            _needInitAnalysis = !_method.Body.InitLocals;
+        }
+        catch (Exception e)
+        {
+            CecilFault = true;
+            ReportDiagnostic(CFGDiagnostic.CecilLoadFailed(e));
+            return;
+        }
         _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
         _modifiesThis = false;
         VerifyMethod();
@@ -239,7 +249,7 @@ public partial class ILMethodAnalyzer
     public ILMethodAnalyzer ReAnalyze(VerifyOptions verifyOptions = VerifyOptions.Light)
     {
         _verifyOptions = verifyOptions;
-        _needInitAnalysis = !_method.Body.InitLocals;
+        CecilFault = false;
         _instDictionary.Clear();
         _exceptionHandlers.Clear();
         _regionFrames.Clear();
@@ -247,8 +257,19 @@ public partial class ILMethodAnalyzer
         _nodeIntern.Clear();
         _blocks.Clear();
         Diagnostics.Clear();
+        _reportedDiagnostics.Clear();
         _entryblocks.Clear();
         _currentErrorCount = 0;
+        try
+        {
+            _needInitAnalysis = !_method.Body.InitLocals;
+        }
+        catch (Exception e)
+        {
+            CecilFault = true;
+            ReportDiagnostic(CFGDiagnostic.CecilLoadFailed(e));
+            return this;
+        }
         _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
         _modifiesThis = false;
         VerifyMethod();
@@ -339,6 +360,69 @@ public partial class ILMethodAnalyzer
         if (from.Start >= to.Start && from.End <= to.End) return EHRelation.Enclosing;
         if (to.Start >= from.Start && to.End <= from.End) return EHRelation.Assciated;
         return EHRelation.Disjoint;
+    }
+
+    private void ReportInvalidBranchAcrossEhRegion(Instruction inst,
+        EHandler.Region currentRegion,
+        EHandler.Region targetRegion,
+        bool includeBranchIntoTry)
+    {
+        var emitted = new HashSet<CFGExceptionType>();
+        var relation = GetEHRelation(currentRegion, targetRegion);
+
+        if (IsBranchOutOfCurrentRegion(currentRegion, relation))
+        {
+            Report(GetBranchOutExceptionType(currentRegion));
+        }
+
+        switch (targetRegion.Kind)
+        {
+            case RegionKind.Filter:
+                Report(CFGExceptionType.BranchIntoFilter);
+                break;
+
+            case RegionKind.Handler:
+                Report(CFGExceptionType.BranchIntoHandler);
+                break;
+
+            case RegionKind.Try when includeBranchIntoTry && !IsBranchOutOfCurrentRegion(currentRegion, relation):
+                Report(CFGExceptionType.BranchIntoTry);
+                break;
+        }
+
+        if (emitted.Count == 0)
+        {
+            Report(targetRegion.Kind == RegionKind.Try
+                ? CFGExceptionType.BranchIntoTry
+                : CFGExceptionType.InvalidBrTarget);
+        }
+
+        void Report(CFGExceptionType exceptionType)
+        {
+            if (emitted.Add(exceptionType))
+            {
+                ReportDiagnostic(CFGDiagnostic.BranchRegionInvalid(exceptionType, inst, currentRegion, targetRegion));
+            }
+        }
+    }
+
+    private static bool IsBranchOutOfCurrentRegion(EHandler.Region currentRegion, EHRelation relation)
+        => currentRegion.Kind != RegionKind.Normal && relation is not EHRelation.Same and not EHRelation.Assciated;
+
+    private static CFGExceptionType GetBranchOutExceptionType(EHandler.Region currentRegion)
+    {
+        return currentRegion.Kind switch
+        {
+            RegionKind.Try => CFGExceptionType.BranchOutOfTry,
+            RegionKind.Filter => CFGExceptionType.BranchOutOfFilter,
+            RegionKind.Handler => currentRegion.Clause.ExceptionHandler.HandlerType switch
+            {
+                ExceptionHandlerType.Finally => CFGExceptionType.BranchOutOfFinally,
+                ExceptionHandlerType.Fault => CFGExceptionType.BranchOutOfFault,
+                _ => CFGExceptionType.BranchOutOfHandler,
+            },
+            _ => CFGExceptionType.InvalidBrTarget,
+        };
     }
 
     /// <summary>
@@ -505,6 +589,8 @@ public partial class ILMethodAnalyzer
     {
         foreach (var ehFrame in _regionFrames)
         {
+            if (ehFrame.Start >= _method.Body.Instructions.Count)
+                continue;
             AddBasicBlock(_method.Body.Instructions[ehFrame.Start], ehFrame.Region, true);
         }
         
@@ -612,7 +698,7 @@ public partial class ILMethodAnalyzer
                             if (targetRegion.Kind != RegionKind.Try)
                             {
                                 //跨异常边界跳转
-                                ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.BrTargetCrossEhRegion, inst));
+                                ReportInvalidBranchAcrossEhRegion(inst, currentRegion, targetRegion, includeBranchIntoTry: false);
                             }
                             else
                             {
@@ -620,7 +706,7 @@ public partial class ILMethodAnalyzer
                                 var relation = GetEHRelation(currentRegion, targetRegion);
                                 if (relation is not EHRelation.Assciated and not EHRelation.Same)
                                 {
-                                    ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.BrTargetCrossEhRegion, inst));
+                                    ReportInvalidBranchAcrossEhRegion(inst, currentRegion, targetRegion, includeBranchIntoTry: false);
                                 }
                                 else //内嵌要求必须为首指令
                                 {
@@ -633,7 +719,8 @@ public partial class ILMethodAnalyzer
                                         }
                                     }
                                     if (!isFirstInstr)
-                                        ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.BrTargetCrossEhRegion, inst));
+                                        ReportInvalidBranchAcrossEhRegion(inst, currentRegion, _regionFrames[instEhFrames[index]].Region,
+                                            includeBranchIntoTry: true);
 
                                     if (targetRegion == null)
                                         ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.UnExpected, inst));
@@ -1241,6 +1328,11 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:
+                        if (inst.Next is null)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidMethodFallThrough, inst));
+                            break;
+                        }
                         if (_blockMap.TryGetValue(inst.Next, out var fallThrougthBlock))
                         {
                             if (block.Kind is RegionKind.Handler or RegionKind.Filter && fallThrougthBlock != block)
@@ -1268,6 +1360,9 @@ public partial class ILMethodAnalyzer
 
                         foreach (var target in branchTargets)
                         {
+                            if (!_blockMap.TryGetValue(target, out var targetBlock))
+                                continue;
+
                             if (target.Previous != null && 
                                 target.Previous.OpCode.FlowControl == FlowControl.Branch &&
                                 _instDictionary[target] < i)
@@ -1275,10 +1370,10 @@ public partial class ILMethodAnalyzer
                                 if (stackHeight != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height")); //这个CLR并不强制执行
+                                            block, targetBlock, DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height")); //这个CLR并不强制执行
                                 }
                             }
-                            AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
+                            AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, stackHeight, initLocals, usedBlocks);
                         }
                         endBlock = true;
                         break;
@@ -1288,6 +1383,9 @@ public partial class ILMethodAnalyzer
 
                         foreach (var target in condBranchTargets)
                         {
+                            if (!_blockMap.TryGetValue(target, out var targetBlock))
+                                continue;
+
                             if (target.Previous != null &&
                                   target.Previous.OpCode.FlowControl == FlowControl.Branch &&
                                   _instDictionary[target] < i)
@@ -1295,10 +1393,10 @@ public partial class ILMethodAnalyzer
                                 if (stackHeight != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height")); //这个CLR并不强制执行
+                                            block, targetBlock, DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height")); //这个CLR并不强制执行
                                 }
                             }
-                            AnalyzeCF_AddNextBlock(block, _blockMap[target], bfsBlocks, stackHeight, initLocals, usedBlocks);
+                            AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, stackHeight, initLocals, usedBlocks);
                         }
                         AnalyzeCF_AddNextBlock(block, _blockMap[inst.Next], bfsBlocks, stackHeight, initLocals, usedBlocks);
                         endBlock = true;
@@ -1595,6 +1693,11 @@ public partial class ILMethodAnalyzer
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:
+                        if (inst.Next is null)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidMethodFallThrough, inst));
+                            break;
+                        }
                         if (_blockMap.TryGetValue(inst.Next, out var fallThrougthBlock))
                         {
                             if (block.Kind is RegionKind.Handler or RegionKind.Filter && fallThrougthBlock != block)
@@ -1623,7 +1726,9 @@ public partial class ILMethodAnalyzer
 
                         foreach (var target in branchTargets)
                         {
-                            var targetBlock = _blockMap[target];
+                            if (!_blockMap.TryGetValue(target, out var targetBlock))
+                                continue;
+
                             if (target.Previous != null &&
                                    target.Previous.OpCode.FlowControl == FlowControl.Branch &&
                                    _instDictionary[target] < i)
@@ -1631,7 +1736,7 @@ public partial class ILMethodAnalyzer
                                 if (node.Depth != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height"));
+                                            block, targetBlock, DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height"));
                                 }
                             }
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
@@ -1646,7 +1751,9 @@ public partial class ILMethodAnalyzer
 
                         foreach (var target in condBranchTargets)
                         {
-                            var targetBlock = _blockMap[target];
+                            if (!_blockMap.TryGetValue(target, out var targetBlock))
+                                continue;
+
                             if (target.Previous != null &&
                                 target.Previous.OpCode.FlowControl == FlowControl.Branch &&
                                 _instDictionary[target] < i)
@@ -1654,7 +1761,7 @@ public partial class ILMethodAnalyzer
                                 if (node.Depth != 0)
                                 {
                                     ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.InvalidBackwardBranch,
-                                            block, _blockMap[target], DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height"));
+                                            block, targetBlock, DiagnosticSeverity.Warning, "Backward branch without predecessor instructions must be 0 stack height"));
                                 }
                             }
                             AnalyzeCF_AddNextBlock(block, targetBlock, bfsBlocks, node, initLocals, usedBlocks);
@@ -1741,7 +1848,9 @@ public partial class ILMethodAnalyzer
             {
                 //堆栈合并不平衡错误
                 ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.IncompatibleMergeDepth,
-                    from, to));
+                    from, to,
+                    expectedDepth: to.EntryStackDepth,
+                    currentDepth: depth));
             }
         }
         else
@@ -1771,11 +1880,17 @@ public partial class ILMethodAnalyzer
             to.initLocals?.And(currentInitLocals!);
             var lastNode = to.EntryNode;
             var curNode = currentNode;
+            var expectedEntryNode = lastNode!;
+            var currentEntryNode = curNode;
             if (curNode.Depth != lastNode!.Depth) //启用检测堆栈类型则EntryNode一定不为null
             {
                 //堆栈合并不平衡错误
                 ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.IncompatibleMergeDepth, 
-                    from, to));
+                    from, to,
+                    expectedDepth: expectedEntryNode.Depth,
+                    currentDepth: currentEntryNode.Depth,
+                    expectedStack: SnapshotEvalStack(expectedEntryNode),
+                    currentStack: SnapshotEvalStack(currentEntryNode)));
                 return;
             }
             List<StackType> nodes = new List<StackType>(lastNode.Depth);
@@ -1793,7 +1908,11 @@ public partial class ILMethodAnalyzer
                     if (merged == StackType.Invalid)
                     {
                         ReportDiagnostic(CFGDiagnostic.IncompatibleMerge(CFGExceptionType.IncompatibleMergeTypes, 
-                            from, to));
+                            from, to,
+                            expectedDepth: expectedEntryNode.Depth,
+                            currentDepth: currentEntryNode.Depth,
+                            expectedStack: SnapshotEvalStack(expectedEntryNode),
+                            currentStack: SnapshotEvalStack(currentEntryNode)));
                         return;
                     }
                     noChanged = false;
@@ -1836,6 +1955,21 @@ public partial class ILMethodAnalyzer
             bfsBlocks.Add((to, currentNode));
             from.Edges.Add(new ControlFlowEdge(from, to));
         }
+    }
+
+    private static IReadOnlyList<string> SnapshotEvalStack(EvalStackNode? node)
+    {
+        if (node == null || node.Depth == 0)
+            return [];
+
+        var stack = new List<string>(node.Depth);
+        for (var current = node; current is { Depth: > 0 }; current = current.Parent)
+        {
+            stack.Add(current.Type.ToString());
+        }
+
+        stack.Reverse();
+        return stack;
     }
 
     private StackType AnalyzeCF_EvalStackPop(ListStack<StackType> localStack,

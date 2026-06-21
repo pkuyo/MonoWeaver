@@ -54,7 +54,7 @@
         ret
     }
 
-    .method public hidebysig instance void Call.BaseMethodModThisLdarga_Full_Warning_ThisMismatch() cil managed
+    .method public hidebysig instance void Call.BaseMethodModThisLdarga_Full_Warning_Unverifiable_ThisMismatched() cil managed
     {
         ldarg.0
         call    instance void SimpleClass::VirtualMethod()
@@ -63,7 +63,7 @@
         ret
     }
 
-    .method public hidebysig instance void Call.BaseMethodModThisStarg_Full_Warning_ThisMismatch() cil managed
+    .method public hidebysig instance void Call.BaseMethodModThisStarg_Full_Warning_Unverifiable_ThisMismatched() cil managed
     {
         ldarg.0
         call    instance void SimpleClass::VirtualMethod()
@@ -116,7 +116,7 @@
         ret
     }
 
-    .method public hidebysig instance void Call.IntToStringUnboxed_Full_Invalid_StackUnexpected() cil managed
+    .method public hidebysig instance void Call.IntToStringUnboxed_Full_Invalid_TypeMismatch() cil managed
     {
         .locals init (
             [0] int32
@@ -128,14 +128,14 @@
         ret
     }
 
-    .method public hidebysig instance void Call.ExternBaseMethod_Full_Warning_ThisMismatch(class DerivedClass c) cil managed
+    .method public hidebysig instance void Call.ExternBaseMethod_Full_Warning_Unverifiable_ThisMismatched(class DerivedClass c) cil managed
     {
         ldarg.1
         call    instance void SimpleClass::VirtualMethod()
         ret
     }
 
-    .method public hidebysig instance void Call.ReadonlyByRefForInArg_Full_Invalid_StackUnexpected(object[] objectArray) cil managed
+    .method public hidebysig instance void Call.ReadonlyByRefForInArg_Full_Invalid_TypeMismatch(object[] objectArray) cil managed
     {
         // SimpleClass.InObjectMethod(objectArray[0]);
 

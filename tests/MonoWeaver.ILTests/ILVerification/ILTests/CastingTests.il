@@ -139,7 +139,7 @@
         ret
     }
 
-    .method static public hidebysig void Assign.CovariantOpenGenericUnconstrainedToObjectEnumerable_Full_Invalid_StackUnexpected<T>(class [System.Runtime]System.Collections.Generic.IEnumerable`1<!!T> source)
+    .method static public hidebysig void Assign.CovariantOpenGenericUnconstrainedToObjectEnumerable_Full_Invalid_TypeMismatch<T>(class [System.Runtime]System.Collections.Generic.IEnumerable`1<!!T> source)
     {
         .locals init (
             class [System.Runtime]System.Collections.Generic.IEnumerable`1<object> V_0
@@ -256,7 +256,7 @@
         ret
     }
 
-    .method public hidebysig instance void Casting.AssignThisToSameTypeWithOtherGenericArgs_Full_Invalid_StackUnexpected() cil managed
+    .method public hidebysig instance void Casting.AssignThisToSameTypeWithOtherGenericArgs_Full_Invalid_TypeMismatch() cil managed
     {
         .locals init (
             class GenericCastingTestsType`1<int32> V_0
@@ -279,7 +279,7 @@
         ret
     }
 
-    .method public hidebysig static void Casting.AssignToSameTypeWithOtherGenericArgs_Full_Invalid_StackUnexpected() cil managed
+    .method public hidebysig static void Casting.AssignToSameTypeWithOtherGenericArgs_Full_Invalid_TypeMismatch() cil managed
     {
         .locals init (
             class GenericCastingTestsType`1<int32> V_0,
@@ -349,7 +349,7 @@
         ret
     }
 
-    .method public static void Casting.CastClassInt_Full_Invalid_StackObjRef() cil managed
+    .method public static void Casting.CastClassInt_Full_Invalid_TypeMismatch() cil managed
     {
         ldc.i4.0
         castclass CastingTestsType
@@ -365,7 +365,7 @@
         ret
     }
 
-    .method public static void Casting.BoxIntPointer_Full_Invalid_UnmanagedPointer.ExpectedValClassObjRefVariable(int32* i) cil managed
+    .method public static void Casting.BoxIntPointer_Full_Invalid_TypeMismatch(int32* i) cil managed
     {
         ldarg.0
         box     int32*
@@ -373,7 +373,7 @@
         ret
     }
 
-    .method public static void Casting.BoxToUnsatisfiedConstraint_Invalid_UnsatisfiedBoxOperand(class GenericTypeWithConstrained<class [System.Runtime]System.Object> c) cil managed
+    .method public static void Casting.BoxToUnsatisfiedConstraint_Invalid_TypeConstraintViolation(class GenericTypeWithConstrained<class [System.Runtime]System.Object> c) cil managed
     {
         ldarg.0
         box     class GenericTypeWithConstrained<class [System.Runtime]System.Object>

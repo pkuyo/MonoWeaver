@@ -28,7 +28,7 @@
         ret
     }
 
-    .method static public hidebysig void LoadIndirect.FromInt64Ref_Full_Invalid_StackUnexpected(int64&) cil managed
+    .method static public hidebysig void LoadIndirect.FromInt64Ref_Full_Invalid_TypeMismatch(int64&) cil managed
     {
         ldarg.0
         ldind.i4
@@ -36,7 +36,7 @@
         ret
     }
 
-    .method static public hidebysig void LoadIndirectRef.FromInt64Ref_Full_Invalid_StackUnexpected(int64&) cil managed
+    .method static public hidebysig void LoadIndirectRef.FromInt64Ref_Full_Invalid_TypeMismatch(int64&) cil managed
     {
         ldarg.0
         ldind.ref
@@ -77,7 +77,7 @@
         ret
     }
 
-    .method static public hidebysig void StoreIndirect.AssignToRefString_Full_Invalid_StackUnexpected(string&) cil managed
+    .method static public hidebysig void StoreIndirect.AssignToRefString_Full_Invalid_TypeMismatch(string&) cil managed
     {
         .locals init (object V_0)
 
@@ -114,7 +114,7 @@
         ret
     }
 
-    .method static public hidebysig void StoreObject.AssignStringToRefStringAsObject_Full_Invalid_StackUnexpected(string&) cil managed
+    .method static public hidebysig void StoreObject.AssignStringToRefStringAsObject_Full_Invalid_TypeMismatch(string&) cil managed
     {
         // ref string x;
         // string y = "a";
@@ -144,7 +144,7 @@
         ret
     }
 
-    .method static public hidebysig void StoreObject.InvalidTypeToken_Full_Invalid_StackUnexpected() cil managed
+    .method static public hidebysig void StoreObject.InvalidTypeToken_Full_Invalid_TypeMismatch() cil managed
     {
         .locals init (object V_0)
 

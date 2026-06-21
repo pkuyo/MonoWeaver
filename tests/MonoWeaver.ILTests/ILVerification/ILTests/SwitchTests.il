@@ -29,7 +29,7 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Switch.Int64Value_Full_Warning_StackUnexpected() cil managed
+    .method static public hidebysig void Switch.Int64Value_Full_Warning_TypeMismatch() cil managed
     {
         .maxstack 1
 
@@ -255,7 +255,7 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Switch.ObjectValue_Full_Invalid_StackUnexpected() cil managed
+    .method static public hidebysig void Switch.ObjectValue_Full_Invalid_TypeMismatch() cil managed
     {
         .maxstack 1
 

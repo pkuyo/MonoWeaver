@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 .assembly extern System.Runtime
@@ -29,14 +29,14 @@
         ret
     }
 
-    .method public hidebysig instance void Newobj.InstanceMethod_Invalid_CtorExpected() cil managed
+    .method public hidebysig instance void Newobj.InstanceMethod_Invalid_CtorExcepted() cil managed
     {
         newobj      instance void NewobjTestsType::InstanceMethod()
         pop
         ret
     }
 
-    .method public hidebysig instance void Newobj.AbstractMethod_Invalid_CtorSig.CtorExpected() cil managed
+    .method public hidebysig instance void Newobj.AbstractMethod_Invalid_CtorExcepted() cil managed
     {
         newobj      instance void AbstractClass::AbstractMethod()
         pop

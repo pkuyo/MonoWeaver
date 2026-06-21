@@ -212,7 +212,7 @@
         ret
     }
 
-    .method static public hidebysig void LdFtn.IntForStaticClassRefConstraint_Invalid_UnsatisfiedMethodParentInst() cil managed
+    .method static public hidebysig void LdFtn.IntForStaticClassRefConstraint_Invalid_TypeConstraintViolation() cil managed
     {
         // var a = new System.Action(GenericTestClass<int>.StaticMethod);
         // a();
@@ -224,7 +224,7 @@
         ret
     }
 
-    .method static public hidebysig void LdFtn.IntForStaticMethodRefConstraint_Invalid_UnsatisfiedMethodInst() cil managed
+    .method static public hidebysig void LdFtn.IntForStaticMethodRefConstraint_Invalid_TypeConstraintViolation() cil managed
     {
         // var a = new System.Action(TestClass.StaticMethod<int>);
         // a();
@@ -318,7 +318,7 @@
         ret
     }
 
-    .method static public hidebysig void LdvirtFtn.InstanceValueTypeMethodOpenObjRef_Full_Invalid_DelegateCtor() cil managed
+    .method static public hidebysig void LdvirtFtn.InstanceValueTypeMethodOpenObjRef_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn       instance int32 [System.Runtime]System.Int32::GetHashCode()
@@ -339,7 +339,7 @@
         ret
     }
 
-    .method static public hidebysig void LdvirtFtn.ValueTypeNoBox_Full_Invalid_StackObjRef.StackUnexpected.StackUnexpected.DelegateCtorSigO.DelegateCtor(int32 i) cil managed
+    .method static public hidebysig void LdvirtFtn.ValueTypeNoBox_Full_Invalid_TypeMismatch(int32 i) cil managed
     {
         // (int i)
         // var f = new System.Func<int, int>(i.CompareTo);
@@ -355,7 +355,7 @@
         ret
     }
 
-    .method static public hidebysig void LdvirtFtn.ValueTypeWrongBox_Full_Invalid_StackUnexpected.DelegateCtorSigO.DelegatePattern.DelegateCtor(int32 i) cil managed
+    .method static public hidebysig void LdvirtFtn.ValueTypeWrongBox_Full_Invalid_TypeMismatch(int32 i) cil managed
     {
         // (int i)
         // var f = new System.Func<int, int>(i.CompareTo);
@@ -372,7 +372,7 @@
         ret
     }
 
-    .method static public hidebysig void LdvirtFtn.ObjectForTestClassInstance_Full_Invalid_StackUnexpected.DelegateCtor(object c) cil managed
+    .method static public hidebysig void LdvirtFtn.ObjectForTestClassInstance_Full_Invalid_TypeMismatch(object c) cil managed
     {
         // (object c)
         // var a = new System.Action(c.InstanceMethod);
@@ -394,7 +394,7 @@
         ret
     }
 
-    .method static public hidebysig void NewObj.IntForRefConstraint_Invalid_UnsatisfiedMethodParentInst() cil managed
+    .method static public hidebysig void NewObj.IntForRefConstraint_Invalid_TypeConstraintViolation() cil managed
     {
         // GenericTestClass<int> c = new GenericTestClass<int>();
 
@@ -467,7 +467,7 @@
     //     ret
     // }
 
-    .method static public hidebysig void LdFtn.DelegateMissingArgument_Full_Invalid_DelegateCtor() cil managed
+    .method static public hidebysig void LdFtn.DelegateMissingArgument_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn       void TestClass::StaticMethod()
@@ -477,7 +477,7 @@
         ret
     }
 
-    .method static public hidebysig void LdFtn.DelegateWrongReturnType_Full_Invalid_DelegateCtor() cil managed
+    .method static public hidebysig void LdFtn.DelegateWrongReturnType_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn       int32 TestClass::StaticIntMethod()
@@ -507,7 +507,7 @@
     }
 
     // creating a Func<string> from a object return method is invalid
-    .method private hidebysig instance void StringFuncFromObjectMethod_Full_Invalid_DelegateCtor() cil managed
+    .method private hidebysig instance void StringFuncFromObjectMethod_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn   object TestMethodsType::ObjectReturnMethod()
@@ -517,7 +517,7 @@
     }
 
     // creating a Func<byte> from an int return method is invalid
-    .method private hidebysig instance void ByteFuncFromIntMethod_Full_Invalid_DelegateCtor() cil managed
+    .method private hidebysig instance void ByteFuncFromIntMethod_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn   int32 TestMethodsType::IntReturnMethod()
@@ -527,7 +527,7 @@
     }
 
     // creating a Func<int> from a byte return method is invalid
-    .method private hidebysig instance void IntFuncFromByteMethod_Full_Invalid_DelegateCtor() cil managed
+    .method private hidebysig instance void IntFuncFromByteMethod_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn   uint8 TestMethodsType::ByteReturnMethod()
@@ -537,7 +537,7 @@
     }
 
     // creating a Func<byte> from a ByteEnum return method is invalid
-    .method private hidebysig instance void IntFuncFromByteEnumMethod_Full_Invalid_DelegateCtor() cil managed
+    .method private hidebysig instance void IntFuncFromByteEnumMethod_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn   valuetype ByteEnum TestMethodsType::ByteEnumReturnMethod()
@@ -547,7 +547,7 @@
     }
 
     // creating an Action<int> from a method with byte parameter is invalid
-    .method private hidebysig instance void IntActionFromByteMethod_Full_Invalid_DelegateCtor() cil managed
+    .method private hidebysig instance void IntActionFromByteMethod_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn   void TestMethodsType::ByteParamMethod(uint8)
@@ -557,7 +557,7 @@
     }
 
     // creating an Action<byte> from a method with an enum (with underlying type byte) as parameter is invalid
-    .method private hidebysig instance void ByteActionFromByteEnum_Full_Invalid_DelegateCtor() cil managed
+    .method private hidebysig instance void ByteActionFromByteEnum_Full_Invalid_TypeMismatch() cil managed
     {
         ldnull
         ldftn   void TestMethodsType::ByteEnumParamMethod(valuetype ByteEnum)

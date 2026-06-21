@@ -83,7 +83,7 @@
 .class public auto ansi beforefieldinit ThisStateTestsType
         extends [System.Runtime]System.Object
 {
-    .method public hidebysig instance void 'special.ThrowThisUninit..ctor_Full_Invalid_UninitStack.ThrowOrCatchOnlyExceptionType'() cil managed { ret }
+    .method public hidebysig instance void 'special.ThrowThisUninit..ctor_Full_Invalid_InvalidExitStackHeight'() cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor() cil managed 
     {
         ldarg.0
@@ -104,7 +104,7 @@
         extends [System.Runtime]System.Object
 {
 
-    .method public hidebysig instance void 'special.StoreThisUninit..ctor_Full_Invalid_ThisUninitStore'(int32) cil managed { ret }
+    .method public hidebysig instance void 'special.StoreThisUninit..ctor_Full_Invalid_UninitializedThis'(int32) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(int32) cil managed 
     {
         newobj  instance void LoadStoreVarTestsType::.ctor()
@@ -114,7 +114,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.LoadAddrOfThisUninit..ctor_Full_Invalid_ThisUninitStore'(int64) cil managed { ret }
+    .method public hidebysig instance void 'special.LoadAddrOfThisUninit..ctor_Full_Invalid_UninitializedThis'(int64) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(int64) cil managed 
     {
         ldarga 0

@@ -7,6 +7,8 @@ internal static class MonoWeaverVerifierAdapter
     public static VerificationRunResult Verify(MethodTestCase testCase, VerifyOptions options)
     {
         var diagnostics = new List<string>();
+        var errorTypes = new List<string>();
+        var warningTypes = new List<string>();
         var crashed = false;
         var hasVerifierWarning = false;
         var hasVerifierError = false;
@@ -38,6 +40,8 @@ internal static class MonoWeaverVerifierAdapter
             HasVerifierError = hasVerifierError,
             Crashed = crashed,
             Diagnostics = diagnostics,
+            ErrorTypes = errorTypes.Distinct(StringComparer.Ordinal).ToArray(),
+            WarningTypes = warningTypes.Distinct(StringComparer.Ordinal).ToArray(),
             ExceptionText = exceptionText,
         };
 
@@ -47,6 +51,10 @@ internal static class MonoWeaverVerifierAdapter
             {
                 hasVerifierWarning |= diagnostic.Severity == DiagnosticSeverity.Warning;
                 hasVerifierError |= diagnostic.Severity >= DiagnosticSeverity.Error;
+                if (diagnostic.Severity == DiagnosticSeverity.Warning)
+                    warningTypes.Add(diagnostic.Type.ToString());
+                if (diagnostic.Severity >= DiagnosticSeverity.Error)
+                    errorTypes.Add(diagnostic.Type.ToString());
                 diagnostics.Add(FormatDiagnostic(diagnostic));
             }
         }

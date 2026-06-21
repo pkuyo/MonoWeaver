@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 .assembly extern System.Runtime
@@ -56,7 +56,8 @@
         ret
     }
 
-    .method public hidebysig instance void Call.SendFunctionPointerWithInaccessibleReturnType_Full_Invalid_MethodAccess.MethodAccess() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method public hidebysig instance void Call.SendFunctionPointerWithInaccessibleReturnType_Full_Invalid_MethodAccess() cil managed
     {
         newobj instance void C::.ctor()
         ldftn class D/D_Private D::StaticMethodReturningPrivateTypeInstance(int32)

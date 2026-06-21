@@ -81,7 +81,7 @@
         IL_0014: ret
     }
 
-    .method static public hidebysig void Branching.NullConditional_Full_Invalid_StackUnexpected() cil managed
+    .method static public hidebysig void Branching.NullConditional_Full_Invalid_TypeMismatch() cil managed
     {
         //object o = null;
         //Type t = o != null ? o.GetType() : o;
@@ -175,7 +175,7 @@
         ret
     }
 
-    .method static public hidebysig void Branching.UnequalStackMergeArrays_Full_Invalid_StackUnexpected(class CustomComparer[] comparers,
+    .method static public hidebysig void Branching.UnequalStackMergeArrays_Full_Invalid_TypeMismatch(class CustomComparer[] comparers,
         class [System.Runtime]System.Collections.IEqualityComparer[] customComparer) cil managed
     {
         .maxstack 1
@@ -197,7 +197,7 @@
         ret
     }
 
-    .method static public hidebysig void Branching.UnequalStackMergeGeneric_Full_Invalid_PathStackUnexpected<T>(!!T generic,
+    .method static public hidebysig void Branching.UnequalStackMergeGeneric_Full_Invalid_TypeMismatch<T>(!!T generic,
         object obj) cil managed
     {
         .maxstack 1
@@ -578,7 +578,8 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Branching.FromTryIntoCatch_Invalid_BranchOutOfTry.BranchIntoHandler() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method static public hidebysig void Branching.FromTryIntoCatch_Invalid_BranchOutOfTry() cil managed
     {
         .maxstack 2
 
@@ -601,7 +602,8 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Branching.FromTryIntoFilter_Invalid_BranchOutOfTry.BranchIntoFilter() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method static public hidebysig void Branching.FromTryIntoFilter_Invalid_BranchOutOfTry() cil managed
     {
         .try
         {
@@ -621,7 +623,8 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Branching.FromTryIntoFinally_Invalid_BranchOutOfTry.BranchIntoHandler() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method static public hidebysig void Branching.FromTryIntoFinally_Invalid_BranchOutOfTry() cil managed
     {
         .maxstack 2
 
@@ -757,7 +760,7 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Fallthrough.OutOfTryIntoFinally_Invalid_FallthroughException.FallthroughIntoHandler() cil managed
+    .method static public hidebysig void Fallthrough.OutOfTryIntoFinally_Invalid_InvalidFallThrough() cil managed
     {
         .try
         {
@@ -769,7 +772,7 @@
         }
     }
 
-    .method static public hidebysig void Fallthrough.OutOfTryIntoCatch_Invalid_FallthroughException.FallthroughIntoHandler() cil managed
+    .method static public hidebysig void Fallthrough.OutOfTryIntoCatch_Invalid_InvalidFallThrough() cil managed
     {
         .try
         {
@@ -784,7 +787,7 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Fallthrough.OutOfCatch_Invalid_FallthroughException() cil managed
+    .method static public hidebysig void Fallthrough.OutOfCatch_Invalid_InvalidFallThrough() cil managed
     {
         .try
         {
@@ -799,7 +802,7 @@
         lbl_ret: ret
     }
 
-    .method static public hidebysig void Fallthrough.OutOfTryIntoFilter_Invalid_FallthroughException.FallthroughIntoFilter() cil managed
+    .method static public hidebysig void Fallthrough.OutOfTryIntoFilter_Invalid_InvalidFallThrough() cil managed
     {
         .try
         {
@@ -834,7 +837,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.IntoReadonlyInstruction_Invalid_BadJumpTarget(object[] objectArray) cil managed
+    .method static public hidebysig void Branch.IntoReadonlyInstruction_Invalid_InvalidBrTarget(object[] objectArray) cil managed
     {
         // objectArray[0];
 
@@ -849,7 +852,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.IntoConstrainedInstruction_Invalid_BadJumpTarget<T>(!!T arg) cil managed
+    .method static public hidebysig void Branch.IntoConstrainedInstruction_Invalid_InvalidBrTarget<T>(!!T arg) cil managed
     {
         // arg.ToString();
         ldarga.s    arg
@@ -875,7 +878,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.IntoVolatileInstruction_Invalid_BadJumpTarget() cil managed
+    .method static public hidebysig void Branch.IntoVolatileInstruction_Invalid_InvalidBrTarget() cil managed
     {
         // volatileField = 0;
 
@@ -888,7 +891,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.IntoUnalignedInstruction_Invalid_BadJumpTarget() cil managed 
+    .method static public hidebysig void Branch.IntoUnalignedInstruction_Invalid_InvalidBrTarget() cil managed 
     {
         .locals init (
             int32&
@@ -904,7 +907,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.IntoUnalignedVolatileInstruction_Invalid_BadJumpTarget() cil managed 
+    .method static public hidebysig void Branch.IntoUnalignedVolatileInstruction_Invalid_InvalidBrTarget() cil managed 
     {
         .locals init (
             int32&
@@ -921,7 +924,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.IntoTailInstruction_Invalid_BadJumpTarget() cil managed 
+    .method static public hidebysig void Branch.IntoTailInstruction_Invalid_InvalidBrTarget() cil managed 
     {
         br      MidInstr
 
@@ -949,7 +952,7 @@
         ret
     }
 
-    .method static public hidebysig void Branch.BackwardWithoutPredecessor_Warning_BackwardBranch() cil managed 
+    .method static public hidebysig void Branch.BackwardWithoutPredecessor_Warning_InvalidBackwardBranch() cil managed 
     {
         br      MethodEnd
 

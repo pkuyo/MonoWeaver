@@ -39,14 +39,14 @@
         ret
     }
 
-    .method public instance void Stsfld.UnsatisfiedParentConstraints_Invalid_UnsatisfiedFieldParentInst() cil managed
+    .method public instance void Stsfld.UnsatisfiedParentConstraints_Invalid_TypeConstraintViolation() cil managed
     {
         ldc.i4.0
         stsfld   int32 class ConstrainedClass`1<int32>::StaticField
         ret
     }
 
-    .method public instance void Stfld.InitonlyFieldOutsideCtor_Invalid_InitOnly() cil managed
+    .method public instance void Stfld.InitonlyFieldOutsideCtor_Invalid_InitOnlyFieldAccess() cil managed
     {
         ldarg.0
         ldc.i4.0
@@ -96,7 +96,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.StoreInitonlyFieldOtherType..ctor_Invalid_InitOnly'(class OtherType c) cil managed { ret }
+    .method public hidebysig instance void 'special.StoreInitonlyFieldOtherType..ctor_Invalid_InitOnlyFieldAccess'(class OtherType c) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(class OtherType c) cil managed
     {
         ldarg.0
@@ -107,7 +107,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.StoreInitonlyFieldOtherInstance..ctor_Full_Invalid_InitOnly'(class FieldTestsType c) cil managed { ret }
+    .method public hidebysig instance void 'special.StoreInitonlyFieldOtherInstance..ctor_Full_Invalid_InitOnlyFieldAccess'(class FieldTestsType c) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(class FieldTestsType c) cil managed
     {
         ldarg.0
@@ -118,7 +118,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.StsfldInitonlyInCtor..ctor_Invalid_InitOnly'(bool) cil managed { ret }
+    .method public hidebysig instance void 'special.StsfldInitonlyInCtor..ctor_Invalid_InitOnlyFieldAccess'(bool) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(bool) cil managed
     {
         ldarg.0
@@ -128,7 +128,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.LdsfldInitonlyInCtor..ctor_Invalid_InitOnly'(char) cil managed { ret }
+    .method public hidebysig instance void 'special.LdsfldInitonlyInCtor..ctor_Invalid_InitOnlyFieldAccess'(char) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(char) cil managed
     {
         ldarg.0
@@ -157,7 +157,7 @@
     .field public initonly int32 InstanceInitonlyField
     .field public static initonly int32 StaticInitonlyField
 
-    .method public hidebysig instance void 'special.LdfldStlfdInitonlyCctor..cctor_Invalid_InitOnly'() cil managed { ret }
+    .method public hidebysig instance void 'special.LdfldStlfdInitonlyCctor..cctor_Invalid_InitOnlyFieldAccess'() cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .cctor() cil managed
     {
         ldsfld class OtherType OtherType::Instance

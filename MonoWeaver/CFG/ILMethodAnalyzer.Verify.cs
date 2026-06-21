@@ -939,6 +939,9 @@ public partial class ILMethodAnalyzer
 
                     if (type.Type is not GenericParameter) //泛型参数忽略校验
                         VerifyValueType(type, inst);
+
+                    if (!boxType.IsValueType && boxType is not GenericParameter)
+                        return StackType.Create(module.TypeSystem.Object);
                     
                     return StackType.CreateBoxed(boxType);
                 }

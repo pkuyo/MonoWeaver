@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -35,12 +36,20 @@ public enum CFGExceptionType
     StackOverflow, // 求值栈超过 maxstack。
     InvalidExitStackHeight, // 控制流出口栈高度错误。
     InvalidFallThrough, // 非法顺序落入下一块。
+    InvalidMethodFallThrough, // 非法顺序离开函数。
     UninitializedLocal, // 读取未初始化局部变量。
     IncompatibleMergeTypes, // 控制流合并点栈类型不兼容。
     InvalidBackwardBranch, // 后向分支栈状态不合法。
     IncompatibleMergeDepth, // 控制流合并点栈深度不一致。
     InvalidBrTarget, // 分支目标无效。
-    BrTargetCrossEhRegion, // 分支跨越 EH 区域边界。
+    BranchOutOfTry, // 分支离开 try 区域。
+    BranchOutOfHandler, // 分支离开 catch/handler 区域。
+    BranchOutOfFilter, // 分支离开 filter 区域。
+    BranchOutOfFinally, // 分支离开 finally 区域。
+    BranchOutOfFault, // 分支离开 fault 区域。
+    BranchIntoTry, // 分支进入 try 区域。
+    BranchIntoHandler, // 分支进入 handler 区域。
+    BranchIntoFilter, // 分支进入 filter 区域。
     LeaveTargetInvalid, // leave 目标无效。
     OutOfRange, // 索引或目标超出范围。
     UninitializedThis, // 读取未初始化 this。
@@ -48,7 +57,9 @@ public enum CFGExceptionType
     ReturnTempPtr, // 返回临时指针
     ResolveFailed, // 元数据引用解析失败。
     LdvirtftnOnStatic, //对Static函数使用Ldvirtftn
+
     UnExpected, // 未预期的验证状态。
+    CecilLoadFaulted, // Cecil读取失败
 
     //不可验证
     Unverifiable, // IL 不可验证但可执行。
@@ -116,9 +127,21 @@ public sealed record ExitStackHeightContext(Instruction Instruction, int Expect,
 public sealed record NullInstContext(int Index) : ICFGContext;
 public sealed record HandlerContext(ExceptionHandler Handler) : ICFGContext;
 
-public sealed record MergeBlockContext(ILMethodAnalyzer.BasicBlock from, ILMethodAnalyzer.BasicBlock to) : ICFGContext;
+public sealed record MergeBlockContext(
+    ILMethodAnalyzer.BasicBlock From,
+    ILMethodAnalyzer.BasicBlock To,
+    int? ExpectedDepth = null,
+    int? CurrentDepth = null,
+    IReadOnlyList<string>? ExpectedStack = null,
+    IReadOnlyList<string>? CurrentStack = null) : ICFGContext;
+public sealed record BranchRegionContext(
+    Instruction Instruction,
+    EHandler.Region From,
+    EHandler.Region To) : ICFGContext;
 public sealed record ResolveContext(MemberReference reference) : ICFGContext;
 public sealed record EhRegionContext(EHandler.Region Region1, EHandler.Region Region2) : ICFGContext;
+
+public sealed record CecilFaultContext(Exception e) : ICFGContext;
 
 public sealed record CFGDiagnostic(
     CFGExceptionType Type,
@@ -192,7 +215,21 @@ public sealed record CFGDiagnostic(
                 break;
 
             case MergeBlockContext bc:
-                sb.Append(" from=").Append(bc.from).Append(" to=").Append(bc.to);
+                sb.Append(" from=").Append(bc.From).Append(" to=").Append(bc.To);
+                if (bc.ExpectedDepth is { } expectedDepth)
+                    sb.Append(" expectedDepth=").Append(expectedDepth);
+                if (bc.CurrentDepth is { } currentDepth)
+                    sb.Append(" currentDepth=").Append(currentDepth);
+                if (bc.ExpectedStack != null)
+                    sb.Append(" expectedStack=").Append(FormatStack(bc.ExpectedStack));
+                if (bc.CurrentStack != null)
+                    sb.Append(" currentStack=").Append(FormatStack(bc.CurrentStack));
+                break;
+
+            case BranchRegionContext br:
+                sb.Append(" @ IL_").Append(br.Instruction.Offset.ToString("X4"))
+                  .Append(" from=").Append(br.From)
+                  .Append(" to=").Append(br.To);
                 break;
 
             case ResolveContext rc:
@@ -202,6 +239,9 @@ public sealed record CFGDiagnostic(
             case EhRegionContext eh:
                 sb.Append(" region1=").Append(eh.Region1)
                   .Append(" region2=").Append(eh.Region2);
+                break;
+            case CecilFaultContext cf:
+                sb.Append(" exception:").Append(cf.e);
                 break;
         }
 
@@ -318,10 +358,36 @@ public sealed record CFGDiagnostic(
         };
     
     public static CFGDiagnostic IncompatibleMerge(CFGExceptionType exceptionType, ILMethodAnalyzer.BasicBlock from, ILMethodAnalyzer.BasicBlock to,
-        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null,
+        int? expectedDepth = null, int? currentDepth = null,
+        IReadOnlyList<string>? expectedStack = null, IReadOnlyList<string>? currentStack = null)
         => new(exceptionType, severity,
             message ?? $"Incompatible basic block merge",
-            new MergeBlockContext(from, to));
+            new MergeBlockContext(from, to, expectedDepth, currentDepth, expectedStack, currentStack));
+
+    private static string FormatStack(IReadOnlyList<string> stack)
+        => stack.Count == 0 ? "[]" : "[" + string.Join(", ", stack) + "]";
+
+    public static CFGDiagnostic BranchRegionInvalid(CFGExceptionType exceptionType, Instruction inst,
+        EHandler.Region from, EHandler.Region to,
+        DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
+        => new(exceptionType, severity,
+            message ?? FormatBranchRegionInvalidMessage(exceptionType),
+            new BranchRegionContext(inst, from, to));
+
+    private static string FormatBranchRegionInvalidMessage(CFGExceptionType exceptionType)
+        => exceptionType switch
+        {
+            CFGExceptionType.BranchOutOfTry => "Branch leaves a try region.",
+            CFGExceptionType.BranchOutOfHandler => "Branch leaves an exception handler region.",
+            CFGExceptionType.BranchOutOfFilter => "Branch leaves a filter region.",
+            CFGExceptionType.BranchOutOfFinally => "Branch leaves a finally region.",
+            CFGExceptionType.BranchOutOfFault => "Branch leaves a fault region.",
+            CFGExceptionType.BranchIntoTry => "Branch target enters a try region.",
+            CFGExceptionType.BranchIntoHandler => "Branch target enters an exception handler region.",
+            CFGExceptionType.BranchIntoFilter => "Branch target enters a filter region.",
+            _ => "Branch target crosses EH region boundaries.",
+        };
     
     public static CFGDiagnostic InvalidOperand(Type expect, Type current, Instruction inst,
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null)
@@ -378,6 +444,11 @@ public sealed record CFGDiagnostic(
         => new(CFGExceptionType.ResolveFailed, severity,
             message ?? "MemberReference cannot be resolved to MemberDefinition",
             new ResolveContext(memberReference));
+
+    public static CFGDiagnostic CecilLoadFailed(Exception e)
+        => new(CFGExceptionType.CecilLoadFaulted, DiagnosticSeverity.Fatal,
+            "Mono Cecil load method body failed",
+            new CecilFaultContext(e));
 }
 
 
@@ -396,12 +467,19 @@ public partial class ILMethodAnalyzer
 
     public List<CFGDiagnostic> Diagnostics { get; } = new();
 
+    private readonly HashSet<DiagnosticDedupKey> _reportedDiagnostics = new();
+
     public int MaxErrorCount { get; init; } = 10;
     
     private int _currentErrorCount;
     
     private void ReportDiagnostic(CFGDiagnostic diag, AbortStrategy abortStrategy = AbortStrategy.AbortNextStep)
     {
+        if (TryCreateDedupKey(diag, out var key) && !_reportedDiagnostics.Add(key))
+        {
+            return;
+        }
+
         Diagnostics.Add(diag);
         _currentErrorCount += diag.Severity is DiagnosticSeverity.Error ? 1 : 0;
         if (_currentErrorCount > MaxErrorCount || 
@@ -410,10 +488,61 @@ public partial class ILMethodAnalyzer
         {
             throw new CfgVerifyException(this);
         }
+    }
 
-        if ((int)abortStrategy > (int)_abortVerificationStrategy && diag.Severity != DiagnosticSeverity.Warning)
+    private static bool TryCreateDedupKey(CFGDiagnostic diag, out DiagnosticDedupKey key)
+    {
+        var instruction = diag.Context switch
         {
-            _abortVerificationStrategy = abortStrategy;
+            InstContext ic => ic.Instruction,
+            TypeMismatchContext tm => tm.Instruction,
+            TypeConstraintContext tc => tc.Instruction,
+            AccessContext ac => ac.Instruction,
+            InvalidOperandContext io => io.Instruction,
+            OperandOutOfRangeContext oc => oc.Instruction,
+            ExitStackHeightContext esh => esh.Instruction,
+            MergeBlockContext mb => mb.To.Leader,
+            BranchRegionContext br => br.Instruction,
+            _ => null
+        };
+
+        if (instruction == null)
+        {
+            key = default;
+            return false;
+        }
+
+        key = new DiagnosticDedupKey(instruction, diag.Type);
+        return true;
+    }
+
+    private readonly struct DiagnosticDedupKey : IEquatable<DiagnosticDedupKey>
+    {
+        private readonly Instruction _instruction;
+        private readonly CFGExceptionType _type;
+
+        public DiagnosticDedupKey(Instruction instruction, CFGExceptionType type)
+        {
+            _instruction = instruction;
+            _type = type;
+        }
+
+        public bool Equals(DiagnosticDedupKey other)
+        {
+            return ReferenceEquals(_instruction, other._instruction) && _type == other._type;
+        }
+
+        public override bool Equals(object? obj)
+        {
+            return obj is DiagnosticDedupKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                return (RuntimeHelpers.GetHashCode(_instruction) * 397) ^ (int)_type;
+            }
         }
     }
 

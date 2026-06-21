@@ -1,0 +1,87 @@
+name: IL verification tests
+
+env:
+  DOTNET_VERSION: 10.0.x
+  ILASM_PACKAGE_ID: runtime.win-x64.Microsoft.NETCore.ILAsm
+  ILASM_PACKAGE_VERSION: 10.0.*
+
+on:
+  push:
+    paths:
+      - ".github/workflows/il-tests.yml"
+      - "MonoWeaver/**"
+      - "tests/MonoWeaver.ILTests/**"
+      - "MonoWeaver.slnx"
+  pull_request:
+    paths:
+      - ".github/workflows/il-tests.yml"
+      - "MonoWeaver/**"
+      - "tests/MonoWeaver.ILTests/**"
+      - "MonoWeaver.slnx"
+
+jobs:
+  il-tests:
+    name: IL tests
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Configure .NET Core ilasm
+        shell: pwsh
+        run: |
+          $projectDir = Join-Path $env:RUNNER_TEMP "ilasm-package"
+          New-Item -ItemType Directory -Force -Path $projectDir | Out-Null
+
+          $projectPath = Join-Path $projectDir "ilasm-package.csproj"
+          @"
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>net10.0</TargetFramework>
+            </PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="$env:ILASM_PACKAGE_ID" Version="$env:ILASM_PACKAGE_VERSION" PrivateAssets="all" />
+            </ItemGroup>
+          </Project>
+          "@ | Set-Content -Path $projectPath -Encoding UTF8
+
+          $packageCache = Join-Path $projectDir "packages"
+          dotnet restore $projectPath --packages $packageCache
+
+          $packageRoot = Join-Path $packageCache "runtime.win-x64.microsoft.netcore.ilasm"
+          $ilasm = Get-ChildItem -Path $packageRoot -Recurse -Filter "ilasm.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+          if (-not $ilasm) {
+            throw "Could not find .NET Core ilasm.exe under $packageRoot"
+          }
+
+          "ILASM=$($ilasm.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "ILASM=$($ilasm.FullName)"
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          dotnet --info
+          Write-Host "ILASM=$env:ILASM"
+
+      - name: Restore
+        run: dotnet restore tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
+
+      - name: Test
+        run: dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj --no-restore --configuration Release --logger "trx;LogFileName=il-tests.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: il-test-results
+          path: tests/MonoWeaver.ILTests/TestResults/**/*.trx
+          if-no-files-found: ignore

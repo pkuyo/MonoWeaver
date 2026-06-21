@@ -30,7 +30,7 @@
         ret
     }
 
-    .method public hidebysig instance void Return.VoidNonEmptyStack_Invalid_ReturnVoid() cil managed
+    .method public hidebysig instance void Return.VoidNonEmptyStack_Invalid_InvalidExitStackHeight() cil managed
     {
         ldarg.0
         ret
@@ -42,19 +42,20 @@
         ret
     }
 
-    .method public hidebysig instance int32 Return.Int32EmptyStack_Invalid_ReturnMissing() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method public hidebysig instance int32 Return.Int32EmptyStack_Invalid_StackUnderflow() cil managed
     {
         ret
     }
 
-    .method public hidebysig instance int32 Return.Int32StackLeft_Invalid_ReturnEmpty() cil managed
+    .method public hidebysig instance int32 Return.Int32StackLeft_Invalid_InvalidExitStackHeight() cil managed
     {
         ldc.i4.0
         ldc.i4.0
         ret
     }
 
-    .method public hidebysig instance void Return.FromTry_Invalid_ReturnFromTry() cil managed
+    .method public hidebysig instance void Return.FromTry_Invalid_InvalidInstruction() cil managed
     {
         .try
         {
@@ -70,7 +71,7 @@
         ret
     }
 
-    .method public hidebysig instance void Return.FromCatch_Invalid_ReturnFromHandler() cil managed
+    .method public hidebysig instance void Return.FromCatch_Invalid_InvalidInstruction() cil managed
     {
         .try
         {
@@ -86,7 +87,7 @@
         ret
     }
 
-    .method public hidebysig instance void Return.FromFilter_Invalid_ReturnFromFilter() cil managed
+    .method public hidebysig instance void Return.FromFilter_Invalid_InvalidInstruction() cil managed
     {
         .try
         {
@@ -108,13 +109,13 @@
         ret
     }
 
-    .method public hidebysig instance int32 Return.ObjectForInt32_Full_Invalid_StackUnexpected(object o) cil managed
+    .method public hidebysig instance int32 Return.ObjectForInt32_Full_Invalid_TypeMismatch(object o) cil managed
     {
         ldarg.1
         ret
     }
 
-    .method public hidebysig instance int32& Return.LocalArgByRef_Full_Invalid_ReturnPtrToStack(int32 i) cil managed
+    .method public hidebysig instance int32& Return.LocalArgByRef_Full_Invalid_ReturnTempPtr(int32 i) cil managed
     {
         ldarga.s    i
         ret
@@ -133,7 +134,7 @@
         ret
     }
 
-    .method public hidebysig instance int32& Return.LocalStructFieldByRef_Full_Invalid_ReturnPtrToStack(valuetype Struct s) cil managed
+    .method public hidebysig instance int32& Return.LocalStructFieldByRef_Full_Invalid_ReturnTempPtr(valuetype Struct s) cil managed
     {
         ldarg.1
         ldflda      int32 Struct::instanceField
@@ -148,7 +149,7 @@
         ret
     }
 
-    .method public hidebysig instance void MissingReturn_Invalid_MethodFallthrough() cil managed
+    .method public hidebysig instance void MissingReturn_Invalid_InvalidMethodFallThrough() cil managed
     {
         ldarg.0
     }
@@ -161,7 +162,7 @@
         ret
     }
 
-    .method public hidebysig instance void 'special.ReturnBeforeBaseCtor..ctor_Full_Invalid_ThisUninitReturn'(int32) cil managed { ret }
+    .method public hidebysig instance void 'special.ReturnBeforeBaseCtor..ctor_Full_Invalid_UninitThisReturn'(int32) cil managed { ret }
     .method public hidebysig specialname rtspecialname instance void .ctor(int32) cil managed 
     {
         ret

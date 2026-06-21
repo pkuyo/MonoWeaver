@@ -131,11 +131,11 @@ internal sealed class ILTestDataLoader : IDisposable
         if (!methodName.Contains('_', StringComparison.Ordinal))
             return false;
 
-        var index = methodName.LastIndexOf("_Valid", StringComparison.Ordinal);
+        var index = LastIndexOfCaseMarker(methodName, "_Valid");
         if (index < 0)
-            index = methodName.LastIndexOf("_Invalid", StringComparison.Ordinal);
+            index = LastIndexOfCaseMarker(methodName, "_Invalid");
         if (index < 0)
-            index = methodName.LastIndexOf("_Warning", StringComparison.Ordinal);
+            index = LastIndexOfCaseMarker(methodName, "_Warning");
         if (index < 0)
             return false;
 
@@ -153,24 +153,42 @@ internal sealed class ILTestDataLoader : IDisposable
             return true;
         }
 
-        if (suffixParts.Length == 2 && suffixParts[0] == "Invalid")
+        if (suffixParts.Length >= 2 && suffixParts[0] == "Invalid")
         {
             kind = ExpectedKind.Invalid;
-            expectedErrors = suffixParts[1]
+            expectedErrors = string.Join('_', suffixParts.Skip(1))
                 .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             return true;
         }
 
-        if ((suffixParts.Length == 1 || suffixParts.Length == 2) && suffixParts[0] == "Warning")
+        if (suffixParts.Length >= 1 && suffixParts[0] == "Warning")
         {
             kind = ExpectedKind.Warning;
-            expectedErrors = suffixParts.Length == 2
-                ? suffixParts[1].Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            expectedErrors = suffixParts.Length >= 2
+                ? string.Join('_', suffixParts.Skip(1))
+                    .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 : Array.Empty<string>();
             return true;
         }
 
         return false;
+    }
+
+    private static int LastIndexOfCaseMarker(string methodName, string marker)
+    {
+        var index = methodName.LastIndexOf(marker, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            var next = index + marker.Length;
+            if (next == methodName.Length || methodName[next] == '_')
+                return index;
+
+            index = index == 0
+                ? -1
+                : methodName.LastIndexOf(marker, index - 1, StringComparison.Ordinal);
+        }
+
+        return -1;
     }
 
     private static MethodDefinition ResolveSpecialTestMethod(MethodDefinition markerMethod, ref string friendlyName)

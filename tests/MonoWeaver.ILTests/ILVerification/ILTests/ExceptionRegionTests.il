@@ -70,7 +70,7 @@
         ret
     }
 
-    .method public instance void Leave.ToOtherFilter_Invalid_LeaveOutOfFilter.LeaveIntoFilter() cil managed
+    .method public instance void Leave.ToOtherFilter_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -111,7 +111,7 @@
         ret
     }
 
-    .method public instance void Leave.OutOfFilter_Invalid_LeaveOutOfFilter() cil managed
+    .method public instance void Leave.OutOfFilter_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -167,7 +167,7 @@
         ret
     }
 
-    .method public instance void Leave.ToOtherFinally_Invalid_LeaveOutOfFinally.LeaveIntoHandler() cil managed
+    .method public instance void Leave.ToOtherFinally_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -194,7 +194,7 @@
         ret
     }
 
-    .method public instance void Leave.ToOtherFault_Invalid_LeaveOutOfFault.LeaveIntoFault.LeaveIntoHandler() cil managed
+    .method public instance void Leave.ToOtherFault_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -221,7 +221,7 @@
         ret
     }
 
-    .method public instance void Leave.OutOfFinally_Invalid_LeaveOutOfFinally() cil managed
+    .method public instance void Leave.OutOfFinally_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -236,7 +236,7 @@
         ret
     }
 
-    .method public instance void Leave.OutOfFault_Invalid_LeaveOutOfFault() cil managed
+    .method public instance void Leave.OutOfFault_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -346,7 +346,7 @@
         ret
     }
 
-    .method public instance void Leave.IntoOtherTry_Invalid_LeaveIntoTry() cil managed
+    .method public instance void Leave.IntoOtherTry_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -371,7 +371,7 @@
         ret
     }
 
-    .method public instance void Leave.ToSecondInstrOfNestedDisjointTry_Invalid_LeaveIntoTry() cil managed
+    .method public instance void Leave.ToSecondInstrOfNestedDisjointTry_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -528,7 +528,7 @@
         ret
     }
 
-    .method public instance void Leave.CatchToSecondInstrOfNestedTry_Invalid_LeaveIntoTry() cil managed
+    .method public instance void Leave.CatchToSecondInstrOfNestedTry_Invalid_LeaveTargetInvalid() cil managed
     {
         .try
         {
@@ -611,7 +611,8 @@
         ret
     }
 
-    .method public instance void Leave.FromOutsideIntoFilter_Invalid_LeaveIntoFilter() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method public instance void Leave.FromOutsideIntoFilter_Invalid_LeaveTargetInvalid() cil managed
     {
         leave   IntoFilter
 
@@ -634,7 +635,8 @@
         ret
     }
 
-    .method public instance void Leave.FromOutsideIntoHandler_Invalid_LeaveIntoHandler() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method public instance void Leave.FromOutsideIntoHandler_Invalid_LeaveTargetInvalid() cil managed
     {
         leave   IntoHandler
 
@@ -653,7 +655,8 @@
         ret
     }
 
-    .method public instance void Leave.FromOutsideIntoTry_Invalid_LeaveIntoTry() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method public instance void Leave.FromOutsideIntoTry_Invalid_LeaveTargetInvalid() cil managed
     {
         leave   IntoTry
 
@@ -742,7 +745,7 @@
         ret
     }
 
-    .method public hidebysig instance void Catch.NonExceptionDerivedType_Full_Invalid_ThrowOrCatchOnlyExceptionType() cil managed
+    .method public hidebysig instance void Catch.NonExceptionDerivedType_Full_Invalid_ExceptionHandlerInvalid() cil managed
     {
         .maxstack 1
 
@@ -756,7 +759,7 @@
             ret
     }
 
-    .method public hidebysig instance void Throw.NonExceptionDerivedType_Full_Invalid_ThrowOrCatchOnlyExceptionType() cil managed
+    .method public hidebysig instance void Throw.NonExceptionDerivedType_Full_Invalid_InvalidExitStackHeight() cil managed
     {
         .maxstack 1
 
@@ -765,7 +768,7 @@
         ret
     }
 
-    .method public hidebysig instance void TryOffset.ExceedsCodeSize_Invalid_EHClauseOutOfRange() cil managed
+    .method public hidebysig instance void TryOffset.ExceedsCodeSize_Invalid_CecilLoadFaulted() cil managed
     {
         .maxstack 1
 
@@ -774,7 +777,7 @@
         .try 1000 to 1001 catch [System.Runtime]System.Exception handler 0 to 1
     }
 
-    .method public hidebysig instance void HandlerOffset.ExceedsCodeSize_Invalid_EHClauseOutOfRange() cil managed
+    .method public hidebysig instance void HandlerOffset.ExceedsCodeSize_Invalid_CecilLoadFaulted() cil managed
     {
         .maxstack 1
 
@@ -783,7 +786,7 @@
         .try 0 to 1 catch [System.Runtime]System.Exception handler 1000 to 1001
     }
 
-    .method public hidebysig instance void FilterOffset.ExceedsCodeSize_Invalid_EHClauseOutOfRange() cil managed
+    .method public hidebysig instance void FilterOffset.ExceedsCodeSize_Invalid_CecilLoadFaulted() cil managed
     {
         .maxstack 1
 
@@ -795,7 +798,7 @@
         .try 0 to 2 filter 1000 handler 2 to 4
     }
 
-    .method public hidebysig instance void TryEndOffset.ExceedsCodeSize_Invalid_EHClauseOutOfRange() cil managed
+    .method public hidebysig instance void TryEndOffset.ExceedsCodeSize_Invalid_TryAndHandlerNotInSameEnclosingRegion() cil managed
     {
         .maxstack 1
 
@@ -805,7 +808,7 @@
         .try 0 to 1000 catch [System.Runtime]System.Exception handler 1 to 2
     }
 
-    .method public hidebysig instance void HandlerEndOffset.ExceedsCodeSize_Invalid_EHClauseOutOfRange() cil managed
+    .method public hidebysig instance void HandlerEndOffset.ExceedsCodeSize_Invalid_InvalidInstruction() cil managed
     {
         .maxstack 1
 
@@ -815,7 +818,7 @@
         .try 0 to 1 catch [System.Runtime]System.Exception handler 1 to 1000
     }
 
-    .method public hidebysig instance void FilterOffset.NotBeforeHandlerOffset_Invalid_EHClauseOutOfRange() cil managed
+    .method public hidebysig instance void FilterOffset.NotBeforeHandlerOffset_Invalid_CecilLoadFaulted() cil managed
     {
         .maxstack 1
 

@@ -76,7 +76,7 @@
      ret
   }
 
-  .method public hidebysig instance int32 ShiftLeft.Int32ByInt64_Full_Invalid_StackUnexpected(int32 toBeShifted, int64 shiftBy) cil managed
+  .method public hidebysig instance int32 ShiftLeft.Int32ByInt64_Full_Invalid_TypeMismatch(int32 toBeShifted, int64 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -84,7 +84,7 @@
      ret
   }
 
-  .method public hidebysig instance int32 ShiftLeft.Int32ByFloat64_Full_Invalid_StackUnexpected(int32 toBeShifted, float64 shiftBy) cil managed
+  .method public hidebysig instance int32 ShiftLeft.Int32ByFloat64_Full_Invalid_TypeMismatch(int32 toBeShifted, float64 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -92,7 +92,7 @@
      ret
   }
 
-  .method public hidebysig instance int32 ShiftLeft.Int32ByInt32Ref_Full_Invalid_StackUnexpected(int32 toBeShifted, int32& shiftBy) cil managed
+  .method public hidebysig instance int32 ShiftLeft.Int32ByInt32Ref_Full_Invalid_TypeMismatch(int32 toBeShifted, int32& shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -100,7 +100,7 @@
      ret
   }
 
-  .method public hidebysig instance int32 ShiftLeft.Int32ByObject_Full_Invalid_StackUnexpected(int32 toBeShifted, object shiftBy) cil managed
+  .method public hidebysig instance int32 ShiftLeft.Int32ByObject_Full_Invalid_TypeMismatch(int32 toBeShifted, object shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -108,7 +108,7 @@
      ret
   }
 
-    .method public hidebysig instance int64 ShiftLeft.Int64ByInt64_Full_Invalid_StackUnexpected(int64 toBeShifted, int64 shiftBy) cil managed
+    .method public hidebysig instance int64 ShiftLeft.Int64ByInt64_Full_Invalid_TypeMismatch(int64 toBeShifted, int64 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -116,7 +116,7 @@
      ret
   }
 
-  .method public hidebysig instance int64 ShiftLeft.Int64ByFloat64_Full_Invalid_StackUnexpected(int64 toBeShifted, float64 shiftBy) cil managed
+  .method public hidebysig instance int64 ShiftLeft.Int64ByFloat64_Full_Invalid_TypeMismatch(int64 toBeShifted, float64 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -124,7 +124,7 @@
      ret
   }
 
-  .method public hidebysig instance int64 ShiftLeft.Int64ByInt32Ref_Full_Invalid_StackUnexpected(int64 toBeShifted, int32& shiftBy) cil managed
+  .method public hidebysig instance int64 ShiftLeft.Int64ByInt32Ref_Full_Invalid_TypeMismatch(int64 toBeShifted, int32& shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -132,7 +132,7 @@
      ret
   }
 
-  .method public hidebysig instance int64 ShiftLeft.Int64ByObject_Full_Invalid_StackUnexpected(int64 toBeShifted, object shiftBy) cil managed
+  .method public hidebysig instance int64 ShiftLeft.Int64ByObject_Full_Invalid_TypeMismatch(int64 toBeShifted, object shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -140,7 +140,7 @@
      ret
   }
 
-  .method public hidebysig instance native int ShiftLeft.NativeIntByInt64_Full_Invalid_StackUnexpected(native int toBeShifted, int64 shiftBy) cil managed
+  .method public hidebysig instance native int ShiftLeft.NativeIntByInt64_Full_Invalid_TypeMismatch(native int toBeShifted, int64 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -148,7 +148,7 @@
      ret
   }
 
-  .method public hidebysig instance native int ShiftLeft.NativeIntByFloat64_Full_Invalid_StackUnexpected(native int toBeShifted, float64 shiftBy) cil managed
+  .method public hidebysig instance native int ShiftLeft.NativeIntByFloat64_Full_Invalid_TypeMismatch(native int toBeShifted, float64 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -156,7 +156,7 @@
      ret
   }
 
-  .method public hidebysig instance native int ShiftLeft.NativeIntByInt32Ref_Full_Invalid_StackUnexpected(native int toBeShifted, int32& shiftBy) cil managed
+  .method public hidebysig instance native int ShiftLeft.NativeIntByInt32Ref_Full_Invalid_TypeMismatch(native int toBeShifted, int32& shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -164,7 +164,7 @@
      ret
   }
 
-  .method public hidebysig instance native int ShiftLeft.NativeIntByObject_Full_Invalid_StackUnexpected(native int toBeShifted, object shiftBy) cil managed
+  .method public hidebysig instance native int ShiftLeft.NativeIntByObject_Full_Invalid_TypeMismatch(native int toBeShifted, object shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -172,7 +172,7 @@
      ret
   }
 
-  .method public hidebysig instance float64 ShiftLeft.Float64ByInt32_Full_Invalid_ExpectedIntegerType(float64 toBeShifted, int32 shiftBy) cil managed
+  .method public hidebysig instance float64 ShiftLeft.Float64ByInt32_Full_Invalid_TypeMismatch(float64 toBeShifted, int32 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -180,7 +180,7 @@
      ret
   }
 
-  .method public hidebysig instance int32& ShiftLeft.Int32RefByInt32_Full_Invalid_ExpectedIntegerType(int32& toBeShifted, int32 shiftBy) cil managed
+  .method public hidebysig instance int32& ShiftLeft.Int32RefByInt32_Full_Invalid_TypeMismatch(int32& toBeShifted, int32 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2
@@ -188,7 +188,7 @@
      ret
   }
 
-  .method public hidebysig instance object ShiftLeft.ObjectByInt32_Full_Invalid_ExpectedIntegerType(object toBeShifted, int32 shiftBy) cil managed
+  .method public hidebysig instance object ShiftLeft.ObjectByInt32_Full_Invalid_TypeMismatch(object toBeShifted, int32 shiftBy) cil managed
   {
      ldarg.1
      ldarg.2

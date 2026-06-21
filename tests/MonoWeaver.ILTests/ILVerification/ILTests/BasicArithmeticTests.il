@@ -22,7 +22,7 @@
      ret
   }
 
-  .method public hidebysig instance void  SimpleAdd_Full_Invalid_ExpectedNumericType() cil managed
+  .method public hidebysig instance void  SimpleAdd_Full_Invalid_TypeMismatch() cil managed
   {
     ldstr "sfdsf"
     ldc.i4.3

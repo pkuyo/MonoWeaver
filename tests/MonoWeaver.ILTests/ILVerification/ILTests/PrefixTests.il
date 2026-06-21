@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 .assembly extern System.Runtime
@@ -35,7 +35,7 @@
         ret
     }
 
-    .method static public hidebysig void Readonly.Ldelem_Invalid_ReadOnly() cil managed 
+    .method static public hidebysig void Readonly.Ldelem_Invalid_InvalidOpCode() cil managed 
     {
         .locals init (int32[] V_0)
 
@@ -66,7 +66,7 @@
         ret
     }
 
-    .method static public hidebysig void Readonly.ArrayGet_Invalid_ReadonlyUnexpectedCallee() cil managed 
+    .method static public hidebysig void Readonly.ArrayGet_Invalid_InvalidOpCode() cil managed 
     {
         //int[,] array = new int[1, 1];
         ldc.i4.1
@@ -94,7 +94,7 @@
         ret
     }
 
-    .method static public hidebysig void Tail.FromTry_Invalid_TailCallInsideER.TailRet() cil managed 
+    .method static public hidebysig void Tail.FromTry_Invalid_InvalidOpCode() cil managed 
     {
         .try
         {
@@ -119,13 +119,13 @@
         ret
     }
 
-    .method static public hidebysig void Tail.NoRet_Invalid_TailRet.MethodFallthrough() cil managed 
+    .method static public hidebysig void Tail.NoRet_Invalid_InvalidOpCode() cil managed 
     {
         tail.
         call        void PrefixTestsType::StaticMethod()
     }
 
-    .method static public hidebysig void Tail.DoubleCall_Invalid_TailRet() cil managed 
+    .method static public hidebysig void Tail.DoubleCall_Invalid_InvalidOpCode() cil managed 
     {
         tail.
         call        void PrefixTestsType::StaticMethod()
@@ -163,7 +163,7 @@
         br          MethodEnd
     }
 
-    .method static public hidebysig void Tail.BranchToNopRet_Invalid_TailRet() cil managed 
+    .method static public hidebysig void Tail.BranchToNopRet_Invalid_InvalidOpCode() cil managed 
     {
         ldc.i4.0
         brfalse     MethodEnd
@@ -176,7 +176,8 @@
         ret
     }
 
-    .method static public hidebysig void Tail.Ret_Invalid_TailCall() cil managed 
+    // TODO:实际多个错误，未来可能修改
+    .method static public hidebysig void Tail.Ret_Invalid_InvalidOpCode() cil managed 
     {
         tail.
         ret

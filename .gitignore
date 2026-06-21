@@ -371,3 +371,4 @@ Compare-CoreClrTools.ps1
 # Test results
 TestResults/
 *.trx
+reports/ILTests_NonValid_ActualDiagnostics.xlsx

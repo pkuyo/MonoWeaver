@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 .assembly extern System.Runtime
@@ -16,7 +16,7 @@
 .class public auto ansi beforefieldinit LocAllocTests
         extends [System.Runtime]System.Object
 {
-    .method private hidebysig instance void Load.LocAllocShouldFailWhenStackNotEmpty_Invalid_Unverifiable.LocallocStackNotEmpty() cil managed
+    .method private hidebysig instance void Load.LocAllocShouldFailWhenStackNotEmpty_Invalid_Unverifiable_LocallocStackNotEmpty() cil managed
     {
         ldnull // pretend there's meaningfull value on stack
         ldc.i4.2 // size parameter for localloc
@@ -26,7 +26,8 @@
         ret
     }
 
-    .method private hidebysig instance void Load.LocAllocShouldFailWhenSizeIsAbsent_Invalid_Unverifiable.StackUnderflow() cil managed
+    // TODO:实际多个错误，未来可能修改
+    .method private hidebysig instance void Load.LocAllocShouldFailWhenSizeIsAbsent_Invalid_StackUnderflow() cil managed
     {
         localloc
         pop // pop localloc pointer

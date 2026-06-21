@@ -47,14 +47,24 @@ internal sealed class VerificationRunResult
     public required bool HasVerifierError { get; init; }
     public required bool Crashed { get; init; }
     public required IReadOnlyList<string> Diagnostics { get; init; }
+    public required IReadOnlyList<string> ErrorTypes { get; init; }
+    public required IReadOnlyList<string> WarningTypes { get; init; }
     public string? ExceptionText { get; init; }
 
-    // This deliberately uses only valid-vs-invalid. .NET runtime VerifierError names do not map 1:1 to MonoWeaver.CFGExceptionType.
-    public bool LooseMismatch => TestCase.ExpectedKind switch
+    public bool Mismatch => TestCase.ExpectedKind switch
     {
         ExpectedKind.Valid => HasVerifierError || Crashed,
-        ExpectedKind.Invalid => !HasVerifierError && !Crashed,
-        ExpectedKind.Warning => !HasVerifierWarning || HasVerifierError || Crashed,
+        ExpectedKind.Invalid => !HasVerifierError || Crashed || !ExpectedTypesMatch(ErrorTypes),
+        ExpectedKind.Warning => !HasVerifierWarning || HasVerifierError || Crashed || !ExpectedTypesMatch(WarningTypes),
         _ => true,
     };
+
+    private bool ExpectedTypesMatch(IReadOnlyList<string> actualTypes)
+    {
+        if (TestCase.ExpectedVerifierErrors.Count == 0)
+            return true;
+
+        return TestCase.ExpectedVerifierErrors.All(expected =>
+            actualTypes.Contains(expected, StringComparer.Ordinal));
+    }
 }

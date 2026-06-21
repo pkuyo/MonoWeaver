@@ -57,7 +57,7 @@ public sealed class ILVerificationTests
     {
         var result = MonoWeaverVerifierAdapter.Verify(testCase, options);
 
-        Assert.False(result.LooseMismatch, FormatFailure(result, options));
+        Assert.False(result.Mismatch, FormatFailure(result, options));
     }
 
     private static string FormatFailure(VerificationRunResult result, VerifyOptions options)
@@ -86,10 +86,15 @@ public sealed class ILVerificationTests
             $"Scope:    {result.TestCase.Scope}",
             $"Expected: {expected}",
             $"Actual:   {actual}",
+            "Actual error types:   " + FormatTypes(result.ErrorTypes),
+            "Actual warning types: " + FormatTypes(result.WarningTypes),
             "Diagnostics:",
             diagnostics,
             result.ExceptionText is null ? string.Empty : "Exception: " + result.ExceptionText);
     }
+
+    private static string FormatTypes(IReadOnlyList<string> types)
+        => types.Count == 0 ? "<none>" : string.Join('.', types);
 
     private static bool MatchesFilter(MethodTestCase testCase, string filter)
     {

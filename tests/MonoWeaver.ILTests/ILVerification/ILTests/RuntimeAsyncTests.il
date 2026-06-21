@@ -41,20 +41,21 @@
     }
 
     // Invalid: async method with wrong stack state - empty stack for ValueTask<int>
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncEmptyStack_Invalid_ReturnMissing() cil managed async
+    // TODO:实际多个错误，未来可能修改
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncEmptyStack_Invalid_StackUnderflow() cil managed async
     {
         ret
     }
 
     // Invalid: async method with wrong type on stack
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncWrongType_Full_Invalid_StackUnexpected() cil managed async
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncWrongType_Full_Invalid_TypeMismatch() cil managed async
     {
         ldnull
         ret
     }
 
     // Invalid: async method with extra items on stack
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncExtraStack_Invalid_ReturnEmpty() cil managed async
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncExtraStack_Invalid_InvalidExitStackHeight() cil managed async
     {
         ldc.i4.0
         ldc.i4.1
@@ -62,14 +63,14 @@
     }
 
     // Invalid: async method with ValueTask return should have empty stack
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask AsyncReturnsInt_Invalid_ReturnVoid() cil managed async
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask AsyncReturnsInt_Invalid_InvalidExitStackHeight() cil managed async
     {
         ldc.i4.0
         ret
     }
 
     // Invalid: method with async flag but returning integer type
-    .method public hidebysig instance int32 NonAsyncReturnType_Full_Invalid_StackUnexpected() cil managed async
+    .method public hidebysig instance int32 NonAsyncReturnType_Full_Invalid_TypeMismatch() cil managed async
     {
         ldc.i4.0
         ret
@@ -88,7 +89,7 @@
     }
 
     // Invalid: async method returning from try block (not allowed)
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncReturnFromTry_Invalid_ReturnFromTry() cil managed async
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncReturnFromTry_Invalid_InvalidInstruction() cil managed async
     {
         .try
         {
@@ -107,7 +108,7 @@
     }
 
     // Invalid: async method returning from catch block (not allowed)
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncReturnFromCatch_Invalid_ReturnFromHandler() cil managed async
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncReturnFromCatch_Invalid_InvalidInstruction() cil managed async
     {
         .try
         {
@@ -126,7 +127,7 @@
     }
 
     // Invalid: async method returning from filter (still not allowed)
-    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncReturnFromFilter_Invalid_ReturnFromFilter() cil managed async
+    .method public hidebysig instance valuetype [System.Runtime]System.Threading.Tasks.ValueTask`1<int32> AsyncReturnFromFilter_Invalid_InvalidInstruction() cil managed async
     {
         .try
         {
