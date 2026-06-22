@@ -16,10 +16,10 @@ internal static class MonoWeaverVerifierAdapter
 
         try
         {
-            var analyzer = new ILMethodAnalyzer(testCase.Method, options);
+            var analyzer = new ILMethodVerifier(testCase.Method, options);
             AddDiagnostics(analyzer.Diagnostics);
         }
-        catch (ILMethodAnalyzer.CfgVerifyException ex)
+        catch (ILMethodVerifier.CfgVerifyException ex)
         {
             // ILMethodAnalyzer uses this as a verification-abort exception after collecting diagnostics.
             AddDiagnostics(ex.Diagnostics);

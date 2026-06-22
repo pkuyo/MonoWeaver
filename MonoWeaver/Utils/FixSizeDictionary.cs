@@ -13,21 +13,21 @@ namespace MonoWeaver.Utils
     {
         private sealed class Node
         {
-            private object _value;
+            private object? _value;
 
             public Node(TValue value)
             {
-                _value = (object)value;
+                _value = (object?)value;
             }
 
-            public TValue GetValue()
+            public TValue? GetValue()
             {
-                return (TValue)Volatile.Read(ref _value);
+                return (TValue?)Volatile.Read(ref _value);
             }
 
             public void SetValue(TValue value)
             {
-                Volatile.Write(ref _value, (object)value);
+                Volatile.Write(ref _value, (object?)value);
             }
         }
 
@@ -55,7 +55,7 @@ namespace MonoWeaver.Utils
         {
         }
 
-        public FixedSizeDictionary(int capacity, IEqualityComparer<TKey> comparer)
+        public FixedSizeDictionary(int capacity, IEqualityComparer<TKey>? comparer)
         {
             if (capacity <= 0)
                 throw new ArgumentOutOfRangeException("capacity");
@@ -86,7 +86,7 @@ namespace MonoWeaver.Utils
         }
 
 
-        public bool TryGetValue(TKey key, out TValue value)
+        public bool TryGetValue(TKey key, out TValue? value)
         {
             Node node;
             if (_dict.TryGetValue(key, out node))
@@ -99,7 +99,7 @@ namespace MonoWeaver.Utils
             return false;
         }
 
-        public TValue GetOrAdd(TKey key, TValue value)
+        public TValue? GetOrAdd(TKey key, TValue value)
         {
             while (true)
             {
@@ -118,7 +118,7 @@ namespace MonoWeaver.Utils
             }
         }
 
-        public TValue GetOrAdd(TKey key, Func<TKey, TValue> valueFactory)
+        public TValue? GetOrAdd(TKey key, Func<TKey, TValue> valueFactory)
         {
             if (valueFactory == null)
                 throw new ArgumentNullException("valueFactory");
@@ -204,11 +204,10 @@ namespace MonoWeaver.Utils
 
         public bool TryRemove(TKey key)
         {
-            TValue ignored;
-            return TryRemove(key, out ignored);
+            return TryRemove(key, out _);
         }
 
-        public bool TryRemove(TKey key, out TValue value)
+        public bool TryRemove(TKey key, out TValue? value)
         {
             Node node;
 
@@ -228,15 +227,15 @@ namespace MonoWeaver.Utils
             return _dict.ContainsKey(key);
         }
 
-        public KeyValuePair<TKey, TValue>[] ToArray()
+        public KeyValuePair<TKey, TValue?>[] ToArray()
         {
             KeyValuePair<TKey, Node>[] source = _dict.ToArray();
-            KeyValuePair<TKey, TValue>[] result =
-                new KeyValuePair<TKey, TValue>[source.Length];
+            KeyValuePair<TKey, TValue?>[] result =
+                new KeyValuePair<TKey, TValue?>[source.Length];
 
             for (int i = 0; i < source.Length; i++)
             {
-                result[i] = new KeyValuePair<TKey, TValue>(
+                result[i] = new KeyValuePair<TKey, TValue?>(
                     source[i].Key,
                     source[i].Value.GetValue());
             }

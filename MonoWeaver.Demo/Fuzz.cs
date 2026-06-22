@@ -98,7 +98,7 @@ namespace MonoWeaver.Fuzz
                             break;
                     }
                 }
-                catch (Exception ex)
+                catch
                 {
                     skipped++;
                 }

@@ -21,11 +21,11 @@ namespace MonoWeaver.Utils;
 
 public static partial class CecilHelper
 {
-    public static ILMethodAnalyzer Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full) 
-        => new ILMethodAnalyzer(method, options);
+    public static ILMethodVerifier Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full) 
+        => new ILMethodVerifier(method, options);
 
-    public static ILMethodAnalyzer Analyze(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Full)
-        => new ILMethodAnalyzer(body.Method, options);
+    public static ILMethodVerifier Analyze(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Full)
+        => new ILMethodVerifier(body.Method, options);
 }
 
 public static partial class CecilHelper
@@ -130,46 +130,6 @@ public static partial class CecilHelper
             throw new Exception(); //TODO:
         }
         return (sig.ReturnType.StripType().IsVoid()) ? 0 : 1;
-    }
-
-    private static Func<object, Instruction>? _monoModresolveStrategy = null!;
-
-   
-    
-
-    internal static IEnumerable<Instruction> OperandToTargets(object operand)
-    {
-        if( operand is Instruction inst)
-            yield return inst;
-        else if(operand is Instruction[] insts)
-        {
-            foreach(var i in insts)
-                yield return i;
-        }
-        else
-        {
-            var type = operand.GetType();
-            if(type.IsArray)
-            {
-                var eleType = type.GetElementType();
-                var array = (Array)operand;
-                if(eleType.FullName == "MonoMod.Cil.ILLabel")
-                {
-                    if (_monoModresolveStrategy is null)
-                        BuildMonoModResolveStrategy(eleType);
-                    foreach (var i in array)
-                    {
-                        yield return _monoModresolveStrategy!(i);
-                    }
-                }
-            }
-            else if(type.FullName == "MonoMod.Cil.ILLabel")
-            {
-                if (_monoModresolveStrategy is null)
-                    BuildMonoModResolveStrategy(type);
-                yield return _monoModresolveStrategy!(operand);
-            }
-        }
     }
 
     public static string SafeToString(this Instruction inst)

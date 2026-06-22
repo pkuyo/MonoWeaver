@@ -128,8 +128,8 @@ public sealed record NullInstContext(int Index) : ICFGContext;
 public sealed record HandlerContext(ExceptionHandler Handler) : ICFGContext;
 
 public sealed record MergeBlockContext(
-    ILMethodAnalyzer.BasicBlock From,
-    ILMethodAnalyzer.BasicBlock To,
+    BasicBlock From,
+    BasicBlock To,
     int? ExpectedDepth = null,
     int? CurrentDepth = null,
     IReadOnlyList<string>? ExpectedStack = null,
@@ -357,7 +357,7 @@ public sealed record CFGDiagnostic(
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
     
-    public static CFGDiagnostic IncompatibleMerge(CFGExceptionType exceptionType, ILMethodAnalyzer.BasicBlock from, ILMethodAnalyzer.BasicBlock to,
+    public static CFGDiagnostic IncompatibleMerge(CFGExceptionType exceptionType, BasicBlock from, BasicBlock to,
         DiagnosticSeverity severity = DiagnosticSeverity.Error, string? message = null,
         int? expectedDepth = null, int? currentDepth = null,
         IReadOnlyList<string>? expectedStack = null, IReadOnlyList<string>? currentStack = null)
@@ -452,9 +452,9 @@ public sealed record CFGDiagnostic(
 }
 
 
-public partial class ILMethodAnalyzer
+public partial class ILMethodVerifier
 {
-    public sealed class CfgVerifyException(ILMethodAnalyzer methodAnalyzer) : Exception($"Verify Method:{methodAnalyzer._method.FullName}, " +
+    public sealed class CfgVerifyException(ILMethodVerifier methodAnalyzer) : Exception($"Verify Method:{methodAnalyzer._method.FullName}, " +
                                                                   $"Fatal:{methodAnalyzer.Diagnostics.Count(i => i.Severity == DiagnosticSeverity.Fatal)}, " +
                                                                   $"Error:{methodAnalyzer.Diagnostics.Count(i => i.Severity == DiagnosticSeverity.Error)}, " +
                                                                   $"Waring:{methodAnalyzer.Diagnostics.Count(i => i.Severity == DiagnosticSeverity.Warning)}")
@@ -546,7 +546,7 @@ public partial class ILMethodAnalyzer
         }
     }
 
-    public ILMethodAnalyzer ThrowIfHasErrors()
+    public ILMethodVerifier ThrowIfHasErrors()
     {
         if (Diagnostics.Count > 0)
         {
@@ -563,3 +563,4 @@ public partial class ILMethodAnalyzer
         }
     }
 }
+

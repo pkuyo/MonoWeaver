@@ -1,12 +1,7 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using System;
-using System.Collections.Concurrent;
-using System.IO;
-using System.Linq.Expressions;
 using System.Reflection;
-using MethodAttributes = Mono.Cecil.MethodAttributes;
-using TypeAttributes = Mono.Cecil.TypeAttributes;
 
 namespace MonoWeaver.Utils;
 
@@ -21,8 +16,8 @@ public static partial class CecilHelper
 
     private delegate Instruction? ILLabelTargetHandler(object label);
 
-    private static ILLabelTargetHandler ILLabelTargetResolver = null!;
-    private static object ILLabelResolverLock = new object();
+    private static ILLabelTargetHandler? ILLabelTargetResolver;
+    private static readonly object ILLabelResolverLock = new();
 
     internal static bool TryResolveInstructionTarget(object? operand, out Instruction? target,
         out OperandTargetResolveError error)
@@ -182,50 +177,27 @@ public static partial class CecilHelper
 
     private static void BuildMonoModResolveStrategy(Type type)
     {
-
         lock (ILLabelResolverLock)
         {
-            if (ILLabelTargetResolver != null)
+            if (ILLabelTargetResolver is not null)
+                return;
+
+            // ILLabel.Target is public in current and legacy MonoMod versions, but use
+            // non-public lookup as well so the core package remains tolerant of adapters.
+            var bindingFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var property = type.GetProperty("Target", bindingFlags);
+            if (property is not null && typeof(Instruction).IsAssignableFrom(property.PropertyType))
             {
+                // Do not emit or compile a dynamic helper here. Reflection is used only while
+                // constructing a method model and avoids a hard MonoMod reference in the core package.
+                ILLabelTargetResolver = label => (Instruction?)property.GetValue(label, null);
                 return;
             }
-            if (!File.Exists(type.Assembly.Location))
-            {
-                throw new Exception(); //TODO 完善异常说明
-            }
-            var resolver = new DefaultAssemblyResolver();
-            resolver.AddSearchDirectory(type.Assembly.Location);
 
-            using AssemblyDefinition assDef = AssemblyDefinition.CreateAssembly(new AssemblyNameDefinition("MonoWeaver.Monomod", new Version()),
-                "module", new ModuleParameters()
-                {
-                    Kind = ModuleKind.Dll,
-                    AssemblyResolver = resolver
-                });
-
-
-
-            var module = assDef.MainModule;
-            TypeDefinition typeDef = new TypeDefinition("MonoWeaver.Monomod", "Helper",
-                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class, module.TypeSystem.Object);
-            MethodDefinition methodDef = new MethodDefinition("Target", MethodAttributes.Public | MethodAttributes.Static,
-                module.ImportReference(typeof(Instruction)));
-
-            methodDef.Parameters.Add(new ParameterDefinition(module.TypeSystem.Object));
-            var il = methodDef.Body.GetILProcessor();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Isinst, module.ImportReference(type));
-            il.Emit(OpCodes.Callvirt, module.ImportReference(type.GetMethod("get_Target")));
-            il.Emit(OpCodes.Ret);
-            typeDef.Methods.Add(methodDef);
-            module.Types.Add(typeDef);
-            using MemoryStream ms = new MemoryStream();
-            assDef.Write(ms);
-            var ass = Assembly.Load(ms.ToArray());
-
-            ILLabelTargetResolver =
-                (ILLabelTargetHandler)Delegate.CreateDelegate(typeof(ILLabelTargetHandler),
-                ass.ManifestModule.GetTypes()[0].GetMethod("Target"));
+            // Some MonoMod versions expose Target as a field rather than a property.
+            var field = type.GetField("Target", bindingFlags);
+            if (field is not null && typeof(Instruction).IsAssignableFrom(field.FieldType))
+                ILLabelTargetResolver = label => (Instruction?)field.GetValue(label);
         }
     }
 

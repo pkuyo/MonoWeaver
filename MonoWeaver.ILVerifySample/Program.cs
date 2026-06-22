@@ -114,7 +114,7 @@ public static class InvalidCombatHook
             analyzer.ThrowIfHasErrors();
             Console.WriteLine("No diagnostics.");
         }
-        catch (ILMethodAnalyzer.CfgVerifyException ex)
+        catch (ILMethodVerifier.CfgVerifyException ex)
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             foreach (var diagnostic in ex.Diagnostics)

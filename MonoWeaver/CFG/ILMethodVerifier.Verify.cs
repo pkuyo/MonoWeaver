@@ -12,7 +12,7 @@ using static MonoWeaver.Utils.CecilTypeSystem;
 
 namespace MonoWeaver.CFG;
 
-public partial class ILMethodAnalyzer
+public partial class ILMethodVerifier
 {
 
     private IMemberDefinition? ResolveWithDiagnostic(MemberReference memberReference)
@@ -268,7 +268,7 @@ public partial class ILMethodAnalyzer
     {
         type = null!;
         flags = StackTypeFlags.None;
-        if (TryGetMacroArgumentSlot(inst.OpCode.Code, out var slot))
+        if (CecilInstructionHelpers.TryGetMacroArgumentSlot(inst.OpCode.Code, out var slot))
         {
             return TryGetParameterTypeBySlot(slot, inst, out type, out flags);
         }
@@ -329,32 +329,10 @@ public partial class ILMethodAnalyzer
         return true;
     }
 
-    private static bool TryGetMacroArgumentSlot(Code code, out int slot)
-    {
-        switch (code)
-        {
-            case Code.Ldarg_0:
-                slot = 0;
-                return true;
-            case Code.Ldarg_1:
-                slot = 1;
-                return true;
-            case Code.Ldarg_2:
-                slot = 2;
-                return true;
-            case Code.Ldarg_3:
-                slot = 3;
-                return true;
-            default:
-                slot = -1;
-                return false;
-        }
-    }
-
     private bool TryGetVariableType(Instruction inst, out TypeReference type)
     {
         type = null!;
-        if (TryGetMacroVariableIndex(inst.OpCode.Code, out var index))
+        if (CecilInstructionHelpers.TryGetMacroLocalIndex(inst.OpCode.Code, out var index))
             return TryGetVariableTypeByIndex(index, inst, out type);
 
         if (!VerifyVarOperand(inst, out var variable))
@@ -365,7 +343,7 @@ public partial class ILMethodAnalyzer
 
     private bool TryGetVariableIndex(Instruction inst, out int index)
     {
-        if (TryGetMacroVariableIndex(inst.OpCode.Code, out index))
+        if (CecilInstructionHelpers.TryGetMacroLocalIndex(inst.OpCode.Code, out index))
             return TryValidateVariableIndex(index, inst);
 
         if (!VerifyVarOperand(inst, out var variable))
@@ -396,43 +374,6 @@ public partial class ILMethodAnalyzer
         ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.OutOfRange, inst));
         return false;
     }
-
-    private static bool TryGetMacroVariableIndex(Code code, out int index)
-    {
-        switch (code)
-        {
-            case Code.Ldloc_0:
-            case Code.Stloc_0:
-                index = 0;
-                return true;
-            case Code.Ldloc_1:
-            case Code.Stloc_1:
-                index = 1;
-                return true;
-            case Code.Ldloc_2:
-            case Code.Stloc_2:
-                index = 2;
-                return true;
-            case Code.Ldloc_3:
-            case Code.Stloc_3:
-                index = 3;
-                return true;
-            default:
-                index = -1;
-                return false;
-        }
-    }
-
-    private static bool IsLdlocCode(Code code)
-        => code is Code.Ldloc or Code.Ldloc_S
-            or Code.Ldloc_0 or Code.Ldloc_1 or Code.Ldloc_2 or Code.Ldloc_3;
-
-    private static bool IsLdlocaCode(Code code)
-        => code is Code.Ldloca or Code.Ldloca_S;
-
-    private static bool IsStlocCode(Code code)
-        => code is Code.Stloc or Code.Stloc_S
-            or Code.Stloc_0 or Code.Stloc_1 or Code.Stloc_2 or Code.Stloc_3;
 
     /// TypeReference走隐式类型转换
     /// 否则built in会出现问题
@@ -752,7 +693,7 @@ public partial class ILMethodAnalyzer
 }
 
 
-public partial class ILMethodAnalyzer
+public partial class ILMethodVerifier
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private StackTypeFlags PrefixToFlags(Code[] prefix)
