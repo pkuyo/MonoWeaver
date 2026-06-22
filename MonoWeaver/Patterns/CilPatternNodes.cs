@@ -79,6 +79,62 @@ public sealed class FieldPatternNode : CilPatternNode
     public CilPatternNode? Instance { get; }
 }
 
+/// <summary>匹配一维数组创建。</summary>
+public sealed class NewArrayPatternNode : CilPatternNode
+{
+    internal NewArrayPatternNode(Type elementType, IReadOnlyList<CilPatternNode> lengths, Type resultType)
+        : base(resultType)
+    {
+        ElementType = elementType;
+        Lengths = lengths;
+    }
+
+    public Type ElementType { get; }
+    public IReadOnlyList<CilPatternNode> Lengths { get; }
+}
+
+/// <summary>匹配数组元素读取。</summary>
+public sealed class ArrayElementPatternNode : CilPatternNode
+{
+    internal ArrayElementPatternNode(CilPatternNode array, CilPatternNode index, Type resultType)
+        : base(resultType)
+    {
+        Array = array;
+        Index = index;
+    }
+
+    public CilPatternNode Array { get; }
+    public CilPatternNode Index { get; }
+}
+
+/// <summary>匹配数组长度读取。</summary>
+public sealed class ArrayLengthPatternNode : CilPatternNode
+{
+    internal ArrayLengthPatternNode(CilPatternNode array, Type resultType)
+        : base(resultType)
+    {
+        Array = array;
+    }
+
+    public CilPatternNode Array { get; }
+}
+
+/// <summary>匹配数组元素写入。</summary>
+public sealed class ArrayStorePatternNode : CilPatternNode
+{
+    internal ArrayStorePatternNode(CilPatternNode array, CilPatternNode index, CilPatternNode value)
+        : base(typeof(void))
+    {
+        Array = array;
+        Index = index;
+        Value = value;
+    }
+
+    public CilPatternNode Array { get; }
+    public CilPatternNode Index { get; }
+    public CilPatternNode Value { get; }
+}
+
 /// <summary>匹配 constructor、static method、instance method 或 property getter call。</summary>
 public sealed class CallPatternNode : CilPatternNode
 {

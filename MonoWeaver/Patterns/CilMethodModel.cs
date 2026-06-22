@@ -314,6 +314,61 @@ internal sealed class CilMethodModel
                 return;
             }
 
+            case Code.Newarr:
+            {
+                var length = Pop();
+                if (instruction.Operand is TypeReference elementType)
+                    Push(new TargetNewArrayNode(elementType, new[] { length }, instruction));
+                else
+                    PushUnknown(1);
+                return;
+            }
+
+            case Code.Ldlen:
+            {
+                var array = Pop();
+                Push(new TargetArrayLengthNode(array, Method.Module.TypeSystem.Int32, instruction));
+                return;
+            }
+
+            case Code.Ldelem_Any:
+            case Code.Ldelem_I:
+            case Code.Ldelem_I1:
+            case Code.Ldelem_I2:
+            case Code.Ldelem_I4:
+            case Code.Ldelem_I8:
+            case Code.Ldelem_R4:
+            case Code.Ldelem_R8:
+            case Code.Ldelem_Ref:
+            case Code.Ldelem_U1:
+            case Code.Ldelem_U2:
+            case Code.Ldelem_U4:
+            {
+                var index = Pop();
+                var array = Pop();
+                Push(new TargetArrayElementNode(array, index,
+                    ResolveArrayElementType(array, instruction), instruction));
+                return;
+            }
+
+            case Code.Stelem_Any:
+            case Code.Stelem_I:
+            case Code.Stelem_I1:
+            case Code.Stelem_I2:
+            case Code.Stelem_I4:
+            case Code.Stelem_I8:
+            case Code.Stelem_R4:
+            case Code.Stelem_R8:
+            case Code.Stelem_Ref:
+            {
+                var value = Pop();
+                var index = Pop();
+                var array = Pop();
+                _effectCandidates.Add(new TargetEffect(new TargetArrayStoreNode(array, index, value,
+                    ResolveArrayElementType(array, instruction), instruction), instruction));
+                return;
+            }
+
             case Code.Call:
             case Code.Callvirt:
             case Code.Newobj:
@@ -582,6 +637,40 @@ internal sealed class CilMethodModel
             or Code.Conv_Ovf_U2 or Code.Conv_Ovf_U2_Un
             or Code.Conv_Ovf_U4 or Code.Conv_Ovf_U4_Un
             or Code.Conv_Ovf_U8 or Code.Conv_Ovf_U8_Un;
+
+    private TypeReference? ResolveArrayElementType(TargetExpressionNode array, Instruction instruction)
+    {
+        if (instruction.Operand is TypeReference operandType)
+            return operandType;
+
+        if (array.ResultType is ArrayType arrayType)
+            return arrayType.ElementType;
+
+        var ts = Method.Module.TypeSystem;
+        return instruction.OpCode.Code switch
+        {
+            Code.Ldelem_I1 => ts.SByte,
+            Code.Ldelem_U1 => ts.Byte,
+            Code.Ldelem_I2 => ts.Int16,
+            Code.Ldelem_U2 => ts.UInt16,
+            Code.Ldelem_I4 => ts.Int32,
+            Code.Ldelem_U4 => ts.UInt32,
+            Code.Ldelem_I8 => ts.Int64,
+            Code.Ldelem_I => ts.IntPtr,
+            Code.Ldelem_R4 => ts.Single,
+            Code.Ldelem_R8 => ts.Double,
+            Code.Ldelem_Ref => ts.Object,
+            Code.Stelem_I1 => ts.SByte,
+            Code.Stelem_I2 => ts.Int16,
+            Code.Stelem_I4 => ts.Int32,
+            Code.Stelem_I8 => ts.Int64,
+            Code.Stelem_I => ts.IntPtr,
+            Code.Stelem_R4 => ts.Single,
+            Code.Stelem_R8 => ts.Double,
+            Code.Stelem_Ref => ts.Object,
+            _ => null
+        };
+    }
 
     private TypeReference? InferConversionType(Code code)
     {

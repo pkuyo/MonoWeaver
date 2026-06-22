@@ -10,12 +10,14 @@ on:
     paths:
       - ".github/workflows/il-tests.yml"
       - "MonoWeaver/**"
+      - "MonoWeaver.MonoMod/**"
       - "tests/MonoWeaver.ILTests/**"
       - "MonoWeaver.slnx"
   pull_request:
     paths:
       - ".github/workflows/il-tests.yml"
       - "MonoWeaver/**"
+      - "MonoWeaver.MonoMod/**"
       - "tests/MonoWeaver.ILTests/**"
       - "MonoWeaver.slnx"
 

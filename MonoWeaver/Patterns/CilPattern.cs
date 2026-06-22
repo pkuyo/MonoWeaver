@@ -198,6 +198,13 @@ public static class P
     /// </summary>
     public static T Mark<T>(string captureName, T value) => Throw<T>();
 
+    /// <summary>匹配数组元素写入。</summary>
+    public static void StoreElement<T>(T[] array, int index, T value)
+        => ThrowVoid();
+
     private static T Throw<T>()
+        => throw new InvalidOperationException("MonoWeaver pattern placeholders may only be used inside a lambda passed to Cil.Value/Cil.Effect/Cil.Condition.");
+
+    private static void ThrowVoid()
         => throw new InvalidOperationException("MonoWeaver pattern placeholders may only be used inside a lambda passed to Cil.Value/Cil.Effect/Cil.Condition.");
 }

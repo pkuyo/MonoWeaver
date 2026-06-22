@@ -4,23 +4,17 @@ using System.Linq;
 using System.Reflection;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
+using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
 
 namespace MonoWeaver.MonoMod.Patterns;
 
-/// <summary>改写 captured short-circuit condition 的 logical result。</summary>
 public static class ConditionTransformExtensions
 {
     /// <summary>
-    /// 将每个 true/false exit materialize 为 Boolean，调用 <paramref name="callback"/>，
-    /// 并把 callback result 路由回原始 true 或 false continuation。matched condition 内部的
-    /// 原始 evaluation order 和 short-circuit 行为会被保留。
+    /// 将 captured condition 的 true/false结果传递给 <paramref name="callback"/>，
+    /// 并把返回结果给回原始位置。
     /// </summary>
-    /// <remarks>
-    /// delegate 的第一个 parameter 和 return type 必须是 <see cref="bool"/>。additional argument
-    /// 使用 matched value call 同一套 builder 加载。当 captured condition 有 external entry，
-    /// 或跨越 exception-region boundary 且需要 unsafe synthetic branch 时，rewrite 会被拒绝。
-    /// </remarks>
     public static void Transform<TDelegate>(this MatchedCondition condition, ILContext context,
         TDelegate callback, Action<DelegateArguments>? additionalArguments = null)
         where TDelegate : Delegate
@@ -56,50 +50,139 @@ public static class ConditionTransformExtensions
         var fragment = condition.Fragment;
         var trueTarget = fragment.TrueContinuation.Leader;
         var falseTarget = fragment.FalseContinuation.Leader;
-        var exits = fragment.TrueExits.Select(static edge => (edge, value: true))
-            .Concat(fragment.FalseExits.Select(static edge => (edge, value: false)))
+        var exitGroups = fragment.TrueExits.Select(static edge => new ExitInfo(edge, true))
+            .Concat(fragment.FalseExits.Select(static edge => new ExitInfo(edge, false)))
+            .GroupBy(static exit => exit.Edge.From)
+            .Select(static group => new ExitGroup(group.Key, group.ToArray()))
             .ToArray();
 
-        foreach (var sourceGroup in exits.GroupBy(static item => item.edge.From))
+        foreach (var group in exitGroups)
         {
-            var source = sourceGroup.Key;
-            var sourceExits = sourceGroup.ToArray();
-            if (sourceExits.Count(static item => item.edge.IsFallThrough) > 1
-                || sourceExits.Count(static item => !item.edge.IsFallThrough) > 1)
+            if (group.FallExitCount > 1 || group.BranchExitCount > 1)
+                throw new NotSupportedException($"Condition block IL_{group.Source.Leader.Offset:X4} has an unsupported exit shape.");
+
+            EnsureSameExceptionRegion(context.Body, group.Source.Terminator, trueTarget);
+            EnsureSameExceptionRegion(context.Body, group.Source.Terminator, falseTarget);
+        }
+
+        if (CanUseSharedBridge(context.Body, exitGroups))
+        {
+            EmitSharedBridge(context, callback, arguments, trueTarget, falseTarget, exitGroups);
+            return;
+        }
+
+        EmitPerExitBridges(context, callback, arguments, trueTarget, falseTarget, exitGroups);
+    }
+
+    private static void EmitSharedBridge<TDelegate>(ILContext context, TDelegate callback,
+        DelegateArguments arguments, Instruction trueTarget, Instruction falseTarget,
+        IReadOnlyList<ExitGroup> exitGroups)
+        where TDelegate : Delegate
+    {
+        var anchor = exitGroups.FirstOrDefault(static group => group.FallExit is not null)
+                     ?? exitGroups[0];
+        var anchorFallExit = anchor.FallExit;
+        var firstValue = anchorFallExit?.Value ?? true;
+
+        var cursor = new ILCursor(context).Goto(anchor.Source.Terminator, MoveType.After);
+        if (anchorFallExit is null && anchor.BranchExit is not null)
+        {
+            if (anchor.AllFallThrough is null)
+                throw new InvalidOperationException("The source condition has no fall-through edge.");
+            EnsureSameExceptionRegion(context.Body, anchor.Source.Terminator, anchor.AllFallThrough.To.Leader);
+            cursor.Emit(OpCodes.Br, context.DefineLabel(anchor.AllFallThrough.To.Leader));
+        }
+
+        var firstEntry = EmitSharedCallback(cursor, context, callback, arguments, firstValue,
+            trueTarget, falseTarget, out var callbackEntry);
+        var secondEntry = EmitValueBranch(cursor, context, !firstValue, callbackEntry);
+        var trueValueEntry = firstValue ? firstEntry : secondEntry;
+        var falseValueEntry = firstValue ? secondEntry : firstEntry;
+
+        foreach (var group in exitGroups)
+        {
+            if (!ReferenceEquals(group, anchor) && group.FallExit is not null)
             {
-                throw new NotSupportedException($"Condition block IL_{source.Leader.Offset:X4} has an unsupported exit shape.");
+                var fallTarget = group.FallExit.Value ? trueValueEntry : falseValueEntry;
+                var fallCursor = new ILCursor(context).Goto(group.Source.Terminator, MoveType.After);
+                fallCursor.Emit(OpCodes.Br, context.DefineLabel(fallTarget));
             }
 
-            EnsureSameExceptionRegion(context.Body, source.Terminator, trueTarget);
-            EnsureSameExceptionRegion(context.Body, source.Terminator, falseTarget);
+            if (group.BranchExit is not null)
+            {
+                RetargetTakenBranch(group.Source.Terminator,
+                    group.BranchExit.Value ? trueValueEntry : falseValueEntry);
+            }
+        }
+    }
 
-            var allFallThrough = source.Successors.SingleOrDefault(static edge => edge.IsFallThrough);
-            var fallExit = sourceExits.SingleOrDefault(static item => item.edge.IsFallThrough);
-            var branchExit = sourceExits.SingleOrDefault(static item => !item.edge.IsFallThrough);
+    private static bool CanUseSharedBridge(Mono.Cecil.Cil.MethodBody body, IReadOnlyList<ExitGroup> exitGroups)
+    {
+        if (exitGroups.Count == 0)
+            return false;
+
+        var anchor = exitGroups.FirstOrDefault(static group => group.FallExit is not null)
+                     ?? exitGroups[0];
+        var anchorRegion = GetRegionSignature(body, anchor.Source.Terminator);
+        return exitGroups.All(group => GetRegionSignature(body, group.Source.Terminator) == anchorRegion);
+    }
+
+    private static void EmitPerExitBridges<TDelegate>(ILContext context, TDelegate callback,
+        DelegateArguments arguments, Instruction trueTarget, Instruction falseTarget,
+        IReadOnlyList<ExitGroup> exitGroups)
+        where TDelegate : Delegate
+    {
+        foreach (var group in exitGroups)
+        {
+            var source = group.Source;
             var cursor = new ILCursor(context).Goto(source.Terminator, MoveType.After);
 
-            // 如果只有 taken branch 离开 fragment，则显式 branch 会保留原始 fall-through path，
-            // bridge code 放在它后面。
-            if (fallExit.edge is null && branchExit.edge is not null)
+            if (group.FallExit is null && group.BranchExit is not null)
             {
-                if (allFallThrough is null)
+                if (group.AllFallThrough is null)
                     throw new InvalidOperationException("The source condition has no fall-through edge.");
-                EnsureSameExceptionRegion(context.Body, source.Terminator, allFallThrough.To.Leader);
-                cursor.Emit(OpCodes.Br, context.DefineLabel(allFallThrough.To.Leader));
+                EnsureSameExceptionRegion(context.Body, source.Terminator, group.AllFallThrough.To.Leader);
+                cursor.Emit(OpCodes.Br, context.DefineLabel(group.AllFallThrough.To.Leader));
             }
 
-            if (fallExit.edge is not null)
+            if (group.FallExit is not null)
             {
-                EmitBridge(cursor, context, callback, arguments, fallExit.value, trueTarget, falseTarget);
+                EmitBridge(cursor, context, callback, arguments, group.FallExit.Value,
+                    trueTarget, falseTarget);
             }
 
-            if (branchExit.edge is not null)
+            if (group.BranchExit is not null)
             {
                 var bridge = EmitBridge(cursor, context, callback, arguments,
-                    branchExit.value, trueTarget, falseTarget);
+                    group.BranchExit.Value, trueTarget, falseTarget);
                 RetargetTakenBranch(source.Terminator, bridge);
             }
         }
+    }
+
+    private static Instruction EmitSharedCallback<TDelegate>(ILCursor cursor, ILContext context,
+        TDelegate callback, DelegateArguments arguments, bool originalValue,
+        Instruction trueTarget, Instruction falseTarget, out Instruction callbackEntry)
+        where TDelegate : Delegate
+    {
+        cursor.Emit(OpCodes.Ldc_I4, originalValue ? 1 : 0);
+        var valueEntry = cursor.Prev;
+        cursor.Emit(OpCodes.Nop);
+        callbackEntry = cursor.Prev;
+        arguments.Emit(cursor);
+        cursor.EmitDelegate(callback);
+        cursor.Emit(OpCodes.Brtrue, context.DefineLabel(trueTarget));
+        cursor.Emit(OpCodes.Br, context.DefineLabel(falseTarget));
+        return valueEntry;
+    }
+
+    private static Instruction EmitValueBranch(ILCursor cursor, ILContext context,
+        bool originalValue, Instruction callbackEntry)
+    {
+        cursor.Emit(OpCodes.Ldc_I4, originalValue ? 1 : 0);
+        var valueEntry = cursor.Prev;
+        cursor.Emit(OpCodes.Br, context.DefineLabel(callbackEntry));
+        return valueEntry;
     }
 
     private static Instruction EmitBridge<TDelegate>(ILCursor cursor, ILContext context,
@@ -163,5 +246,37 @@ public static class ConditionTransformExtensions
             }
         }
         return string.Join("|", parts);
+    }
+
+    private sealed class ExitInfo
+    {
+        public ExitInfo(ControlFlowEdge edge, bool value)
+        {
+            Edge = edge;
+            Value = value;
+        }
+
+        public ControlFlowEdge Edge { get; }
+        public bool Value { get; }
+    }
+
+    private sealed class ExitGroup
+    {
+        public ExitGroup(BasicBlock source, IReadOnlyList<ExitInfo> exits)
+        {
+            Source = source;
+            FallExitCount = exits.Count(static exit => exit.Edge.IsFallThrough);
+            BranchExitCount = exits.Count(static exit => !exit.Edge.IsFallThrough);
+            FallExit = exits.SingleOrDefault(static exit => exit.Edge.IsFallThrough);
+            BranchExit = exits.SingleOrDefault(static exit => !exit.Edge.IsFallThrough);
+            AllFallThrough = source.Successors.SingleOrDefault(static edge => edge.IsFallThrough);
+        }
+
+        public BasicBlock Source { get; }
+        public int FallExitCount { get; }
+        public int BranchExitCount { get; }
+        public ExitInfo? FallExit { get; }
+        public ExitInfo? BranchExit { get; }
+        public ControlFlowEdge? AllFallThrough { get; }
     }
 }

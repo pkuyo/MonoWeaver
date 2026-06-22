@@ -126,6 +126,66 @@ internal sealed class TargetCallNode : TargetExpressionNode
     }
 }
 
+internal sealed class TargetNewArrayNode : TargetExpressionNode
+{
+    public TargetNewArrayNode(TypeReference elementType, IReadOnlyList<TargetExpressionNode> lengths,
+        Instruction instruction)
+        : base(new ArrayType(elementType), FindFirst(lengths, instruction), instruction)
+    {
+        ElementType = elementType;
+        Lengths = lengths;
+    }
+
+    public TypeReference ElementType { get; }
+    public IReadOnlyList<TargetExpressionNode> Lengths { get; }
+
+    private static Instruction FindFirst(IReadOnlyList<TargetExpressionNode> lengths, Instruction fallback)
+        => lengths.Count == 0 ? fallback : lengths[0].FirstInstruction;
+}
+
+internal sealed class TargetArrayElementNode : TargetExpressionNode
+{
+    public TargetArrayElementNode(TargetExpressionNode array, TargetExpressionNode index,
+        TypeReference? elementType, Instruction instruction)
+        : base(elementType, array.FirstInstruction, instruction)
+    {
+        Array = array;
+        Index = index;
+    }
+
+    public TargetExpressionNode Array { get; }
+    public TargetExpressionNode Index { get; }
+}
+
+internal sealed class TargetArrayLengthNode : TargetExpressionNode
+{
+    public TargetArrayLengthNode(TargetExpressionNode array, TypeReference resultType, Instruction instruction)
+        : base(resultType, array.FirstInstruction, instruction, StackType.I)
+    {
+        Array = array;
+    }
+
+    public TargetExpressionNode Array { get; }
+}
+
+internal sealed class TargetArrayStoreNode : TargetExpressionNode
+{
+    public TargetArrayStoreNode(TargetExpressionNode array, TargetExpressionNode index,
+        TargetExpressionNode value, TypeReference? elementType, Instruction instruction)
+        : base(null, array.FirstInstruction, instruction)
+    {
+        Array = array;
+        Index = index;
+        Value = value;
+        ElementType = elementType;
+    }
+
+    public TargetExpressionNode Array { get; }
+    public TargetExpressionNode Index { get; }
+    public TargetExpressionNode Value { get; }
+    public TypeReference? ElementType { get; }
+}
+
 internal sealed class TargetUnaryNode : TargetExpressionNode
 {
     public TargetUnaryNode(ExpressionType operation, TargetExpressionNode operand, TypeReference? resultType,

@@ -372,3 +372,4 @@ Compare-CoreClrTools.ps1
 TestResults/
 *.trx
 reports/ILTests_NonValid_ActualDiagnostics.xlsx
+/.VSCodeCounter

@@ -366,6 +366,54 @@ internal sealed class ExpressionNodeMatcher
                 matched = target;
                 return true;
 
+            case NewArrayPatternNode newArrayPattern when target.Node is TargetNewArrayNode newArray:
+                if (!TypeMatches(newArray, newArrayPattern.ResultType)
+                    || !CecilIdentity.TypeMatches(newArray.ElementType, newArrayPattern.ElementType)
+                    || newArrayPattern.Lengths.Count != newArray.Lengths.Count)
+                    break;
+                for (var i = 0; i < newArrayPattern.Lengths.Count; i++)
+                {
+                    if (!TryMatch(newArrayPattern.Lengths[i],
+                            TargetOccurrence.Direct(newArray.Lengths[i], newArray.ProducerInstruction), context, out _))
+                    {
+                        matched = default;
+                        return false;
+                    }
+                }
+                matched = target;
+                return true;
+
+            case ArrayElementPatternNode elementPattern when target.Node is TargetArrayElementNode element:
+                if (!TypeMatches(element, elementPattern.ResultType))
+                    break;
+                if (!TryMatch(elementPattern.Array,
+                        TargetOccurrence.Direct(element.Array, element.ProducerInstruction), context, out _)
+                    || !TryMatch(elementPattern.Index,
+                        TargetOccurrence.Direct(element.Index, element.ProducerInstruction), context, out _))
+                    break;
+                matched = target;
+                return true;
+
+            case ArrayLengthPatternNode lengthPattern when target.Node is TargetArrayLengthNode length:
+                if (!TypeMatches(length, lengthPattern.ResultType))
+                    break;
+                if (!TryMatch(lengthPattern.Array,
+                        TargetOccurrence.Direct(length.Array, length.ProducerInstruction), context, out _))
+                    break;
+                matched = target;
+                return true;
+
+            case ArrayStorePatternNode storePattern when target.Node is TargetArrayStoreNode arrayStore:
+                if (!TryMatch(storePattern.Array,
+                        TargetOccurrence.Direct(arrayStore.Array, arrayStore.ProducerInstruction), context, out _)
+                    || !TryMatch(storePattern.Index,
+                        TargetOccurrence.Direct(arrayStore.Index, arrayStore.ProducerInstruction), context, out _)
+                    || !TryMatch(storePattern.Value,
+                        TargetOccurrence.Direct(arrayStore.Value, arrayStore.ProducerInstruction), context, out _))
+                    break;
+                matched = target;
+                return true;
+
             case CallPatternNode callPattern when target.Node is TargetCallNode call:
                 if (!CecilIdentity.MethodMatches(call.Method, callPattern.Method)
                     || callPattern.Arguments.Count != call.Arguments.Count

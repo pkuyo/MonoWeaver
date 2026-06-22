@@ -7,43 +7,14 @@ using MonoWeaver.Patterns;
 using MonoWeaver.MonoMod.Patterns;
 using MonoMod.Cil;
 using MonoWeaver.CFG;
+using Xunit;
 
 namespace MonoWeaver.PatternTests;
 
-internal static class Program
+public sealed class PatternMatcherTests
 {
-    private static int _passed;
-
-    public static void Main()
-    {
-        Run(nameof(MatchesNestedCallAndMarkedSubexpression), MatchesNestedCallAndMarkedSubexpression);
-        Run(nameof(UsesLoadSiteWhenCompilerTemporaryIsTransparent), UsesLoadSiteWhenCompilerTemporaryIsTransparent);
-        Run(nameof(MatchesComplexShortCircuitAndCapturesSubcondition), MatchesComplexShortCircuitAndCapturesSubcondition);
-        Run(nameof(LocalDefinitionConstraintDisambiguatesBooleanLocal), LocalDefinitionConstraintDisambiguatesBooleanLocal);
-        Run(nameof(AmbiguousInnerPatternIsRejected), AmbiguousInnerPatternIsRejected);
-        Run(nameof(OuterCallDisambiguatesRepeatedInnerCall), OuterCallDisambiguatesRepeatedInnerCall);
-        Run(nameof(ExactOverloadIsRequired), ExactOverloadIsRequired);
-        Run(nameof(StackTypeAllowsAssignableArgumentPattern), StackTypeAllowsAssignableArgumentPattern);
-        Run(nameof(ConstantTypesAreNotInterchanged), ConstantTypesAreNotInterchanged);
-        Run(nameof(CallOpcodeDifferenceCanBeMadeStrict), CallOpcodeDifferenceCanBeMadeStrict);
-        Run(nameof(InvertedShortCircuitBranchLayoutMatches), InvertedShortCircuitBranchLayoutMatches);
-        Run(nameof(MultipleReachingDefinitionsRejectLocalConstraint), MultipleReachingDefinitionsRejectLocalConstraint);
-        Run(nameof(EffectPatternRequiresDiscardedResult), EffectPatternRequiresDiscardedResult);
-        Run(nameof(MonoModTransformLeavesReplacementOnStack), MonoModTransformLeavesReplacementOnStack);
-        Run(nameof(MonoModObservePreservesOriginalValue), MonoModObservePreservesOriginalValue);
-        Run(nameof(PlainInsertionCallCanStoreResult), PlainInsertionCallCanStoreResult);
-        Run(nameof(MonoModConditionTransformProducesValidIL), MonoModConditionTransformProducesValidIL);
-        Console.WriteLine($"All {_passed} MonoWeaver pattern tests passed.");
-    }
-
-    private static void Run(string name, Action test)
-    {
-        test();
-        _passed++;
-        Console.WriteLine($"PASS {name}");
-    }
-
-    private static void MatchesNestedCallAndMarkedSubexpression()
+    [Fact]
+    public void MatchesNestedCallAndMarkedSubexpression()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Chain", module.ImportReference(typeof(C)), typeof(A));
@@ -58,11 +29,12 @@ internal static class Program
         var match = CilMatcher.For(method).Find(pattern).Single();
         var hook = match.Value("hook");
 
-        Assert(ReferenceEquals(hook.ProducerInstruction, bCall), "The marked producer must be A.B().");
-        Assert(ReferenceEquals(hook.AfterUseInstruction, bCall), "A direct chain must insert immediately after A.B().");
+        Assert.True(ReferenceEquals(hook.ProducerInstruction, bCall), "The marked producer must be A.B().");
+        Assert.True(ReferenceEquals(hook.AfterUseInstruction, bCall), "A direct chain must insert immediately after A.B().");
     }
 
-    private static void UsesLoadSiteWhenCompilerTemporaryIsTransparent()
+    [Fact]
+    public void UsesLoadSiteWhenCompilerTemporaryIsTransparent()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Temporary", module.ImportReference(typeof(C)), typeof(A));
@@ -82,11 +54,12 @@ internal static class Program
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
         var hook = CilMatcher.For(method).Find(pattern).Single().Value("hook");
 
-        Assert(ReferenceEquals(hook.ProducerInstruction, bCall), "Producer identity must survive a transparent local.");
-        Assert(ReferenceEquals(hook.AfterUseInstruction, load), "AfterUse must target the concrete ldloc consumed by C().");
+        Assert.True(ReferenceEquals(hook.ProducerInstruction, bCall), "Producer identity must survive a transparent local.");
+        Assert.True(ReferenceEquals(hook.AfterUseInstruction, load), "AfterUse must target the concrete ldloc consumed by C().");
     }
 
-    private static void MatchesComplexShortCircuitAndCapturesSubcondition()
+    [Fact]
+    public void MatchesComplexShortCircuitAndCapturesSubcondition()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Condition", module.TypeSystem.Boolean, typeof(B));
@@ -115,12 +88,13 @@ internal static class Program
 
         var match = CilMatcher.For(method).Find(pattern).Single();
         var ab = match.Condition("ab");
-        Assert(ab.TrueExits.Count == 1, "A && B has one true exit into the remaining condition.");
-        Assert(ab.FalseExits.Count == 2, "A && B has two short-circuit false exits.");
-        Assert(ab.CanRewrite, ab.RewriteFailureReason ?? "The captured condition should be rewritable.");
+        Assert.True(ab.TrueExits.Count == 1, "A && B has one true exit into the remaining condition.");
+        Assert.True(ab.FalseExits.Count == 2, "A && B has two short-circuit false exits.");
+        Assert.True(ab.CanRewrite, ab.RewriteFailureReason ?? "The captured condition should be rewritable.");
     }
 
-    private static void LocalDefinitionConstraintDisambiguatesBooleanLocal()
+    [Fact]
+    public void LocalDefinitionConstraintDisambiguatesBooleanLocal()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "LocalCondition", module.TypeSystem.Boolean);
@@ -143,12 +117,13 @@ internal static class Program
             .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
 
         var match = CilMatcher.For(method).Find(pattern).Single();
-        Assert(match.Local("ret").Variable.Index == 0, "The unique XXX() definition should identify V_0.");
+        Assert.True(match.Local("ret").Variable.Index == 0, "The unique XXX() definition should identify V_0.");
     }
 
 
 
-    private static void AmbiguousInnerPatternIsRejected()
+    [Fact]
+    public void AmbiguousInnerPatternIsRejected()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Ambiguous", module.ImportReference(typeof(B)), typeof(A));
@@ -161,12 +136,12 @@ internal static class Program
         il.Append(Instruction.Create(OpCodes.Ret));
 
         var matches = CilMatcher.For(method).Find(Cil.Value(() => P.Arg<A>(0).B()));
-        Assert(matches.Count == 2, "Both B() occurrences must remain visible to the matcher.");
-        AssertThrows<CilPatternMatchException>(() => matches.Single(),
-            "Single() must reject an ambiguous insertion point instead of choosing the first call.");
+        Assert.True(matches.Count == 2, "Both B() occurrences must remain visible to the matcher.");
+        Assert.Throws<CilPatternMatchException>(() => matches.Single());
     }
 
-    private static void OuterCallDisambiguatesRepeatedInnerCall()
+    [Fact]
+    public void OuterCallDisambiguatesRepeatedInnerCall()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Context", module.ImportReference(typeof(C)), typeof(A));
@@ -185,11 +160,12 @@ internal static class Program
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).D());
         var hook = CilMatcher.For(method).Find(pattern).Single().Value("hook");
-        Assert(ReferenceEquals(hook.ProducerInstruction, secondB),
+        Assert.True(ReferenceEquals(hook.ProducerInstruction, secondB),
             "The enclosing D() call must select only the B() occurrence consumed by D().");
     }
 
-    private static void ExactOverloadIsRequired()
+    [Fact]
+    public void ExactOverloadIsRequired()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Overloads", module.TypeSystem.Int32, typeof(B));
@@ -211,11 +187,12 @@ internal static class Program
         var match = CilMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<B>(0).Select("selected")))
             .Single();
-        Assert(ReferenceEquals(match.Value().ProducerInstruction, stringCall),
+        Assert.True(ReferenceEquals(match.Value().ProducerInstruction, stringCall),
             "Method matching must include the exact overload signature and literal argument.");
     }
 
-    private static void StackTypeAllowsAssignableArgumentPattern()
+    [Fact]
+    public void StackTypeAllowsAssignableArgumentPattern()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "AssignableArgument",
@@ -231,12 +208,13 @@ internal static class Program
             .Single();
         var value = match.Argument("value");
 
-        Assert(value.ParameterIndex == 0, "ParameterDefinition operands must keep explicit parameter indexes.");
-        Assert(ReferenceEquals(value.ProducerInstruction, load),
+        Assert.True(value.ParameterIndex == 0, "ParameterDefinition operands must keep explicit parameter indexes.");
+        Assert.True(ReferenceEquals(value.ProducerInstruction, load),
             "A reference-assignable argument should match through StackType compatibility.");
     }
 
-    private static void ConstantTypesAreNotInterchanged()
+    [Fact]
+    public void ConstantTypesAreNotInterchanged()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Constants", module.TypeSystem.Double);
@@ -250,11 +228,12 @@ internal static class Program
         il.Append(Instruction.Create(OpCodes.Ret));
 
         var match = CilMatcher.For(method).Find(Cil.Value(() => 1.0)).Single();
-        Assert(ReferenceEquals(match.Value().ProducerInstruction, doubleConstant),
+        Assert.True(ReferenceEquals(match.Value().ProducerInstruction, doubleConstant),
             "A Double literal must not match an equal-valued Int32 constant.");
     }
 
-    private static void CallOpcodeDifferenceCanBeMadeStrict()
+    [Fact]
+    public void CallOpcodeDifferenceCanBeMadeStrict()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "CallOpcode", module.ImportReference(typeof(C)), typeof(B));
@@ -268,17 +247,18 @@ internal static class Program
 
         var relaxed = CilMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<B>(0).C()));
-        Assert(relaxed.Count == 1,
+        Assert.True(relaxed.Count == 1,
             "The default mode should tolerate call/callvirt lowering differences for the same method.");
 
         var strictOptions = new CilPatternOptions { IgnoreCallOpcodeDifference = false };
         var strict = CilMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<B>(0).C(), strictOptions));
-        Assert(strict.Count == 0,
+        Assert.True(strict.Count == 0,
             "Strict call matching must reject an instance call opcode different from the Lambda lowering contract.");
     }
 
-    private static void InvertedShortCircuitBranchLayoutMatches()
+    [Fact]
+    public void InvertedShortCircuitBranchLayoutMatches()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "InvertedCondition", module.TypeSystem.Boolean, typeof(B));
@@ -305,11 +285,12 @@ internal static class Program
             .Find(Cil.Condition(() => Ops.CallA() && P.Arg<B>(0).CallB()))
             .Single();
         var condition = match.Condition();
-        Assert(condition.TrueExits.Count == 1 && condition.FalseExits.Count == 2,
+        Assert.True(condition.TrueExits.Count == 1 && condition.FalseExits.Count == 2,
             "The condition graph must ignore brtrue/brfalse polarity and transparent branch trampolines.");
     }
 
-    private static void MultipleReachingDefinitionsRejectLocalConstraint()
+    [Fact]
+    public void MultipleReachingDefinitionsRejectLocalConstraint()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "MultipleDefinitions", module.TypeSystem.Boolean, typeof(bool));
@@ -338,11 +319,12 @@ internal static class Program
         var pattern = Cil.Condition(() => P.Local<bool>("ret"))
             .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
         var matches = CilMatcher.For(method).Find(pattern);
-        Assert(matches.Count == 0,
+        Assert.True(matches.Count == 0,
             "A local-definition constraint must reject a load reached by more than one store.");
     }
 
-    private static void EffectPatternRequiresDiscardedResult()
+    [Fact]
+    public void EffectPatternRequiresDiscardedResult()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Discarded", module.TypeSystem.Void, typeof(A));
@@ -356,11 +338,96 @@ internal static class Program
         var match = CilMatcher.For(method)
             .Find(Cil.Effect(() => P.Arg<A>(0).B()))
             .Single();
-        Assert(ReferenceEquals(match.LastInstruction, pop),
+        Assert.True(ReferenceEquals(match.LastInstruction, pop),
             "A non-void Effect pattern must include the concrete pop that discards its result.");
     }
 
-    private static void MonoModTransformLeavesReplacementOnStack()
+    [Fact]
+    public void MatchesNewArrayCreation()
+    {
+        using var module = CreateTestModule();
+        var method = CreateStaticMethod(module, "NewIntArray", module.ImportReference(typeof(int[])), typeof(int));
+        var il = method.Body.GetILProcessor();
+        var newarr = Instruction.Create(OpCodes.Newarr, module.TypeSystem.Int32);
+
+        il.Append(Instruction.Create(OpCodes.Ldarg_0));
+        il.Append(newarr);
+        il.Append(Instruction.Create(OpCodes.Ret));
+
+        var match = CilMatcher.For(method)
+            .Find(Cil.Value(() => new int[P.Arg<int>(0)]))
+            .Single();
+
+        Assert.True(ReferenceEquals(match.Value().ProducerInstruction, newarr),
+            "newarr should be modeled as a matchable array creation expression.");
+    }
+
+    [Fact]
+    public void MatchesArrayElementLoad()
+    {
+        using var module = CreateTestModule();
+        var method = CreateStaticMethod(module, "LoadIntElement", module.TypeSystem.Int32, typeof(int[]));
+        var il = method.Body.GetILProcessor();
+        var ldelem = Instruction.Create(OpCodes.Ldelem_I4);
+
+        il.Append(Instruction.Create(OpCodes.Ldarg_0));
+        il.Append(Instruction.Create(OpCodes.Ldc_I4_1));
+        il.Append(ldelem);
+        il.Append(Instruction.Create(OpCodes.Ret));
+
+        var match = CilMatcher.For(method)
+            .Find(Cil.Value(() => P.Arg<int[]>(0)[1]))
+            .Single();
+
+        Assert.True(ReferenceEquals(match.Value().ProducerInstruction, ldelem),
+            "ldelem should be modeled as a matchable array element read.");
+    }
+
+    [Fact]
+    public void MatchesArrayLength()
+    {
+        using var module = CreateTestModule();
+        var method = CreateStaticMethod(module, "Length", module.TypeSystem.Int32, typeof(int[]));
+        var il = method.Body.GetILProcessor();
+        var ldlen = Instruction.Create(OpCodes.Ldlen);
+
+        il.Append(Instruction.Create(OpCodes.Ldarg_0));
+        il.Append(ldlen);
+        il.Append(Instruction.Create(OpCodes.Conv_I4));
+        il.Append(Instruction.Create(OpCodes.Ret));
+
+        var match = CilMatcher.For(method)
+            .Find(Cil.Value(() => P.Arg<int[]>(0).Length))
+            .Single();
+
+        Assert.True(ReferenceEquals(match.Value().ProducerInstruction, ldlen),
+            "ldlen should be modeled as a matchable array length expression.");
+    }
+
+    [Fact]
+    public void MatchesArrayElementStoreEffect()
+    {
+        using var module = CreateTestModule();
+        var method = CreateStaticMethod(module, "StoreIntElement", module.TypeSystem.Void, typeof(int[]), typeof(int));
+        var il = method.Body.GetILProcessor();
+        var stelem = Instruction.Create(OpCodes.Stelem_I4);
+
+        il.Append(Instruction.Create(OpCodes.Ldarg_0));
+        il.Append(Instruction.Create(OpCodes.Ldc_I4_1));
+        il.Append(Instruction.Create(OpCodes.Ldarg_1));
+        il.Append(stelem);
+        il.Append(Instruction.Create(OpCodes.Ret));
+
+        var match = CilMatcher.For(method)
+            .Find(Cil.Effect(() => P.StoreElement(P.Arg<int[]>(0), 1, P.Arg<int>(1))))
+            .Single();
+
+        Assert.True(ReferenceEquals(match.LastInstruction, stelem),
+            "stelem should be modeled as a matchable array element store effect.");
+    }
+
+    [Fact]
+    public void MonoModTransformLeavesReplacementOnStack()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "ChainTransform", module.ImportReference(typeof(C)), typeof(A));
@@ -371,25 +438,25 @@ internal static class Program
         ilp.Append(bCall);
         ilp.Append(cCall);
         ilp.Append(Instruction.Create(OpCodes.Ret));
-
         using var context = new ILContext(method);
         context.Invoke(il =>
         {
-            var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-            var hook = il.Match(pattern).Single().Value("hook");
-            hook.AfterUse(il).Transform((Func<B, B>)Ops.IdentityB).LeaveOnStack();
+            var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C()); //匹配 P_0.B().C() 并取 P_0.B()为"hook"
+            var hook = il.Match(pattern).Single().Value("hook"); // 匹配实际函数
+            hook.AfterUse(il).Transform((Func<B, B>)Ops.IdentityB).LeaveOnStack(); // 调用函数并标记为返回值回到栈内 等价于 (IdentityB(P_0.B()).C())
         });
 
         var bIndex = method.Body.Instructions.IndexOf(bCall);
         var cIndex = method.Body.Instructions.IndexOf(cCall);
-        Assert(cIndex == bIndex + 2, "Transform must insert exactly one delegate call between B() and C().");
-        Assert(method.Body.Instructions[bIndex + 1].OpCode.Code == Code.Call,
+        Assert.True(cIndex == bIndex + 2, "Transform must insert exactly one delegate call between B() and C().");
+        Assert.True(method.Body.Instructions[bIndex + 1].OpCode.Code == Code.Call,
             "A static Transform callback should be emitted as a call.");
-        Assert(!HasVerificationErrors(method), "The transformed call chain must remain valid IL.");
+        Assert.True(!HasVerificationErrors(method), "The transformed call chain must remain valid IL.");
     }
 
 
-    private static void MonoModObservePreservesOriginalValue()
+    [Fact]
+    public void MonoModObservePreservesOriginalValue()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "Observe", module.ImportReference(typeof(C)), typeof(A));
@@ -410,12 +477,13 @@ internal static class Program
         });
 
         var bIndex = method.Body.Instructions.IndexOf(bCall);
-        Assert(method.Body.Instructions[bIndex + 1].OpCode.Code == Code.Dup,
+        Assert.True(method.Body.Instructions[bIndex + 1].OpCode.Code == Code.Dup,
             "Observe must duplicate the matched value before passing it to a void callback.");
-        Assert(!HasVerificationErrors(method), "Observe must leave the original value for C().");
+        Assert.True(!HasVerificationErrors(method), "Observe must leave the original value for C().");
     }
 
-    private static void PlainInsertionCallCanStoreResult()
+    [Fact]
+    public void PlainInsertionCallCanStoreResult()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "BeforeExpression", module.TypeSystem.Int32, typeof(int));
@@ -434,14 +502,15 @@ internal static class Program
             match.Before(il).Call((Func<int>)Ops.FortyTwo).StoreLocal(temp);
         });
 
-        Assert(method.Body.Instructions[0].OpCode.Code == Code.Call,
+        Assert.True(method.Body.Instructions[0].OpCode.Code == Code.Call,
             "A plain before-site call should be emitted before expression evaluation.");
-        Assert(method.Body.Instructions[1].OpCode.Code is Code.Stloc or Code.Stloc_S,
+        Assert.True(method.Body.Instructions[1].OpCode.Code is Code.Stloc or Code.Stloc_S,
             "An explicitly selected local destination must consume the callback result.");
-        Assert(!HasVerificationErrors(method), "A stored plain-call result must not disturb the original stack contract.");
+        Assert.True(!HasVerificationErrors(method), "A stored plain-call result must not disturb the original stack contract.");
     }
 
-    private static void MonoModConditionTransformProducesValidIL()
+    [Fact]
+    public void MonoModConditionTransformProducesValidIL()
     {
         using var module = CreateTestModule();
         var method = CreateStaticMethod(module, "ConditionTransform", module.TypeSystem.Boolean, typeof(B));
@@ -467,14 +536,21 @@ internal static class Program
         context.Invoke(il =>
         {
             var pattern = Cil.Condition(() =>
-                P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB())
-                && (Ops.CallC() || Ops.CallD()));
+                P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB()) && (Ops.CallC() || Ops.CallD()));
+            //匹配 ( CallA() && P_0.CallB() && (CallC() || CallD()) 这个条件
+            //并将其中的 CallA() && P_0.CallB() 标记为 "ab"
             var condition = il.Match(pattern).Single().Condition("ab");
+            //再method内匹配对应代码段，并取 "ab"匹配结果。
             condition.Transform(il, (Func<bool, bool>)Ops.IdentityBool);
+            //返回值传入Ops.IdentityBool，等价于修改成  ( IdentityBool(CallA() && P_0.CallB()) && (CallC() || CallD()) 
         });
-
-        Assert(method.Body.Instructions.Count > 12, "Condition transform should insert bridge instructions.");
-        Assert(!HasVerificationErrors(method), "The rewritten short-circuit condition must remain valid IL.");
+        module.Write("modify-a.dll");
+        Assert.True(method.Body.Instructions.Count > 12, "Condition transform should insert bridge instructions.");
+        var callbackCalls = method.Body.Instructions.Count(static instruction =>
+            instruction.OpCode.Code == Code.Call
+            && instruction.Operand is MethodReference { Name: nameof(Ops.IdentityBool) });
+        Assert.Equal(1, callbackCalls);
+        Assert.True(!HasVerificationErrors(method), "The rewritten short-circuit condition must remain valid IL.");
     }
 
     private static bool HasVerificationErrors(MethodDefinition method)
@@ -533,26 +609,6 @@ internal static class Program
                binder: null, parameterTypes, modifiers: null)
            ?? throw new MissingMethodException(declaringType.FullName, name);
 
-    private static void AssertThrows<TException>(Action action, string message)
-        where TException : Exception
-    {
-        try
-        {
-            action();
-        }
-        catch (TException)
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(message);
-    }
-
-    private static void Assert(bool condition, string message)
-    {
-        if (!condition)
-            throw new InvalidOperationException(message);
-    }
 }
 
 public sealed class A

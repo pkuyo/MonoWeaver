@@ -1,0 +1,48 @@
+name: Pattern tests
+
+env:
+  DOTNET_VERSION: 10.0.x
+
+on:
+  push:
+    paths:
+      - ".github/workflows/pattern-tests.yml"
+      - "MonoWeaver/**"
+      - "MonoWeaver.MonoMod/**"
+      - "tests/MonoWeaver.PatternTests/**"
+      - "MonoWeaver.slnx"
+  pull_request:
+    paths:
+      - ".github/workflows/pattern-tests.yml"
+      - "MonoWeaver/**"
+      - "MonoWeaver.MonoMod/**"
+      - "tests/MonoWeaver.PatternTests/**"
+      - "MonoWeaver.slnx"
+
+jobs:
+  pattern-tests:
+    name: Pattern tests
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
+
+      - name: Test
+        run: dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj --no-restore --configuration Release --logger "trx;LogFileName=pattern-tests.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pattern-test-results
+          path: tests/MonoWeaver.PatternTests/TestResults/**/*.trx
+          if-no-files-found: ignore
