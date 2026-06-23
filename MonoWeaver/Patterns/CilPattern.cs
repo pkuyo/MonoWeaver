@@ -5,18 +5,13 @@ using System.Linq.Expressions;
 namespace MonoWeaver.Patterns;
 
 /// <summary>
-/// 描述 root expression 在目标 method 中的使用方式。
+/// 描述匹配表达式在目标方法中的使用方式。
 /// </summary>
 public enum CilPatternKind
 {
-    /// <summary>expression 必须产生一个值。</summary>
-    Value,
-
-    /// <summary>expression 只用于 side effect。</summary>
-    Effect,
-
-    /// <summary>expression 控制 true/false 决策，并且可能被 lowering 成 branch。</summary>
-    Condition
+    Value, //匹配表达式返回一个值
+    Effect, //匹配表达式不返回东西
+    Condition, //匹配表达式返回 bool 并且影响分支
 }
 
 /// <summary>
@@ -35,26 +30,24 @@ public enum TemporaryNormalization
 }
 
 /// <summary>
-/// 将 pattern 匹配到 Cecil method body 时使用的选项。
+/// 将 pattern 匹配到方法时使用的选项。
 /// </summary>
 public sealed class CilPatternOptions
 {
-    /// <summary>
-    /// 获取或设置 local temporary 的 normalization 方式。默认值较保守，但适用于常见的
-    /// compiler-generated <c>stloc; ...; ldloc</c> 序列。
-    /// </summary>
+    // 匹配临时变量(local)的策略
     public TemporaryNormalization TemporaryNormalization { get; set; } = TemporaryNormalization.UniqueDefinitions;
 
-    /// <summary>
-    /// 获取或设置在 referenced method 其他部分相同时，是否忽略 <c>call</c>/<c>callvirt</c>
-    /// opcode 差异。默认启用，因为 C# 常为 non-virtual instance call 生成 <c>callvirt</c>
-    /// 以保留 null check。
-    /// </summary>
+    // 忽略 call/callvirt 差异 （c#编译生成 对于non-virtual一样会有callvirt）
     public bool IgnoreCallOpcodeDifference { get; set; } = true;
 
-    /// <summary>
-    /// 获取或设置是否忽略 no-op instruction，以及只 forward 到另一个 block 的 basic block。
-    /// </summary>
+    //透明跳转展开 
+    //eg:
+    // brtrue.s IL_0010
+    // IL_0010:
+    // nop
+    // br.s IL_0020
+    // IL_0020:
+    // ....
     public bool IgnoreTransparentControlFlow { get; set; } = true;
 }
 
@@ -77,7 +70,7 @@ public sealed class LocalDefinitionConstraint
 }
 
 /// <summary>
-/// 从 lambda expression 构建的可复用 pattern。lambda 只会被检查；
+/// 从 lambda 表达式构建的可复用 pattern。lambda 只会被检查；
 /// 永远不会被编译或执行。
 /// </summary>
 public sealed class CilExpressionPattern
@@ -91,7 +84,7 @@ public sealed class CilExpressionPattern
         Options = options ?? new CilPatternOptions();
     }
 
-    /// <summary>此 pattern 的 root 使用方式。</summary>
+    /// <summary>此 pattern 的使用方式。</summary>
     public CilPatternKind Kind { get; }
 
     /// <summary>解析后的 pattern tree。</summary>
@@ -100,12 +93,12 @@ public sealed class CilExpressionPattern
     /// <summary>matcher 应用的选项。</summary>
     public CilPatternOptions Options { get; }
 
-    /// <summary>captured local 的附加约束。</summary>
+    /// <summary>捕获的 local 的附加约束。</summary>
     public IReadOnlyList<LocalDefinitionConstraint> LocalDefinitionConstraints => _localDefinitionConstraints;
 
     /// <summary>
-    /// 要求由 <paramref name="captureName"/> 捕获的 local 恰好有一个 reaching definition，
-    /// 并要求其 stored value 匹配 <paramref name="definition"/>。
+    /// 要求由 <paramref name="captureName"/> 捕获的 local 恰好有一个 stloc 来源，
+    /// 并要求其 stloc的来源匹配 <paramref name="definition"/>。
     /// </summary>
     public CilExpressionPattern LocalDefinedBy(string captureName, CilExpressionPattern definition)
     {
@@ -126,23 +119,27 @@ public sealed class CilExpressionPattern
 /// </summary>
 public static class Cil
 {
-    /// <summary>为会在 evaluation stack 上留下一个值的 expression 创建 pattern。</summary>
+    /// <summary>为会返回一个值的表达式创建 pattern。
+    /// （不需要实际保存到local或者arg，只要表达式返回值即可）
+    /// </summary>
     public static CilExpressionPattern Value<T>(Expression<Func<T>> expression, CilPatternOptions? options = null)
         => Build(CilPatternKind.Value, expression, options);
 
-    /// <summary>
-    /// 从一个返回值会被目标 method 丢弃的 expression 创建 side-effect pattern。
+    /// <summary>为会返回一个值的表达式创建 pattern。
+    /// （不需要实际保存到local或者arg，只要表达式返回值即可）并在hook内忽略该返回值
     /// </summary>
+    /*
     public static CilExpressionPattern Effect<T>(Expression<Func<T>> expression, CilPatternOptions? options = null)
         => Build(CilPatternKind.Effect, expression, options);
+    */
 
-    /// <summary>为 void expression 创建 side-effect pattern。</summary>
+    /// <summary>为无返回值的表达式创建 pattern。
+    /// </summary>
     public static CilExpressionPattern Effect(Expression<Action> expression, CilPatternOptions? options = null)
         => Build(CilPatternKind.Effect, expression, options);
 
-    /// <summary>
-    /// 创建 boolean decision pattern。目标不需要 materialize 一个 Boolean 值；
-    /// short-circuit branch 会按结构匹配。
+    /// <summary>为会返回bool并可能进行分支的表达式创建 pattern。
+    /// （会按照短路结构匹配）
     /// </summary>
     public static CilExpressionPattern Condition(Expression<Func<bool>> expression, CilPatternOptions? options = null)
         => Build(CilPatternKind.Condition, expression, options);
@@ -160,45 +157,67 @@ public static class Cil
 }
 
 /// <summary>
-/// expression parser 可识别的 placeholder method。这些 method 只能出现在传给
-/// <see cref="Cil"/> 的 lambda 内；直接执行它们是错误用法。
+/// parser可识别的占位符。
+/// 这些占位符只能出现在传给 <see cref="Cil"/> 的 lambda 内；
+/// 直接执行它们无实际意义，是错误用法。
 /// </summary>
 public static class P
 {
-    /// <summary>匹配 instance (<c>this</c>) argument。</summary>
+    /// <summary>
+    /// 匹配 instance (<c>this</c>)。
+    /// </summary>
     public static T This<T>() => Throw<T>();
 
-    /// <summary>匹配并捕获 instance (<c>this</c>) argument。</summary>
+    /// <summary>
+    /// 匹配并捕获 instance (<c>this</c>)。
+    /// </summary>
     public static T This<T>(string captureName) => Throw<T>();
 
-    /// <summary>按 Cecil parameter index 匹配显式 method parameter，该 index 不包含 <c>this</c>。</summary>
+    /// <summary>
+    /// 按参数序号匹配函数参数。
+    /// （注：index不包含this， 请使用This<T>匹配） 
+    /// </summary>
     public static T Arg<T>(int index) => Throw<T>();
 
-    /// <summary>按 Cecil parameter index 匹配并捕获显式 method parameter。</summary>
+    /// <summary>
+    /// 按参数序号匹配并捕获函数参数。
+    /// （注：index不包含this， 请使用This<T>匹配） 
+    /// </summary>
     public static T Arg<T>(int index, string captureName) => Throw<T>();
 
-    /// <summary>匹配并捕获任意符合指定 type 的显式 parameter。</summary>
+    /// <summary>
+    /// 匹配并捕获任意符合指定 type 的参数。
+    /// </summary>
     public static T Arg<T>(string captureName) => Throw<T>();
 
-    /// <summary>按 index 匹配 local variable。</summary>
+    /// <summary>
+    /// 按 index 匹配特定序号的 local。
+    /// </summary>
     public static T Local<T>(int index) => Throw<T>();
 
-    /// <summary>按 index 匹配并捕获 local variable。</summary>
+    /// <summary>
+    /// 按 index 匹配并捕获特定序号的 local。
+    /// </summary>
     public static T Local<T>(int index, string captureName) => Throw<T>();
 
-    /// <summary>匹配并捕获任意符合指定 type 的 local。</summary>
+    /// <summary>
+    /// 匹配并捕获任意符合指定 type 的 local。
+    /// </summary>
     public static T Local<T>(string captureName) => Throw<T>();
 
-    /// <summary>匹配任意符合指定 nominal type 的 expression，并捕获该 occurrence。</summary>
+    /// <summary>
+    /// 匹配捕获任意符合指定 type 的 表达式。
+    /// </summary>
     public static T Any<T>(string captureName) => Throw<T>();
 
     /// <summary>
-    /// 标记精确的 subexpression 或 subcondition，且不弱化其内部 pattern。
-    /// 因此 enclosing expression 可以消除重复 call 的歧义，而返回的 match 会指向被标记部分。
+    /// 标记具体的匹配段，方便精确匹配；对于能直接匹配的进来不要使用。可能会影响和其他Hook的兼容。
     /// </summary>
     public static T Mark<T>(string captureName, T value) => Throw<T>();
 
-    /// <summary>匹配数组元素写入。</summary>
+    /// <summary>
+    /// 匹配数组元素写入。
+    /// </summary>
     public static void StoreElement<T>(T[] array, int index, T value)
         => ThrowVoid();
 

@@ -9,10 +9,7 @@ using MonoWeaver.Utils;
 
 namespace MonoWeaver.Patterns;
 
-/// <summary>
-/// 将 <see cref="CilExpressionPattern"/> 匹配到一个 Cecil method body。
-/// matcher instance 是 snapshot；修改 method 后请创建新的 matcher。
-/// </summary>
+
 public sealed class CilMatcher
 {
     private readonly CilMethodModel _model;
@@ -26,7 +23,7 @@ public sealed class CilMatcher
 
     public static CilMatcher For(MethodDefinition method) => new(method);
 
-    /// <summary>查找所有精确 candidate。插入 IL 前请使用 <see cref="CilMatchSet.Single"/>。</summary>
+    /// <summary>查找所有精确匹配点。插入 IL 前请使用 <see cref="CilMatchSet.Single"/>。</summary>
     public CilMatchSet Find(CilExpressionPattern pattern)
     {
         if (pattern is null)

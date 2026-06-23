@@ -607,7 +607,7 @@ public partial class ILMethodVerifier
 
     private bool NeedFamilyInstanceAccessCheck(FieldDefinition field)
     {
-        if (field.IsStatic || !HasFamilyAccessPath(field.DeclaringType))
+        if (field.IsStatic || !HasFamilyAccessPath(field.DeclaringType) || !VerifyAccess)
             return false;
 
         if (field.IsFamily)
@@ -621,7 +621,7 @@ public partial class ILMethodVerifier
 
     private bool NeedFamilyInstanceAccessCheck(MethodDefinition method)
     {
-        if (!method.HasThis || !HasFamilyAccessPath(method.DeclaringType))
+        if (!method.HasThis || !HasFamilyAccessPath(method.DeclaringType) || !VerifyAccess)
             return false;
 
         if (method.IsFamily)
@@ -1460,7 +1460,7 @@ public partial class ILMethodVerifier
                 }
                 else
                 {
-                    //TODO：不可验证
+                    ReportDiagnostic(CFGDiagnostic.InstructionUnverifiable(CFGExceptionType.Unverifiable, inst));
                 }
                 break;
             case Code.Stind_I1:

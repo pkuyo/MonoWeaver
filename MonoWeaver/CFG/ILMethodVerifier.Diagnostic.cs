@@ -548,7 +548,7 @@ public partial class ILMethodVerifier
 
     public ILMethodVerifier ThrowIfHasErrors()
     {
-        if (Diagnostics.Count > 0)
+        if (Diagnostics.Count(i => i.Severity > DiagnosticSeverity.Warning) > 0)
         {
             throw new CfgVerifyException(this);
         }

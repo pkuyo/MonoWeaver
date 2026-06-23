@@ -16,10 +16,9 @@ public enum VerifyOptions
     Instructions = 1 << 1,
     LocalInit = 1 << 2,
     StackBalance = 1 << 3,
-    StackTypes = 1 << 4 | StackBalance, //TODO:WIP
-    ByrefEscape = 1 << 5, //TODO:待实现
-    AccessTest = 1 << 6,
-    Full = Instructions | LocalInit | StackTypes | ByrefEscape | AccessTest,
+    StackTypes = 1 << 4 | StackBalance,
+    AccessTest = 1 << 5,
+    Full = Instructions | LocalInit | StackTypes | AccessTest,
     Light = StackBalance | Instructions
 }
 
@@ -178,6 +177,8 @@ public partial class ILMethodVerifier
 
     public bool VerifyLocalInit => _verifyOptions.HasFlag(VerifyOptions.LocalInit) && _needInitAnalysis;
 
+    public bool VerifyAccess => _verifyOptions.HasFlag(VerifyOptions.AccessTest) && _needInitAnalysis;
+
     public MethodDefinition Method => _method;
 
     public bool CecilFault { get; private set; } = false;
@@ -191,6 +192,10 @@ public partial class ILMethodVerifier
 
         _verifyOptions = verifyOptions;
         _method = method;
+    }
+
+    public void Verify()
+    {
         try
         {
             _needInitAnalysis = !_method.Body.InitLocals;
@@ -205,38 +210,6 @@ public partial class ILMethodVerifier
         _modifiesThis = false;
         VerifyMethod();
     }
-
-    //public ILMethodAnalyzer ReAnalyze(VerifyOptions verifyOptions = VerifyOptions.Light)
-    //{
-    //    _verifyOptions = verifyOptions;
-    //    CecilFault = false;
-    //    _instDictionary.Clear();
-    //    _exceptionHandlers.Clear();
-    //    _regionFrames.Clear();
-    //    _blockMap.Clear();
-    //    _nodeIntern.Clear();
-    //    _blocks.Clear();
-    //    Diagnostics.Clear();
-    //    _reportedDiagnostics.Clear();
-    //    _entryblocks.Clear();
-    //    _currentErrorCount = 0;
-    //    _abortVerificationStrategy = AbortStrategy.NoAbort;
-    //    try
-    //    {
-    //        _needInitAnalysis = !_method.Body.InitLocals;
-    //    }
-    //    catch (Exception e)
-    //    {
-    //        CecilFault = true;
-    //        ReportDiagnostic(CFGDiagnostic.CecilLoadFailed(e));
-    //        return this;
-    //    }
-    //    _initThis = !_method.HasThis || !_method.IsSpecialName || _method.Name != ".ctor";
-    //    _modifiesThis = false;
-    //    VerifyMethod();
-    //    return this;
-    //}
-
 
     private void VerifyMethod()
     {
@@ -682,7 +655,7 @@ public partial class ILMethodVerifier
                     {
                         if (VerifyMethodOperand(inst, out var mf) && ResolveWithDiagnostic(mf) is MethodDefinition md)
                         {
-                            if (!_method.DeclaringType.CanAccess(mf, md))
+                            if (!_method.DeclaringType.CanAccess(mf, md) && VerifyAccess)
                             {
                                 ReportDiagnostic(CFGDiagnostic.MethodAccessViolation(inst, _method.DeclaringType, mf));
                             }
@@ -693,7 +666,7 @@ public partial class ILMethodVerifier
                     {
                         if (VerifyFieldOperand(inst, out var field) && ResolveWithDiagnostic(field) is FieldDefinition fd)
                         {
-                            if (!_method.DeclaringType.CanAccess(field, fd))
+                            if (!_method.DeclaringType.CanAccess(field, fd) && VerifyAccess)
                             {
                                 ReportDiagnostic(CFGDiagnostic.FieldAccessViolation(inst, _method.DeclaringType, field));
                             }
@@ -712,7 +685,7 @@ public partial class ILMethodVerifier
                     {
                         if (VerifyTypeOperand(inst, out var type) && ResolveWithDiagnostic(type) is TypeDefinition)
                         {
-                            if (!_method.DeclaringType.CanAccess(type))
+                            if (!_method.DeclaringType.CanAccess(type) && VerifyAccess)
                             {
                                 ReportDiagnostic(CFGDiagnostic.TypeAccessViolation(inst, _method.DeclaringType, type));
                             }

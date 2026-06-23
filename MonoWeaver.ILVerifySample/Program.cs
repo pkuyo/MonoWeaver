@@ -110,7 +110,7 @@ public static class InvalidCombatHook
         Console.WriteLine("---------------- MonoWeaver Full Verify -----------------");
         try
         {
-            var analyzer = il.Body.Analyze(VerifyOptions.Full);
+            var analyzer = il.Body.Verify(VerifyOptions.Full);
             analyzer.ThrowIfHasErrors();
             Console.WriteLine("No diagnostics.");
         }

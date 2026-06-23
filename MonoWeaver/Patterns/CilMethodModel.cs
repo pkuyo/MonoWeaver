@@ -30,12 +30,14 @@ internal sealed class CilMethodModel
         Instructions = graph.Instructions;
         _instructionIndices = graph.InstructionIndices;
         Blocks = graph.Blocks;
+        EntryBlocks = graph.EntryBlocks;
         _blockByInstruction = graph.BlockByInstruction;
     }
 
     public MethodDefinition Method { get; }
     public Instruction[] Instructions { get; }
     public IReadOnlyList<BasicBlock> Blocks { get; }
+    public IReadOnlyList<BasicBlock> EntryBlocks { get; }
     public IReadOnlyList<TargetExpressionNode> ValueCandidates => _valueCandidates;
     public IReadOnlyList<TargetEffect> EffectCandidates => _effectCandidates;
     public LocalDefinitionIndex LocalDefinitions { get; private set; } = null!;
@@ -84,7 +86,9 @@ internal sealed class CilMethodModel
     private bool IsTransparentForwarder(BasicBlock block, out BasicBlock next)
     {
         next = null!;
-        if (block.Successors.Count != 1 || block.Successors[0].Kind != ControlFlowEdgeKind.Unconditional)
+        if (block.Successors.Count != 1 ||
+            block.Successors[0].Kind != ControlFlowEdgeKind.Unconditional ||
+            Instructions[block.EndIndex].OpCode.Code is not Code.Br and not Code.Br_S) // 跳转只允许br/br_s
             return false;
 
         for (var i = block.StartIndex; i < block.EndIndex; i++)
@@ -160,8 +164,7 @@ internal sealed class CilMethodModel
                 }
                 else if (old != depth)
                 {
-                    // authoritative diagnostic 由 verifier 负责。matcher 保留较低 depth，
-                    // 避免 malformed 或 unverifiable code 导致 simulation 越界。
+                    //防止异常IL代码造成程序异常
                     var merged = Math.Min(old, depth);
                     if (merged != old)
                     {
@@ -187,6 +190,9 @@ internal sealed class CilMethodModel
         catch { return 0; }
     }
 
+    /// <summary>
+    /// 创建node，对于非法指令/无法解析指令直接压unknown。
+    /// </summary>
     private void SimulateInstruction(Instruction instruction, List<TargetExpressionNode> stack,
         BasicBlock block)
     {

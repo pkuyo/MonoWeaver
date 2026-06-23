@@ -21,11 +21,19 @@ namespace MonoWeaver.Utils;
 
 public static partial class CecilHelper
 {
-    public static ILMethodVerifier Analyze(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full) 
-        => new ILMethodVerifier(method, options);
+    public static ILMethodVerifier Verify(this MethodDefinition method, VerifyOptions options = VerifyOptions.Full, int maxErrCount = 10)
+    {
+        var verifier = new ILMethodVerifier(method, options) { MaxErrorCount = maxErrCount };
+        verifier.Verify();
+        return verifier;
+    }
 
-    public static ILMethodVerifier Analyze(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Full)
-        => new ILMethodVerifier(body.Method, options);
+    public static ILMethodVerifier Verify(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Full, int maxErrCount = 10)
+    {
+        var verifier = new ILMethodVerifier(body.Method, options) { MaxErrorCount = maxErrCount };
+        verifier.Verify();
+        return verifier;
+    }
 }
 
 public static partial class CecilHelper

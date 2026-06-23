@@ -544,7 +544,6 @@ public sealed class PatternMatcherTests
             condition.Transform(il, (Func<bool, bool>)Ops.IdentityBool);
             //返回值传入Ops.IdentityBool，等价于修改成  ( IdentityBool(CallA() && P_0.CallB()) && (CallC() || CallD()) 
         });
-        module.Write("modify-a.dll");
         Assert.True(method.Body.Instructions.Count > 12, "Condition transform should insert bridge instructions.");
         var callbackCalls = method.Body.Instructions.Count(static instruction =>
             instruction.OpCode.Code == Code.Call
@@ -556,6 +555,7 @@ public sealed class PatternMatcherTests
     private static bool HasVerificationErrors(MethodDefinition method)
     {
         var analyzer = new ILMethodVerifier(method, VerifyOptions.Full);
+        analyzer.Verify();
         var errors = analyzer.Diagnostics
             .Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Fatal)
             .ToArray();

@@ -17,6 +17,7 @@ internal static class MonoWeaverVerifierAdapter
         try
         {
             var analyzer = new ILMethodVerifier(testCase.Method, options);
+            analyzer.Verify();
             AddDiagnostics(analyzer.Diagnostics);
         }
         catch (ILMethodVerifier.CfgVerifyException ex)

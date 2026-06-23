@@ -8,8 +8,7 @@ using MonoWeaver.Utils;
 namespace MonoWeaver.Patterns;
 
 /// <summary>
-/// local 的最小 reaching-definition index。它只用于消除 captured local 的歧义，
-/// 或将已证明 single-definition 的 compiler temporary 视为 transparent。
+/// local在某个ld位置时候其st的可能来源。它只用于消除 local 变量的歧义
 /// </summary>
 internal sealed class LocalDefinitionIndex
 {
@@ -46,39 +45,55 @@ internal sealed class LocalDefinitionIndex
             incoming[block] = NewState(localCount);
             outgoing[block] = NewState(localCount);
         }
+        var updateBlock = model.EntryBlocks.ToList();
 
-        var changed = true;
-        var iterations = 0;
-        while (changed && iterations++ < model.Blocks.Count * 4 + 8)
+
+        var tempMerged = NewState(localCount);
+        var tempTransferred = NewState(localCount);
+        int iteration = 0;
+        for (; iteration < updateBlock.Count && iteration < model.Blocks.Count * 4 + 8; iteration++)
         {
-            changed = false;
-            foreach (var block in model.Blocks)
+            var block = updateBlock[iteration];
+            var merged = tempMerged;
+            foreach (var set in tempMerged) set.Clear();
+
+            foreach (var predecessor in block.Predecessors)
+                UnionInto(merged, outgoing[predecessor.From]);
+
+            if (!StateEquals(incoming[block], merged))
             {
-                var merged = NewState(localCount);
-                foreach (var predecessor in block.Predecessors)
-                    UnionInto(merged, outgoing[predecessor.From]);
+                tempMerged = incoming[block];
+                incoming[block] = merged;
+            }
+            var transferred = tempTransferred;
+            CloneState(incoming[block], transferred);
+            TransferBlock(model, block, transferred); //记录更新stloc
+            if (!StateEquals(outgoing[block], transferred))
+            {
+                tempTransferred = outgoing[block];
+                foreach (var set in tempTransferred)
+                    set.Clear();
 
-                if (!StateEquals(incoming[block], merged))
-                {
-                    incoming[block] = merged;
-                    changed = true;
-                }
-
-                var transferred = CloneState(merged);
-                TransferBlock(model, block, transferred);
-                if (!StateEquals(outgoing[block], transferred))
-                {
-                    outgoing[block] = transferred;
-                    changed = true;
-                }
+                foreach (var succ in block.Successors)
+                    updateBlock.Add(succ.To); //更新后继
+                outgoing[block] = transferred;
             }
         }
 
+        if (iteration == model.Blocks.Count * 4 + 8)
+        {
+            throw new InvalidOperationException(
+                $"Local definition analysis did not converge for {model.Method.FullName}.");
+        }
+
         var definitionsAtLoad = new Dictionary<Instruction, Instruction[]>();
+        var tempBlock = NewState(localCount);
         foreach (var block in model.Blocks)
         {
-            var state = CloneState(incoming[block]);
-            for (var i = block.StartIndex; i <= block.EndIndex; i++)
+            var state = tempBlock;
+
+            CloneState(incoming[block], state);
+            for (var i = block.StartIndex; i <= block.EndIndex; i++) //block内逐语句更新并记录ldloc -> stloc[]
             {
                 var instruction = model.Instructions[i];
                 if (CecilInstructionHelpers.IsLoadLocal(instruction)
@@ -149,12 +164,14 @@ internal sealed class LocalDefinitionIndex
         return state;
     }
 
-    private static HashSet<Instruction>[] CloneState(HashSet<Instruction>[] source)
+    private static void CloneState(HashSet<Instruction>[] source, HashSet<Instruction>[] dest)
     {
-        var clone = new HashSet<Instruction>[source.Length];
         for (var i = 0; i < source.Length; i++)
-            clone[i] = new HashSet<Instruction>(source[i]);
-        return clone;
+        {
+            dest[i].Clear();
+            foreach (var item in source[i])
+                dest[i].Add(item);
+        }
     }
 
     private static void UnionInto(HashSet<Instruction>[] target, HashSet<Instruction>[] source)
@@ -175,6 +192,12 @@ internal sealed class LocalDefinitionIndex
         return true;
     }
 
+    /// <summary>
+    /// 更新每个local的stloc位置
+    /// </summary>
+    /// <param name="model"></param>
+    /// <param name="block"></param>
+    /// <param name="state"></param>
     private static void TransferBlock(CilMethodModel model, BasicBlock block,
         HashSet<Instruction>[] state)
     {
@@ -186,7 +209,7 @@ internal sealed class LocalDefinitionIndex
                 && index >= 0 && index < state.Length)
             {
                 state[index].Clear();
-                state[index].Add(instruction);
+                state[index].Add(instruction); //如果出现新的store把既有的store clear（被覆盖）
             }
         }
     }
