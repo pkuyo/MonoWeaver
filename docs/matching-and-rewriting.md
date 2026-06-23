@@ -157,11 +157,11 @@ lb_false:
 
 ```csharp
 var conditionPattern = Cil.Condition(() =>
-    P.Mark("gate", P.Arg<bool>(0) && P.Arg<bool>(1)));
+    P.Arg<bool>(0) && P.Arg<bool>(1));
 
 var gate = method.Match(conditionPattern)
                  .Single()
-                 .Condition("gate");
+                 .Condition();
 
 gate.Transform(rewriteCondition);
 
