@@ -15,11 +15,11 @@ namespace MonoWeaver.Cecil;
 /// </summary>
 public static class CecilPatternTransformExtensions
 {
-    public static CilMatchSet Match(this MethodDefinition method, CilExpressionPattern pattern)
+    public static CilMatchSet Match(this MethodDefinition method, ExpressionPattern pattern)
     {
         if (method is null)
             throw new ArgumentNullException(nameof(method));
-        return CilMatcher.For(method).Find(pattern);
+        return PatternMatcher.For(method).Find(pattern);
     }
 
     /// <summary>在该 value occurrence 的具体 use 后创建 transform site。</summary>
@@ -99,7 +99,7 @@ public static class CecilPatternTransformExtensions
     {
         if (match is null)
             throw new ArgumentNullException(nameof(match));
-        if (match.Pattern.Kind == CilPatternKind.Condition)
+        if (match.Pattern.Kind == PatternKind.Condition)
         {
             throw new InvalidOperationException(
                 "A branch-based condition has no single after-site. Use TransformCondition instead.");

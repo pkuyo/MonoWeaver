@@ -134,7 +134,7 @@ public sealed class ArgumentsAndLocalsPatternTests
     {
         using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "TransparentLocal");
-        var options = new CilPatternOptions { TemporaryNormalization = TemporaryNormalization.None };
+        var options = new PatternOptions { TemporaryNormalization = TemporaryNormalization.None };
         var pattern = DualPattern.Value(dsl,
             () => (P.Arg<int>(0) + 1) * 2,
             () => (P.Arg(0, CilType.Int32) + 1) * 2,

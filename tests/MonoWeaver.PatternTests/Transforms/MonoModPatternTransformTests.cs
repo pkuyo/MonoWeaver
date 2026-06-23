@@ -135,7 +135,7 @@ public sealed class MonoModPatternTransformTests
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
-    private static CilExpressionPattern ChainPattern(PatternDsl dsl)
+    private static ExpressionPattern ChainPattern(PatternDsl dsl)
     {
         var aType = RuntimeSymbols.Type<A>(assignable: true);
         var callB = RuntimeSymbols.Method<A>(nameof(A.B));
@@ -145,7 +145,7 @@ public sealed class MonoModPatternTransformTests
             () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callC));
     }
 
-    private static CilExpressionPattern ComplexConditionPattern(PatternDsl dsl)
+    private static ExpressionPattern ComplexConditionPattern(PatternDsl dsl)
     {
         var bType = RuntimeSymbols.Type<B>(assignable: true);
         var callA = RuntimeSymbols.Method<Ops>(nameof(Ops.CallA));

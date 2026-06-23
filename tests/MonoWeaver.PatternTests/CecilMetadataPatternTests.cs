@@ -6,6 +6,7 @@ using Mono.Cecil.Cil;
 using MonoWeaver.Cecil;
 using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
+using MonoWeaver.Utils;
 using Xunit;
 
 namespace MonoWeaver.PatternTests;

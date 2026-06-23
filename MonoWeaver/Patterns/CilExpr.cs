@@ -11,12 +11,12 @@ namespace MonoWeaver.Patterns;
 /// </summary>
 public sealed class CilExpr
 {
-    internal CilExpr(CilPatternNode node)
+    internal CilExpr(PatternNode node)
     {
         Node = node ?? throw new ArgumentNullException(nameof(node));
     }
 
-    internal CilPatternNode Node { get; }
+    internal PatternNode Node { get; }
 
     public CilTypeSpec ResultType => Node.ResultType;
 
@@ -213,7 +213,7 @@ public sealed class CilExpr
             method: null, resultType));
     }
 
-    internal static IReadOnlyList<CilPatternNode> RequireArguments(CilMethodSpec method, CilExpr[]? arguments)
+    internal static IReadOnlyList<PatternNode> RequireArguments(CilMethodSpec method, CilExpr[]? arguments)
     {
         if (arguments is null)
             throw new ArgumentNullException(nameof(arguments));

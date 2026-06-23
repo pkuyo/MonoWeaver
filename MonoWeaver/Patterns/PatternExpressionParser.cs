@@ -10,7 +10,7 @@ internal static class PatternExpressionParser
 {
     private static readonly Type PlaceholderType = typeof(P);
 
-    public static CilPatternNode Parse(Expression expression)
+    public static PatternNode Parse(Expression expression)
     {
         if (expression is null)
             throw new ArgumentNullException(nameof(expression));
@@ -40,7 +40,7 @@ internal static class PatternExpressionParser
         };
     }
 
-    private static CilPatternNode ParseCall(MethodCallExpression call)
+    private static PatternNode ParseCall(MethodCallExpression call)
     {
         if (call.Method.DeclaringType == PlaceholderType)
             return ParsePlaceholder(call);
@@ -50,7 +50,7 @@ internal static class PatternExpressionParser
         return new CallPatternNode(CilMethodSpec.From(call.Method), instance, arguments, CilTypeSpec.From(call.Type));
     }
 
-    private static CilPatternNode ParsePlaceholder(MethodCallExpression call)
+    private static PatternNode ParsePlaceholder(MethodCallExpression call)
     {
         var name = call.Method.Name;
         return name switch
@@ -70,7 +70,7 @@ internal static class PatternExpressionParser
         };
     }
 
-    private static CilPatternNode ParseArgumentPlaceholder(MethodCallExpression call)
+    private static PatternNode ParseArgumentPlaceholder(MethodCallExpression call)
     {
         int? index = null;
         string? capture = null;
@@ -91,7 +91,7 @@ internal static class PatternExpressionParser
         return new ArgumentPatternNode(false, index, capture, CilTypeSpec.From(call.Type).Assignable());
     }
 
-    private static CilPatternNode ParseLocalPlaceholder(MethodCallExpression call)
+    private static PatternNode ParseLocalPlaceholder(MethodCallExpression call)
     {
         int? index = null;
         string? capture = null;
@@ -112,7 +112,7 @@ internal static class PatternExpressionParser
         return new LocalPatternNode(index, capture, CilTypeSpec.From(call.Type).Assignable());
     }
 
-    private static CilPatternNode ParseMember(MemberExpression member)
+    private static PatternNode ParseMember(MemberExpression member)
     {
         if (member.Member is FieldInfo field)
         {
@@ -130,25 +130,25 @@ internal static class PatternExpressionParser
         {
             var getter = property.GetMethod ?? throw Unsupported(member, $"Property '{property.Name}' has no getter.");
             var instance = member.Expression is null ? null : Parse(member.Expression);
-            return new CallPatternNode(CilMethodSpec.From(getter), instance, Array.Empty<CilPatternNode>(), CilTypeSpec.From(property.PropertyType));
+            return new CallPatternNode(CilMethodSpec.From(getter), instance, Array.Empty<PatternNode>(), CilTypeSpec.From(property.PropertyType));
         }
 
         throw Unsupported(member, $"Member kind '{member.Member.MemberType}' is not supported.");
     }
 
-    private static CilPatternNode ParseConstant(ConstantExpression constant)
+    private static PatternNode ParseConstant(ConstantExpression constant)
         => new ConstantPatternNode(constant.Value, CilTypeSpec.From(constant.Type));
 
-    private static CilPatternNode ParseArrayLength(UnaryExpression unary)
+    private static PatternNode ParseArrayLength(UnaryExpression unary)
         => new ArrayLengthPatternNode(Parse(unary.Operand), CilTypeSpec.From(unary.Type));
 
-    private static CilPatternNode ParseUnary(UnaryExpression unary)
+    private static PatternNode ParseUnary(UnaryExpression unary)
         => new UnaryPatternNode(unary.NodeType, Parse(unary.Operand), unary.Method is null ? null : CilMethodSpec.From(unary.Method), CilTypeSpec.From(unary.Type));
 
-    private static CilPatternNode ParseArrayIndex(BinaryExpression binary)
+    private static PatternNode ParseArrayIndex(BinaryExpression binary)
         => new ArrayElementPatternNode(Parse(binary.Left), Parse(binary.Right), CilTypeSpec.From(binary.Type));
 
-    private static CilPatternNode ParseAssign(BinaryExpression binary)
+    private static PatternNode ParseAssign(BinaryExpression binary)
     {
         if (binary.Left is BinaryExpression { NodeType: ExpressionType.ArrayIndex } arrayIndex)
         {
@@ -158,10 +158,10 @@ internal static class PatternExpressionParser
         throw Unsupported(binary, "Only array element assignment is supported by the pattern matcher.");
     }
 
-    private static CilPatternNode ParseBinary(BinaryExpression binary)
+    private static PatternNode ParseBinary(BinaryExpression binary)
         => new BinaryPatternNode(binary.NodeType, Parse(binary.Left), Parse(binary.Right), binary.Method is null ? null : CilMethodSpec.From(binary.Method), CilTypeSpec.From(binary.Type));
 
-    private static CilPatternNode ParseNewArrayBounds(NewArrayExpression expression)
+    private static PatternNode ParseNewArrayBounds(NewArrayExpression expression)
     {
         if (expression.Expressions.Count != 1)
             throw Unsupported(expression, "Only single-dimensional zero-based array creation is supported.");
@@ -171,7 +171,7 @@ internal static class PatternExpressionParser
         return new NewArrayPatternNode(CilTypeSpec.From(elementType), expression.Expressions.Select(Parse).ToArray(), CilTypeSpec.From(expression.Type));
     }
 
-    private static CilPatternNode ParseNew(NewExpression expression)
+    private static PatternNode ParseNew(NewExpression expression)
     {
         if (expression.Constructor is null)
             throw Unsupported(expression, "A value-type default constructor without a ConstructorInfo is not currently supported.");
@@ -179,7 +179,7 @@ internal static class PatternExpressionParser
         return new CallPatternNode(CilMethodSpec.From(expression.Constructor), null, expression.Arguments.Select(Parse).ToArray(), CilTypeSpec.From(expression.Type));
     }
 
-    private static CilPatternNode ParseStoreElementPlaceholder(MethodCallExpression call)
+    private static PatternNode ParseStoreElementPlaceholder(MethodCallExpression call)
     {
         if (call.Arguments.Count != 3)
             throw Unsupported(call, "P.StoreElement expects array, index, and value arguments.");

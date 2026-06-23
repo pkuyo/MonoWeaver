@@ -10,37 +10,37 @@ using MonoWeaver.Utils;
 namespace MonoWeaver.Patterns;
 
 
-public sealed class CilMatcher
+public sealed class PatternMatcher
 {
-    private readonly CilMethodModel _model;
+    private readonly MethodModel _model;
 
-    private CilMatcher(MethodDefinition method)
+    private PatternMatcher(MethodDefinition method)
     {
-        _model = CilMethodModel.Create(method);
+        _model = MethodModel.Create(method);
     }
 
     public MethodDefinition Method => _model.Method;
 
-    public static CilMatcher For(MethodDefinition method) => new(method);
+    public static PatternMatcher For(MethodDefinition method) => new(method);
 
     /// <summary>查找所有精确匹配点。插入 IL 前请使用 <see cref="CilMatchSet.Single"/>。</summary>
-    public CilMatchSet Find(CilExpressionPattern pattern)
+    public CilMatchSet Find(ExpressionPattern pattern)
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
 
         var matches = pattern.Kind switch
         {
-            CilPatternKind.Value => FindValues(pattern),
-            CilPatternKind.Effect => FindEffects(pattern),
-            CilPatternKind.Condition => FindConditions(pattern),
+            PatternKind.Value => FindValues(pattern),
+            PatternKind.Effect => FindEffects(pattern),
+            PatternKind.Condition => FindConditions(pattern),
             _ => throw new ArgumentOutOfRangeException()
         };
 
         return new CilMatchSet(Method, pattern, matches);
     }
 
-    private IReadOnlyList<CilMatch> FindValues(CilExpressionPattern pattern)
+    private IReadOnlyList<CilMatch> FindValues(ExpressionPattern pattern)
     {
         var result = new List<CilMatch>();
         var seen = new HashSet<(Instruction producer, Instruction use)>();
@@ -63,7 +63,7 @@ public sealed class CilMatcher
         return result;
     }
 
-    private IReadOnlyList<CilMatch> FindEffects(CilExpressionPattern pattern)
+    private IReadOnlyList<CilMatch> FindEffects(ExpressionPattern pattern)
     {
         var result = new List<CilMatch>();
         var seen = new HashSet<Instruction>();
@@ -86,7 +86,7 @@ public sealed class CilMatcher
         return result;
     }
 
-    private IReadOnlyList<CilMatch> FindConditions(CilExpressionPattern pattern)
+    private IReadOnlyList<CilMatch> FindConditions(ExpressionPattern pattern)
     {
         var result = new List<CilMatch>();
         var conditionMatcher = new ConditionPatternMatcher(_model, pattern.Options);
@@ -122,7 +122,7 @@ public sealed class CilMatcher
         return result;
     }
 
-    private CilMatch CreateValueMatch(CilExpressionPattern pattern, TargetOccurrence matched,
+    private CilMatch CreateValueMatch(ExpressionPattern pattern, TargetOccurrence matched,
         MatchContext context, Instruction lastInstruction)
     {
         var rootInternal = new ValueInternalCapture(null, matched);
@@ -139,7 +139,7 @@ public sealed class CilMatcher
         return result;
     }
 
-    private bool ApplyLocalConstraints(CilExpressionPattern pattern, MatchContext context, ExpressionNodeMatcher matcher)
+    private bool ApplyLocalConstraints(ExpressionPattern pattern, MatchContext context, ExpressionNodeMatcher matcher)
     {
         foreach (var constraint in pattern.LocalDefinitionConstraints)
         {
@@ -265,17 +265,17 @@ internal sealed class MatchContext
 
 internal sealed class ExpressionNodeMatcher
 {
-    private readonly CilMethodModel _model;
-    private readonly CilPatternOptions _options;
+    private readonly MethodModel _model;
+    private readonly PatternOptions _options;
     private readonly HashSet<(Instruction load, Instruction definition)> _activeLocalExpansion = new();
 
-    public ExpressionNodeMatcher(CilMethodModel model, CilPatternOptions options)
+    public ExpressionNodeMatcher(MethodModel model, PatternOptions options)
     {
         _model = model;
         _options = options;
     }
 
-    public bool TryMatch(CilPatternNode pattern, TargetOccurrence target,
+    public bool TryMatch(PatternNode pattern, TargetOccurrence target,
         MatchContext context, out TargetOccurrence matched)
     {
         var working = context.Clone();
@@ -289,7 +289,7 @@ internal sealed class ExpressionNodeMatcher
         return false;
     }
 
-    private bool TryMatchCore(CilPatternNode pattern, TargetOccurrence target,
+    private bool TryMatchCore(PatternNode pattern, TargetOccurrence target,
         MatchContext context, out TargetOccurrence matched)
     {
         if (pattern is MarkPatternNode mark)
@@ -478,7 +478,7 @@ internal sealed class ExpressionNodeMatcher
         return false;
     }
 
-    private bool MatchOptionalChild(CilPatternNode? pattern, TargetExpressionNode? target,
+    private bool MatchOptionalChild(PatternNode? pattern, TargetExpressionNode? target,
         Instruction consumer, MatchContext context)
     {
         if (pattern is null || target is null)
@@ -695,10 +695,10 @@ internal sealed class ConditionFragment
 
 internal sealed class ConditionPatternMatcher
 {
-    private readonly CilMethodModel _model;
-    private readonly CilPatternOptions _options;
+    private readonly MethodModel _model;
+    private readonly PatternOptions _options;
 
-    public ConditionPatternMatcher(CilMethodModel model, CilPatternOptions options)
+    public ConditionPatternMatcher(MethodModel model, PatternOptions options)
     {
         _model = model;
         _options = options;
@@ -707,7 +707,7 @@ internal sealed class ConditionPatternMatcher
 
     public ExpressionNodeMatcher ExpressionMatcher { get; }
 
-    public bool TryMatch(CilPatternNode pattern, BasicBlock entry, MatchContext context,
+    public bool TryMatch(PatternNode pattern, BasicBlock entry, MatchContext context,
         out ConditionFragment fragment)
     {
         var working = context.Clone();
@@ -721,7 +721,7 @@ internal sealed class ConditionPatternMatcher
         return false;
     }
 
-    private bool TryMatchCore(CilPatternNode pattern, BasicBlock entry, MatchContext context,
+    private bool TryMatchCore(PatternNode pattern, BasicBlock entry, MatchContext context,
         out ConditionFragment fragment)
     {
         if (pattern is MarkPatternNode mark)
@@ -849,7 +849,7 @@ internal sealed class ConditionPatternMatcher
         return true;
     }
 
-    private bool TryMatchLeaf(CilPatternNode pattern, BasicBlock entry, MatchContext context,
+    private bool TryMatchLeaf(PatternNode pattern, BasicBlock entry, MatchContext context,
         out ConditionFragment fragment)
     {
         fragment = null!;
@@ -885,7 +885,7 @@ internal sealed class ConditionPatternMatcher
         return true;
     }
 
-    private static bool TryInvertComparison(CilPatternNode pattern, out CilPatternNode inverted)
+    private static bool TryInvertComparison(PatternNode pattern, out PatternNode inverted)
     {
         inverted = null!;
         if (pattern is not BinaryPatternNode binary)

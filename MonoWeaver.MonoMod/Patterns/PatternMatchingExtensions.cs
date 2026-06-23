@@ -11,11 +11,11 @@ public static class PatternMatchingExtensions
     /// 匹配当前由此 <see cref="ILContext"/> 持有的 method body。
     /// 修改 body 后请创建新的 match；match object 是 snapshot。
     /// </summary>
-    public static CilMatchSet Match(this ILContext context, CilExpressionPattern pattern)
+    public static CilMatchSet Match(this ILContext context, ExpressionPattern pattern)
     {
         if (context is null)
             throw new ArgumentNullException(nameof(context));
-        return CilMatcher.For(context.Method).Find(pattern);
+        return PatternMatcher.For(context.Method).Find(pattern);
     }
 
     /// <summary>在此具体 value occurrence 之后立即创建 insertion site。</summary>
@@ -46,7 +46,7 @@ public static class PatternMatchingExtensions
     {
         if (match is null)
             throw new ArgumentNullException(nameof(match));
-        if (match.Pattern.Kind == CilPatternKind.Condition)
+        if (match.Pattern.Kind == PatternKind.Condition)
         {
             throw new InvalidOperationException(
                 "A branch-based condition has no single after-site. Use the captured condition's Transform method or insert on an explicit continuation.");

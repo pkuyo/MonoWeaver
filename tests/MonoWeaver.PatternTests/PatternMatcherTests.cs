@@ -7,6 +7,7 @@ using MonoWeaver.CFG;
 using MonoWeaver.Cecil;
 using MonoWeaver.MonoMod.Patterns;
 using MonoWeaver.Patterns;
+using MonoWeaver.Utils;
 using Xunit;
 
 namespace MonoWeaver.PatternTests;
@@ -22,7 +23,7 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Chain");
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-        var match = CilMatcher.For(method).Find(pattern).Single();
+        var match = PatternMatcher.For(method).Find(pattern).Single();
         var hook = match.Value("hook");
 
         AssertCallTo(hook.ProducerInstruction, nameof(A.B));
@@ -36,7 +37,7 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Temporary");
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-        var hook = CilMatcher.For(method).Find(pattern).Single().Value("hook");
+        var hook = PatternMatcher.For(method).Find(pattern).Single().Value("hook");
 
         AssertCallTo(hook.ProducerInstruction, nameof(A.B));
         Assert.True(hook.AfterUseInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S,
@@ -53,7 +54,7 @@ public sealed class PatternMatcherTests
             P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB())
             && (Ops.CallC() || Ops.CallD()));
 
-        var match = CilMatcher.For(method).Find(pattern).Single();
+        var match = PatternMatcher.For(method).Find(pattern).Single();
         var ab = match.Condition("ab");
         Assert.True(ab.TrueExits.Count == 1, "A && B has one true exit into the remaining condition.");
         Assert.True(ab.FalseExits.Count == 2, "A && B has two short-circuit false exits.");
@@ -69,7 +70,7 @@ public sealed class PatternMatcherTests
         var pattern = Cil.Condition(() => P.Local<bool>("ret"))
             .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
 
-        var match = CilMatcher.For(method).Find(pattern).Single();
+        var match = PatternMatcher.For(method).Find(pattern).Single();
         Assert.True(match.Local("ret").Variable.Index >= 0,
             "The unique XXX() definition should identify a concrete local.");
     }
@@ -80,7 +81,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Ambiguous");
 
-        var matches = CilMatcher.For(method).Find(Cil.Value(() => P.Arg<A>(0).B()));
+        var matches = PatternMatcher.For(method).Find(Cil.Value(() => P.Arg<A>(0).B()));
         Assert.True(matches.Count == 2, "Both B() occurrences must remain visible to the matcher.");
         Assert.Throws<CilPatternMatchException>(() => matches.Single());
     }
@@ -92,7 +93,7 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Context");
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).D());
-        var hook = CilMatcher.For(method).Find(pattern).Single().Value("hook");
+        var hook = PatternMatcher.For(method).Find(pattern).Single().Value("hook");
 
         AssertCallTo(hook.ProducerInstruction, nameof(A.B));
         AssertCallTo(hook.AfterUseInstruction.Next, nameof(B.D));
@@ -104,7 +105,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Overloads");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<B>(0).Select("selected")))
             .Single();
 
@@ -120,7 +121,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "AssignableArgument");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<object>(0, "value")))
             .Single();
         var value = match.Argument("value");
@@ -136,7 +137,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Constants");
 
-        var match = CilMatcher.For(method).Find(Cil.Value(() => 1.0)).Single();
+        var match = PatternMatcher.For(method).Find(Cil.Value(() => 1.0)).Single();
         Assert.Equal(Code.Ldc_R8, match.Value().ProducerInstruction.OpCode.Code);
     }
 
@@ -152,12 +153,12 @@ public sealed class PatternMatcherTests
             ?? throw new MissingMethodException(typeof(B).FullName, nameof(B.C)));
         var pattern = Cil.Value(P.This(directCaller).Call(baseCall));
 
-        var relaxed = CilMatcher.For(method).Find(pattern);
+        var relaxed = PatternMatcher.For(method).Find(pattern);
         Assert.True(relaxed.Count == 1,
             "The default mode should tolerate call/callvirt lowering differences for the same method.");
 
-        var strictOptions = new CilPatternOptions { IgnoreCallOpcodeDifference = false };
-        var strict = CilMatcher.For(method).Find(Cil.Value(P.This(directCaller).Call(baseCall), strictOptions));
+        var strictOptions = new PatternOptions { IgnoreCallOpcodeDifference = false };
+        var strict = PatternMatcher.For(method).Find(Cil.Value(P.This(directCaller).Call(baseCall), strictOptions));
         Assert.True(strict.Count == 0,
             "Strict call matching must reject an instance call opcode different from the Lambda lowering contract.");
     }
@@ -170,7 +171,7 @@ public sealed class PatternMatcherTests
 
         var pattern = Cil.Condition(() => P.Local<bool>("ret"))
             .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
-        var matches = CilMatcher.For(method).Find(pattern);
+        var matches = PatternMatcher.For(method).Find(pattern);
 
         Assert.True(matches.Count == 0,
             "A local-definition constraint must reject a load reached by more than one store.");
@@ -182,7 +183,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Discarded");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Effect(() => P.Arg<A>(0).B()))
             .Single();
 
@@ -195,7 +196,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "NewIntArray");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Value(() => new int[P.Arg<int>(0)]))
             .Single();
 
@@ -208,7 +209,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "LoadIntElement");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<int[]>(0)[1]))
             .Single();
 
@@ -222,7 +223,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Length");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<int[]>(0).Length))
             .Single();
 
@@ -235,7 +236,7 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "StoreIntElement");
 
-        var match = CilMatcher.For(method)
+        var match = PatternMatcher.For(method)
             .Find(Cil.Effect(() => P.StoreElement(P.Arg<int[]>(0), 1, P.Arg<int>(1))))
             .Single();
 

@@ -257,7 +257,7 @@ public sealed class CilTypeSpec
             switch (_kind)
             {
                 case SpecKind.Runtime:
-                    return CecilIdentity.TypeMatches(candidate, _runtimeType!);
+                    return CecilHelper.TypeMatches(candidate, _runtimeType!);
                 case SpecKind.Cecil:
                     return candidate.IsSameWith(_cecilType);
                 case SpecKind.Named:
@@ -645,9 +645,9 @@ public sealed class CilMethodSpec
         if (candidate is null)
             return false;
         if (_runtimeMethod is not null)
-            return CecilIdentity.MethodMatches(candidate, _runtimeMethod);
+            return CecilHelper.MethodMatches(candidate, _runtimeMethod);
         if (_cecilMethod is not null)
-            return CecilIdentity.MethodMatches(candidate, _cecilMethod);
+            return CecilHelper.MethodMatches(candidate, _cecilMethod);
 
         var element = candidate is GenericInstanceMethod generic ? generic.ElementMethod : candidate;
         if (!string.Equals(element.Name, Name, StringComparison.Ordinal)
@@ -749,9 +749,9 @@ public sealed class CilFieldSpec
     internal bool Matches(FieldReference candidate)
     {
         if (_runtimeField is not null)
-            return CecilIdentity.FieldMatches(candidate, _runtimeField);
+            return CecilHelper.FieldMatches(candidate, _runtimeField);
         if (_cecilField is not null)
-            return CecilIdentity.FieldMatches(candidate, _cecilField);
+            return CecilHelper.FieldMatches(candidate, _cecilField);
         return string.Equals(candidate.Name, Name, StringComparison.Ordinal)
                && DeclaringType.Matches(candidate.DeclaringType)
                && FieldType.Matches(candidate.FieldType)

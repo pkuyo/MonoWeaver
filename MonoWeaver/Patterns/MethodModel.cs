@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -14,7 +14,7 @@ namespace MonoWeaver.Patterns;
 /// pattern matcher 使用的刻意保持小型的 symbolic model。它不尝试 decompile 整个 method；
 /// 只保留 pattern candidate 需要的 expression dependency。
 /// </summary>
-internal sealed class CilMethodModel
+internal sealed class MethodModel
 {
     private readonly Dictionary<Instruction, int> _instructionIndices;
     private readonly Dictionary<Instruction, BasicBlock> _blockByInstruction;
@@ -24,7 +24,7 @@ internal sealed class CilMethodModel
     private readonly List<TargetExpressionNode> _valueCandidates = new();
     private readonly List<TargetEffect> _effectCandidates = new();
 
-    private CilMethodModel(ILBasicBlockGraph graph)
+    private MethodModel(ILBasicBlockGraph graph)
     {
         Method = graph.Method;
         Instructions = graph.Instructions;
@@ -42,7 +42,7 @@ internal sealed class CilMethodModel
     public IReadOnlyList<TargetEffect> EffectCandidates => _effectCandidates;
     public LocalDefinitionIndex LocalDefinitions { get; private set; } = null!;
 
-    public static CilMethodModel Create(MethodDefinition method)
+    public static MethodModel Create(MethodDefinition method)
     {
         if (method is null)
             throw new ArgumentNullException(nameof(method));
@@ -52,7 +52,7 @@ internal sealed class CilMethodModel
             throw new ArgumentException("The method body is empty.", nameof(method));
 
         var graph = ILBasicBlockGraphBuilder.Build(method);
-        var model = new CilMethodModel(graph);
+        var model = new MethodModel(graph);
         model.BuildExpressions();
         model.LocalDefinitions = LocalDefinitionIndex.Create(model);
         return model;

@@ -4,7 +4,7 @@ using Mono.Cecil;
 
 namespace MonoWeaver.Utils;
 
-internal static class CecilIdentity
+public static partial class CecilHelper
 {
     public static bool TypeMatches(TypeReference? cecilType, Type runtimeType)
     {

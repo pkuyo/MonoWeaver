@@ -4,9 +4,9 @@ using System.Linq.Expressions;
 
 namespace MonoWeaver.Patterns;
 
-public abstract class CilPatternNode
+public abstract class PatternNode
 {
-    protected CilPatternNode(CilTypeSpec resultType)
+    protected PatternNode(CilTypeSpec resultType)
     {
         ResultType = resultType ?? throw new ArgumentNullException(nameof(resultType));
     }
@@ -16,7 +16,7 @@ public abstract class CilPatternNode
 }
 
 /// <summary>匹配任意符合 type 约束的表达式。</summary>
-public sealed class AnyPatternNode : CilPatternNode
+public sealed class AnyPatternNode : PatternNode
 {
     internal AnyPatternNode(string captureName, CilTypeSpec resultType) : base(resultType)
     {
@@ -27,7 +27,7 @@ public sealed class AnyPatternNode : CilPatternNode
 }
 
 /// <summary>匹配 argument 读取。</summary>
-public sealed class ArgumentPatternNode : CilPatternNode
+public sealed class ArgumentPatternNode : PatternNode
 {
     internal ArgumentPatternNode(bool isThis, int? index, string? captureName, CilTypeSpec resultType) : base(resultType)
     {
@@ -42,7 +42,7 @@ public sealed class ArgumentPatternNode : CilPatternNode
 }
 
 /// <summary>匹配 local 读取。</summary>
-public sealed class LocalPatternNode : CilPatternNode
+public sealed class LocalPatternNode : PatternNode
 {
     internal LocalPatternNode(int? index, string? captureName, CilTypeSpec resultType) : base(resultType)
     {
@@ -55,7 +55,7 @@ public sealed class LocalPatternNode : CilPatternNode
 }
 
 /// <summary>匹配常量。</summary>
-public sealed class ConstantPatternNode : CilPatternNode
+public sealed class ConstantPatternNode : PatternNode
 {
     internal ConstantPatternNode(object? value, CilTypeSpec resultType) : base(resultType)
     {
@@ -66,22 +66,22 @@ public sealed class ConstantPatternNode : CilPatternNode
 }
 
 /// <summary>匹配字段读取。</summary>
-public sealed class FieldPatternNode : CilPatternNode
+public sealed class FieldPatternNode : PatternNode
 {
-    internal FieldPatternNode(CilFieldSpec field, CilPatternNode? instance) : base(field.FieldType)
+    internal FieldPatternNode(CilFieldSpec field, PatternNode? instance) : base(field.FieldType)
     {
         Field = field ?? throw new ArgumentNullException(nameof(field));
         Instance = instance;
     }
 
     public CilFieldSpec Field { get; }
-    public CilPatternNode? Instance { get; }
+    public PatternNode? Instance { get; }
 }
 
 /// <summary>匹配一维数组创建。</summary>
-public sealed class NewArrayPatternNode : CilPatternNode
+public sealed class NewArrayPatternNode : PatternNode
 {
-    internal NewArrayPatternNode(CilTypeSpec elementType, IReadOnlyList<CilPatternNode> lengths, CilTypeSpec resultType)
+    internal NewArrayPatternNode(CilTypeSpec elementType, IReadOnlyList<PatternNode> lengths, CilTypeSpec resultType)
         : base(resultType)
     {
         ElementType = elementType ?? throw new ArgumentNullException(nameof(elementType));
@@ -89,39 +89,39 @@ public sealed class NewArrayPatternNode : CilPatternNode
     }
 
     public CilTypeSpec ElementType { get; }
-    public IReadOnlyList<CilPatternNode> Lengths { get; }
+    public IReadOnlyList<PatternNode> Lengths { get; }
 }
 
 /// <summary>匹配数组元素读取。</summary>
-public sealed class ArrayElementPatternNode : CilPatternNode
+public sealed class ArrayElementPatternNode : PatternNode
 {
-    internal ArrayElementPatternNode(CilPatternNode array, CilPatternNode index, CilTypeSpec resultType)
+    internal ArrayElementPatternNode(PatternNode array, PatternNode index, CilTypeSpec resultType)
         : base(resultType)
     {
         Array = array;
         Index = index;
     }
 
-    public CilPatternNode Array { get; }
-    public CilPatternNode Index { get; }
+    public PatternNode Array { get; }
+    public PatternNode Index { get; }
 }
 
 /// <summary>匹配数组长度读取。</summary>
-public sealed class ArrayLengthPatternNode : CilPatternNode
+public sealed class ArrayLengthPatternNode : PatternNode
 {
-    internal ArrayLengthPatternNode(CilPatternNode array, CilTypeSpec resultType)
+    internal ArrayLengthPatternNode(PatternNode array, CilTypeSpec resultType)
         : base(resultType)
     {
         Array = array;
     }
 
-    public CilPatternNode Array { get; }
+    public PatternNode Array { get; }
 }
 
 /// <summary>匹配数组元素写入。</summary>
-public sealed class ArrayStorePatternNode : CilPatternNode
+public sealed class ArrayStorePatternNode : PatternNode
 {
-    internal ArrayStorePatternNode(CilPatternNode array, CilPatternNode index, CilPatternNode value)
+    internal ArrayStorePatternNode(PatternNode array, PatternNode index, PatternNode value)
         : base(CilTypeSpec.Void)
     {
         Array = array;
@@ -129,16 +129,16 @@ public sealed class ArrayStorePatternNode : CilPatternNode
         Value = value;
     }
 
-    public CilPatternNode Array { get; }
-    public CilPatternNode Index { get; }
-    public CilPatternNode Value { get; }
+    public PatternNode Array { get; }
+    public PatternNode Index { get; }
+    public PatternNode Value { get; }
 }
 
 /// <summary>匹配函数调用。</summary>
-public sealed class CallPatternNode : CilPatternNode
+public sealed class CallPatternNode : PatternNode
 {
-    internal CallPatternNode(CilMethodSpec method, CilPatternNode? instance,
-        IReadOnlyList<CilPatternNode> arguments, CilTypeSpec? resultType = null)
+    internal CallPatternNode(CilMethodSpec method, PatternNode? instance,
+        IReadOnlyList<PatternNode> arguments, CilTypeSpec? resultType = null)
         : base(resultType ?? method.ReturnType)
     {
         Method = method ?? throw new ArgumentNullException(nameof(method));
@@ -147,14 +147,14 @@ public sealed class CallPatternNode : CilPatternNode
     }
 
     public CilMethodSpec Method { get; }
-    public CilPatternNode? Instance { get; }
-    public IReadOnlyList<CilPatternNode> Arguments { get; }
+    public PatternNode? Instance { get; }
+    public IReadOnlyList<PatternNode> Arguments { get; }
 }
 
 /// <summary>匹配一元表达式。</summary>
-public sealed class UnaryPatternNode : CilPatternNode
+public sealed class UnaryPatternNode : PatternNode
 {
-    internal UnaryPatternNode(ExpressionType operation, CilPatternNode operand, CilMethodSpec? method,
+    internal UnaryPatternNode(ExpressionType operation, PatternNode operand, CilMethodSpec? method,
         CilTypeSpec resultType)
         : base(resultType)
     {
@@ -164,14 +164,14 @@ public sealed class UnaryPatternNode : CilPatternNode
     }
 
     public ExpressionType Operation { get; }
-    public CilPatternNode Operand { get; }
+    public PatternNode Operand { get; }
     public CilMethodSpec? Method { get; }
 }
 
 /// <summary>匹配二元表达式。</summary>
-public sealed class BinaryPatternNode : CilPatternNode
+public sealed class BinaryPatternNode : PatternNode
 {
-    internal BinaryPatternNode(ExpressionType operation, CilPatternNode left, CilPatternNode right,
+    internal BinaryPatternNode(ExpressionType operation, PatternNode left, PatternNode right,
         CilMethodSpec? method, CilTypeSpec resultType) : base(resultType)
     {
         Operation = operation;
@@ -181,19 +181,19 @@ public sealed class BinaryPatternNode : CilPatternNode
     }
 
     public ExpressionType Operation { get; }
-    public CilPatternNode Left { get; }
-    public CilPatternNode Right { get; }
+    public PatternNode Left { get; }
+    public PatternNode Right { get; }
     public CilMethodSpec? Method { get; }
 }
 
-public sealed class MarkPatternNode : CilPatternNode
+public sealed class MarkPatternNode : PatternNode
 {
-    internal MarkPatternNode(string captureName, CilPatternNode inner) : base(inner.ResultType)
+    internal MarkPatternNode(string captureName, PatternNode inner) : base(inner.ResultType)
     {
         CaptureName = captureName;
         Inner = inner;
     }
 
     public string CaptureName { get; }
-    public CilPatternNode Inner { get; }
+    public PatternNode Inner { get; }
 }

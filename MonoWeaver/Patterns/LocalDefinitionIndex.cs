@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil.Cil;
@@ -12,11 +12,11 @@ namespace MonoWeaver.Patterns;
 /// </summary>
 internal sealed class LocalDefinitionIndex
 {
-    private readonly CilMethodModel _model;
+    private readonly MethodModel _model;
     private readonly Dictionary<Instruction, Instruction[]> _definitionsAtLoad;
     private readonly bool[] _addressTaken;
 
-    private LocalDefinitionIndex(CilMethodModel model,
+    private LocalDefinitionIndex(MethodModel model,
         Dictionary<Instruction, Instruction[]> definitionsAtLoad, bool[] addressTaken)
     {
         _model = model;
@@ -24,7 +24,7 @@ internal sealed class LocalDefinitionIndex
         _addressTaken = addressTaken;
     }
 
-    public static LocalDefinitionIndex Create(CilMethodModel model)
+    public static LocalDefinitionIndex Create(MethodModel model)
     {
         var localCount = model.Method.Body.Variables.Count;
         var addressTaken = new bool[localCount];
@@ -198,7 +198,7 @@ internal sealed class LocalDefinitionIndex
     /// <param name="model"></param>
     /// <param name="block"></param>
     /// <param name="state"></param>
-    private static void TransferBlock(CilMethodModel model, BasicBlock block,
+    private static void TransferBlock(MethodModel model, BasicBlock block,
         HashSet<Instruction>[] state)
     {
         for (var i = block.StartIndex; i <= block.EndIndex; i++)

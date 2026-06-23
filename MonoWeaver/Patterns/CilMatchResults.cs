@@ -18,7 +18,7 @@ public sealed class CilMatchSet : IReadOnlyList<CilMatch>
 {
     private readonly IReadOnlyList<CilMatch> _matches;
 
-    internal CilMatchSet(MethodDefinition method, CilExpressionPattern pattern, IReadOnlyList<CilMatch> matches)
+    internal CilMatchSet(MethodDefinition method, ExpressionPattern pattern, IReadOnlyList<CilMatch> matches)
     {
         Method = method;
         Pattern = pattern;
@@ -26,7 +26,7 @@ public sealed class CilMatchSet : IReadOnlyList<CilMatch>
     }
 
     public MethodDefinition Method { get; }
-    public CilExpressionPattern Pattern { get; }
+    public ExpressionPattern Pattern { get; }
     public int Count => _matches.Count;
     public CilMatch this[int index] => _matches[index];
 
@@ -55,7 +55,7 @@ public sealed class CilMatch
 {
     private readonly IReadOnlyDictionary<string, MatchCapture> _captures;
 
-    internal CilMatch(MethodDefinition method, CilExpressionPattern pattern, Instruction firstInstruction,
+    internal CilMatch(MethodDefinition method, ExpressionPattern pattern, Instruction firstInstruction,
         Instruction lastInstruction, MatchCapture root, IReadOnlyDictionary<string, MatchCapture> captures)
     {
         Method = method;
@@ -67,7 +67,7 @@ public sealed class CilMatch
     }
 
     public MethodDefinition Method { get; }
-    public CilExpressionPattern Pattern { get; }
+    public ExpressionPattern Pattern { get; }
     public Instruction FirstInstruction { get; }
     public Instruction LastInstruction { get; }
     public MatchCapture Root { get; }

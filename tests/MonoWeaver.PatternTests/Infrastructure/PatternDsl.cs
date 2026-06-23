@@ -25,10 +25,10 @@ public static class PatternDslData
 
 internal static class DualPattern
 {
-    public static CilExpressionPattern Value<T>(PatternDsl dsl,
+    public static ExpressionPattern Value<T>(PatternDsl dsl,
         Expression<Func<T>> expression,
         Func<CilExpr> cilExpr,
-        CilPatternOptions? options = null)
+        PatternOptions? options = null)
         => dsl switch
         {
             PatternDsl.Expression => Cil.Value(expression, options),
@@ -36,10 +36,10 @@ internal static class DualPattern
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
 
-    public static CilExpressionPattern Effect(PatternDsl dsl,
+    public static ExpressionPattern Effect(PatternDsl dsl,
         Expression<Action> expression,
         Func<CilExpr> cilExpr,
-        CilPatternOptions? options = null)
+        PatternOptions? options = null)
         => dsl switch
         {
             PatternDsl.Expression => Cil.Effect(expression, options),
@@ -47,10 +47,10 @@ internal static class DualPattern
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
 
-    public static CilExpressionPattern Discard(PatternDsl dsl,
+    public static ExpressionPattern Discard(PatternDsl dsl,
         Expression<Action> expression,
         Func<CilExpr> cilExpr,
-        CilPatternOptions? options = null)
+        PatternOptions? options = null)
         => dsl switch
         {
             PatternDsl.Expression => Cil.Effect(expression, options),
@@ -58,10 +58,10 @@ internal static class DualPattern
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
 
-    public static CilExpressionPattern Condition(PatternDsl dsl,
+    public static ExpressionPattern Condition(PatternDsl dsl,
         Expression<Func<bool>> expression,
         Func<CilExpr> cilExpr,
-        CilPatternOptions? options = null)
+        PatternOptions? options = null)
         => dsl switch
         {
             PatternDsl.Expression => Cil.Condition(expression, options),

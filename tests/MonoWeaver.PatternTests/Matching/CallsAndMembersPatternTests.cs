@@ -3,6 +3,7 @@ using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MonoWeaver.Patterns;
+using MonoWeaver.Utils;
 using Xunit;
 
 namespace MonoWeaver.PatternTests;
@@ -262,7 +263,7 @@ public sealed class CallsAndMembersPatternTests
 
         Assert.Single(method.Match(relaxed));
 
-        var strictOptions = new CilPatternOptions { IgnoreCallOpcodeDifference = false };
+        var strictOptions = new PatternOptions { IgnoreCallOpcodeDifference = false };
         var strict = DualPattern.Value(dsl,
             () => P.Any<B>("self").C(),
             () => P.Any(bType, "self").Call(baseCall),
