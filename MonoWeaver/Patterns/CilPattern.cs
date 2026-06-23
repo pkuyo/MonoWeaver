@@ -113,14 +113,6 @@ public sealed class CilExpressionPattern
         return this;
     }
 
-    public static CilExpressionPattern operator==(CilExpressionPattern a, CilExpressionPattern b)
-    {
-
-    }
-    public static CilExpressionPattern operator!=(CilExpressionPattern a, CilExpressionPattern b)
-    {
-
-    }
 }
 
 /// <summary>
@@ -163,7 +155,17 @@ public static class Cil
         if (expression is null)
             throw new ArgumentNullException(nameof(expression));
         if (!expression.ResultType.IsVoid)
-            throw new ArgumentException("An effect pattern must have Void result type.", nameof(expression));
+            throw new ArgumentException("An effect pattern must have Void result type. Use Cil.Discard for a non-void expression whose result is popped.", nameof(expression));
+        return Build(CilPatternKind.Effect, expression, options);
+    }
+
+    /// <summary>从 metadata-native value expression 创建其结果被 pop 丢弃的 effect pattern。</summary>
+    public static CilExpressionPattern Discard(CilExpr expression, CilPatternOptions? options = null)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        if (expression.ResultType.IsVoid)
+            throw new ArgumentException("Cil.Discard requires a non-void expression. Use Cil.Effect for a void operation.", nameof(expression));
         return Build(CilPatternKind.Effect, expression, options);
     }
 

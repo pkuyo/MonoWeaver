@@ -1,6 +1,7 @@
 using Mono.Cecil;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace MonoWeaver.Utils;
@@ -8,6 +9,12 @@ namespace MonoWeaver.Utils;
 public static partial class CecilTypeSystem
 {
     private sealed class TypeDesc
+    {
+        public readonly ModuleTypeDesc Global = new();
+        public readonly ConditionalWeakTable<ModuleDefinition, ModuleTypeDesc> Modules = new();
+    }
+
+    private sealed class ModuleTypeDesc
     {
         public TypeDefinition? Definition;
         public TypeReference? BaseType;
@@ -37,10 +44,19 @@ public static partial class CecilTypeSystem
         }
     }
 
+    private static ModuleTypeDesc GetModuleTypeDesc(TypeDesc desc, TypeReference type)
+    {
+        var module = type.Module;
+        return module is null
+            ? desc.Global
+            : desc.Modules.GetValue(module, static _ => new ModuleTypeDesc());
+    }
+
     private static TypeDefinition? ResolveWithTypeDescCache(TypeReference keyType)
     {
         var desc = GetTypeDesc(TypeSig.Create(keyType));
-        var cached = Volatile.Read(ref desc.Definition);
+        var moduleDesc = GetModuleTypeDesc(desc, keyType);
+        var cached = Volatile.Read(ref moduleDesc.Definition);
         if (cached != null)
             return cached;
 
@@ -48,7 +64,7 @@ public static partial class CecilTypeSystem
         if (resolved == null)
             return null;
 
-        var existing = Interlocked.CompareExchange(ref desc.Definition, resolved, null);
+        var existing = Interlocked.CompareExchange(ref moduleDesc.Definition, resolved, null);
         return existing ?? resolved;
     }
 
@@ -62,19 +78,19 @@ public static partial class CecilTypeSystem
             return SystemArrayRef(mod);
         }
 
-        var desc = GetTypeDesc(TypeSig.Create(type));
-        if (Volatile.Read(ref desc.BaseTypeInitialized) != 0)
-            return Volatile.Read(ref desc.BaseType);
+        var moduleDesc = GetModuleTypeDesc(GetTypeDesc(TypeSig.Create(type)), type);
+        if (Volatile.Read(ref moduleDesc.BaseTypeInitialized) != 0)
+            return Volatile.Read(ref moduleDesc.BaseType);
 
         var computed = ComputeBaseType(type);
 
-        lock (desc)
+        lock (moduleDesc)
         {
-            if (desc.BaseTypeInitialized != 0)
-                return desc.BaseType;
+            if (moduleDesc.BaseTypeInitialized != 0)
+                return moduleDesc.BaseType;
 
-            desc.BaseType = computed;
-            Volatile.Write(ref desc.BaseTypeInitialized, 1);
+            moduleDesc.BaseType = computed;
+            Volatile.Write(ref moduleDesc.BaseTypeInitialized, 1);
             return computed;
         }
     }
@@ -98,13 +114,13 @@ public static partial class CecilTypeSystem
         if (type is ArrayType arr)
             return BuildRuntimeInterfaces(arr);
 
-        var desc = GetTypeDesc(TypeSig.Create(type));
-        var cached = Volatile.Read(ref desc.RuntimeInterfaces);
+        var moduleDesc = GetModuleTypeDesc(GetTypeDesc(TypeSig.Create(type)), type);
+        var cached = Volatile.Read(ref moduleDesc.RuntimeInterfaces);
         if (cached != null)
             return cached;
 
         var built = BuildRuntimeInterfaces(type);
-        var existing = Interlocked.CompareExchange(ref desc.RuntimeInterfaces, built, null);
+        var existing = Interlocked.CompareExchange(ref moduleDesc.RuntimeInterfaces, built, null);
         return existing ?? built;
     }
 

@@ -299,7 +299,7 @@ internal sealed class ExpressionNodeMatcher
             return context.TryAdd(mark.CaptureName, new ValueInternalCapture(mark.CaptureName, matched));
         }
 
-        if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead
+        if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead /*IL有ldloc尝试找前继*/
             && _options.TemporaryNormalization == TemporaryNormalization.UniqueDefinitions
             && _model.LocalDefinitions.TryGetUniqueDefinition(localRead,
                 out var store, out var storedValue, out _))
@@ -309,8 +309,7 @@ internal sealed class ExpressionNodeMatcher
             {
                 try
                 {
-                    // 匹配 unique reaching definition 存储的 semantic value 时，保留具体 ldloc
-                    // 作为 use insertion point。
+                    // 存在前继则替换node尝试匹配
                     if (TryMatch(pattern, target.WithNode(storedValue), context, out matched))
                         return true;
                 }
@@ -431,6 +430,15 @@ internal sealed class ExpressionNodeMatcher
                 matched = target;
                 return true;
 
+            case UnaryPatternNode { Operation: ExpressionType.Not } logicalNot
+                when logicalNot.ResultType.IsBoolean
+                     && TryUnwrapBooleanNegation(target.Node, out var negatedOperand):
+                if (!TryMatch(logicalNot.Operand,
+                        TargetOccurrence.Direct(negatedOperand, target.Node.ProducerInstruction), context, out _))
+                    break;
+                matched = target;
+                return true;
+
             case UnaryPatternNode unaryPattern when target.Node is TargetUnaryNode unary:
                 if (NormalizeUnary(unaryPattern.Operation) != NormalizeUnary(unary.Operation)
                     || !TypeMatches(unary, unaryPattern.ResultType))
@@ -444,12 +452,23 @@ internal sealed class ExpressionNodeMatcher
             case BinaryPatternNode binaryPattern when target.Node is TargetBinaryNode binary:
                 if (binaryPattern.Operation is ExpressionType.AndAlso or ExpressionType.OrElse)
                     break;
-                if (NormalizeBinary(binaryPattern.Operation) != NormalizeBinary(binary.Operation))
-                    break;
+
+                var semanticBinary = binary;
+                var semanticOperation = semanticBinary.Operation;
+                if (NormalizeBinary(binaryPattern.Operation) != NormalizeBinary(semanticOperation))
+                {
+                    if (!TryUnwrapNegatedComparison(binary, out semanticBinary, out semanticOperation)
+                        || NormalizeBinary(binaryPattern.Operation) != NormalizeBinary(semanticOperation))
+                    {
+                        break;
+                    }
+                }
+
+                var normalizedRight = NormalizeShiftCount(binaryPattern.Operation, semanticBinary.Right);
                 if (!TryMatch(binaryPattern.Left,
-                        TargetOccurrence.Direct(binary.Left, binary.ProducerInstruction), context, out _)
+                        TargetOccurrence.Direct(semanticBinary.Left, semanticBinary.ProducerInstruction), context, out _)
                     || !TryMatch(binaryPattern.Right,
-                        TargetOccurrence.Direct(binary.Right, binary.ProducerInstruction), context, out _))
+                        TargetOccurrence.Direct(normalizedRight, semanticBinary.ProducerInstruction), context, out _))
                     break;
                 matched = target;
                 return true;
@@ -470,6 +489,86 @@ internal sealed class ExpressionNodeMatcher
     private static ExpressionType NormalizeUnary(ExpressionType operation) => operation;
 
     private static ExpressionType NormalizeBinary(ExpressionType operation) => operation;
+
+    private static bool TryUnwrapNegatedComparison(TargetBinaryNode target,
+        out TargetBinaryNode comparison, out ExpressionType semanticOperation)
+    {
+        comparison = null!;
+        semanticOperation = default;
+        if (!TryUnwrapBooleanNegation(target, out var operand)
+            || operand is not TargetBinaryNode inner)
+            return false;
+
+        var inverse = InvertComparison(inner.Operation);
+        if (!inverse.HasValue)
+            return false;
+
+        comparison = inner;
+        semanticOperation = inverse.Value;
+        return true;
+    }
+
+    private static bool TryUnwrapBooleanNegation(TargetExpressionNode target,
+        out TargetExpressionNode operand)
+    {
+        operand = null!;
+        if (target is not TargetBinaryNode { Operation: ExpressionType.Equal } equal)
+            return false;
+
+        if (IsZero(equal.Left) && IsBoolean(equal.Right))
+        {
+            operand = equal.Right;
+            return true;
+        }
+
+        if (IsZero(equal.Right) && IsBoolean(equal.Left))
+        {
+            operand = equal.Left;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static ExpressionType? InvertComparison(ExpressionType operation)
+        => operation switch
+        {
+            ExpressionType.Equal => ExpressionType.NotEqual,
+            ExpressionType.NotEqual => ExpressionType.Equal,
+            ExpressionType.GreaterThan => ExpressionType.LessThanOrEqual,
+            ExpressionType.GreaterThanOrEqual => ExpressionType.LessThan,
+            ExpressionType.LessThan => ExpressionType.GreaterThanOrEqual,
+            ExpressionType.LessThanOrEqual => ExpressionType.GreaterThan,
+            _ => null,
+        };
+
+    private static bool IsZero(TargetExpressionNode node)
+        => node is TargetConstantNode { Value: int value } && value == 0;
+
+    private static bool IsBoolean(TargetExpressionNode node)
+        => node.ResultType?.MetadataType == MetadataType.Boolean;
+
+    private static TargetExpressionNode NormalizeShiftCount(ExpressionType operation,
+        TargetExpressionNode right)
+    {
+        if (operation is not ExpressionType.LeftShift and not ExpressionType.RightShift)
+            return right;
+
+        // Roslyn may lower a variable C# shift count as (count & 31/63) before shl/shr.
+        // The mask is part of language lowering rather than user-authored expression shape,
+        // so accept either operand order and expose the semantic count to the pattern.
+        if (right is not TargetBinaryNode { Operation: ExpressionType.And } mask)
+            return right;
+
+        if (IsShiftMask(mask.Right))
+            return mask.Left;
+        if (IsShiftMask(mask.Left))
+            return mask.Right;
+        return right;
+    }
+
+    private static bool IsShiftMask(TargetExpressionNode node)
+        => node is TargetConstantNode { Value: int value } && value is 31 or 63;
 
     private static bool CallOpcodeMatches(CilMethodSpec method, Code code)
     {
@@ -645,10 +744,35 @@ internal sealed class ConditionPatternMatcher
         }
 
         if (pattern is BinaryPatternNode { Operation: ExpressionType.AndAlso } and)
-            return TryMatchAnd(and, entry, context, out fragment);
+        {
+            var shortCircuitContext = context.Clone();
+            if (TryMatchAnd(and, entry, shortCircuitContext, out fragment))
+            {
+                context.CopyFrom(shortCircuitContext);
+                return true;
+            }
+
+            // For side-effect-free Boolean operands, Roslyn can collapse && into a
+            // materialized bitwise and followed by brfalse. Treat that lowering as the
+            // same condition, while still preferring the real short-circuit CFG shape.
+            var materialized = new BinaryPatternNode(ExpressionType.And, and.Left, and.Right,
+                and.Method, and.ResultType);
+            return TryMatchLeaf(materialized, entry, context, out fragment);
+        }
 
         if (pattern is BinaryPatternNode { Operation: ExpressionType.OrElse } or)
-            return TryMatchOr(or, entry, context, out fragment);
+        {
+            var shortCircuitContext = context.Clone();
+            if (TryMatchOr(or, entry, shortCircuitContext, out fragment))
+            {
+                context.CopyFrom(shortCircuitContext);
+                return true;
+            }
+
+            var materialized = new BinaryPatternNode(ExpressionType.Or, or.Left, or.Right,
+                or.Method, or.ResultType);
+            return TryMatchLeaf(materialized, entry, context, out fragment);
+        }
 
         return TryMatchLeaf(pattern, entry, context, out fragment);
     }
@@ -738,13 +862,49 @@ internal sealed class ConditionPatternMatcher
             return false;
 
         var occurrence = TargetOccurrence.Direct(conditionExpression, entry.Terminator);
+        var negateFragment = false;
         if (!ExpressionMatcher.TryMatch(pattern, occurrence, context, out _))
-            return false;
+        {
+            if (!TryInvertComparison(pattern, out var inverted)
+                || !ExpressionMatcher.TryMatch(inverted, occurrence, context, out _))
+            {
+                return false;
+            }
+
+            // Compilers commonly branch on the inverse comparison to make the desired path
+            // fall through. Match the same semantic condition and swap its exits.
+            negateFragment = true;
+        }
 
         fragment = new ConditionFragment(entry,
             _model.ResolveTransparentTarget(trueEdge.To, _options.IgnoreTransparentControlFlow),
             _model.ResolveTransparentTarget(falseEdge.To, _options.IgnoreTransparentControlFlow),
             new[] { entry }, new[] { trueEdge }, new[] { falseEdge });
+        if (negateFragment)
+            fragment = fragment.Negated();
+        return true;
+    }
+
+    private static bool TryInvertComparison(CilPatternNode pattern, out CilPatternNode inverted)
+    {
+        inverted = null!;
+        if (pattern is not BinaryPatternNode binary)
+            return false;
+
+        var inverse = binary.Operation switch
+        {
+            ExpressionType.Equal => ExpressionType.NotEqual,
+            ExpressionType.NotEqual => ExpressionType.Equal,
+            ExpressionType.GreaterThan => ExpressionType.LessThanOrEqual,
+            ExpressionType.GreaterThanOrEqual => ExpressionType.LessThan,
+            ExpressionType.LessThan => ExpressionType.GreaterThanOrEqual,
+            ExpressionType.LessThanOrEqual => ExpressionType.GreaterThan,
+            _ => (ExpressionType?)null,
+        };
+        if (!inverse.HasValue)
+            return false;
+
+        inverted = new BinaryPatternNode(inverse.Value, binary.Left, binary.Right, binary.Method, binary.ResultType);
         return true;
     }
 }

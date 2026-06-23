@@ -84,7 +84,17 @@ public sealed class CilExpr
     /// BitAnd BitOr无重载运算符
     public CilExpr BitAnd(CilExpr right) => Binary(ExpressionType.And, this, right, ResultType);
     public CilExpr BitOr(CilExpr right) => Binary(ExpressionType.Or, this, right, ResultType);
+    public CilExpr BitNot()
+        => new(new UnaryPatternNode(ExpressionType.Not, Node, method: null, ResultType));
 
+    public CilExpr AddChecked(CilExpr right)
+        => Binary(ExpressionType.AddChecked, this, right, ResultType);
+
+    public CilExpr SubtractChecked(CilExpr right)
+        => Binary(ExpressionType.SubtractChecked, this, right, ResultType);
+
+    public CilExpr MultiplyChecked(CilExpr right)
+        => Binary(ExpressionType.MultiplyChecked, this, right, ResultType);
 
     public CilExpr Xor(CilExpr right) => Binary(ExpressionType.ExclusiveOr, this, right, ResultType);
     public CilExpr ShiftLeft(CilExpr count) => Binary(ExpressionType.LeftShift, this, count, ResultType);
@@ -119,6 +129,9 @@ public sealed class CilExpr
         return new CilExpr(new UnaryPatternNode(ExpressionType.Not, operand.Node,
             method: null, CilTypeSpec.Boolean));
     }
+
+    public static CilExpr operator ~(CilExpr operand)
+        => Require(operand, nameof(operand)).BitNot();
 
     public static CilExpr operator>>(CilExpr left, CilExpr right)
         => left.ShiftRight(right);

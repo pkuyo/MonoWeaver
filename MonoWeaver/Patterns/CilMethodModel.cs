@@ -210,7 +210,7 @@ internal sealed class CilMethodModel
             stack.Add(node);
             _instructionResults[instruction] = node;
             if (candidate)
-                _valueCandidates.Add(node);
+                _valueCandidates.Add(node); //任何一次压栈均可做value候选
         }
 
         var code = instruction.OpCode.Code;
@@ -283,7 +283,7 @@ internal sealed class CilMethodModel
                 return;
             }
             case Code.Pop:
-                _effectCandidates.Add(new TargetEffect(Pop(), instruction));
+                _effectCandidates.Add(new TargetEffect(Pop(), instruction)); //类似于 _ = xxxxx();
                 return;
 
             case Code.Ldfld:
@@ -371,7 +371,7 @@ internal sealed class CilMethodModel
                 var index = Pop();
                 var array = Pop();
                 _effectCandidates.Add(new TargetEffect(new TargetArrayStoreNode(array, index, value,
-                    ResolveArrayElementType(array, instruction), instruction), instruction));
+                    ResolveArrayElementType(array, instruction), instruction), instruction));// 类似于value[x] = y;
                 return;
             }
 
@@ -627,7 +627,7 @@ internal sealed class CilMethodModel
 
         var node = new TargetCallNode(method, instance, arguments, resultType, instruction);
         if (resultType is null)
-            _effectCandidates.Add(new TargetEffect(node, instruction));
+            _effectCandidates.Add(new TargetEffect(node, instruction)); //void call也算effect
         else
             push(node, true);
     }
