@@ -11,6 +11,10 @@
     <ProjectReference Include="../../MonoWeaver.MonoMod/MonoWeaver.MonoMod.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Remove="PatternSources/**/*.cs" />
+    <None Include="PatternSources/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Mono.Cecil" Version="0.11.4" />
     <PackageReference Include="MonoMod" Version="21.11.1.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" PrivateAssets="all" />

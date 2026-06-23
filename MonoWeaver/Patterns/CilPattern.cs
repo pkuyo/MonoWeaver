@@ -112,6 +112,15 @@ public sealed class CilExpressionPattern
         _localDefinitionConstraints.Add(new LocalDefinitionConstraint(captureName, definition));
         return this;
     }
+
+    public static CilExpressionPattern operator==(CilExpressionPattern a, CilExpressionPattern b)
+    {
+
+    }
+    public static CilExpressionPattern operator!=(CilExpressionPattern a, CilExpressionPattern b)
+    {
+
+    }
 }
 
 /// <summary>
@@ -143,6 +152,37 @@ public static class Cil
     /// </summary>
     public static CilExpressionPattern Condition(Expression<Func<bool>> expression, CilPatternOptions? options = null)
         => Build(CilPatternKind.Condition, expression, options);
+
+    /// <summary>从 metadata-native expression 创建 value pattern；不会加载目标程序集。</summary>
+    public static CilExpressionPattern Value(CilExpr expression, CilPatternOptions? options = null)
+        => Build(CilPatternKind.Value, expression, options);
+
+    /// <summary>从 metadata-native expression 创建 effect pattern；result type 必须为 void。</summary>
+    public static CilExpressionPattern Effect(CilExpr expression, CilPatternOptions? options = null)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        if (!expression.ResultType.IsVoid)
+            throw new ArgumentException("An effect pattern must have Void result type.", nameof(expression));
+        return Build(CilPatternKind.Effect, expression, options);
+    }
+
+    /// <summary>从 metadata-native expression 创建短路条件 pattern。</summary>
+    public static CilExpressionPattern Condition(CilExpr expression, CilPatternOptions? options = null)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        if (!expression.ResultType.IsBoolean)
+            throw new ArgumentException("A condition pattern must have Boolean result type.", nameof(expression));
+        return Build(CilPatternKind.Condition, expression, options);
+    }
+
+    private static CilExpressionPattern Build(CilPatternKind kind, CilExpr expression, CilPatternOptions? options)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        return new CilExpressionPattern(kind, expression.Node, options);
+    }
 
     private static CilExpressionPattern Build(CilPatternKind kind, LambdaExpression expression, CilPatternOptions? options)
     {
@@ -220,6 +260,117 @@ public static class P
     /// </summary>
     public static void StoreElement<T>(T[] array, int index, T value)
         => ThrowVoid();
+
+    /// <summary>匹配 metadata type 指定的 instance，不要求该 type 被 CLR 加载。</summary>
+    public static CilExpr This(CilTypeSpec type, string? captureName = null)
+        => new(new ArgumentPatternNode(true, null, NormalizeCapture(captureName), RequireType(type)));
+
+    /// <summary>按显式参数 index 匹配 metadata type 指定的 argument。</summary>
+    public static CilExpr Arg(int index, CilTypeSpec type, string? captureName = null)
+    {
+        if (index < 0)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        return new CilExpr(new ArgumentPatternNode(false, index, NormalizeCapture(captureName), RequireType(type)));
+    }
+
+    /// <summary>匹配任意序号、指定 metadata type 的 argument，并捕获。</summary>
+    public static CilExpr Arg(CilTypeSpec type, string captureName)
+        => new(new ArgumentPatternNode(false, null, RequireCapture(captureName), RequireType(type)));
+
+    public static CilExpr Local(int index, CilTypeSpec type, string? captureName = null)
+    {
+        if (index < 0)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        return new CilExpr(new LocalPatternNode(index, NormalizeCapture(captureName), RequireType(type)));
+    }
+
+    public static CilExpr Local(CilTypeSpec type, string captureName)
+        => new(new LocalPatternNode(null, RequireCapture(captureName), RequireType(type)));
+
+    public static CilExpr Any(CilTypeSpec type, string captureName)
+        => new(new AnyPatternNode(RequireCapture(captureName), RequireType(type)));
+
+    public static CilExpr Mark(string captureName, CilExpr value)
+        => new(new MarkPatternNode(RequireCapture(captureName),
+            value?.Node ?? throw new ArgumentNullException(nameof(value))));
+
+    /// <summary>匹配 static method call。</summary>
+    public static CilExpr Call(CilMethodSpec method, params CilExpr[] arguments)
+    {
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        if (method.HasThis || method.IsConstructor)
+            throw new ArgumentException("P.Call requires a static non-constructor method. Use instance.Call or P.New.", nameof(method));
+        return new CilExpr(new CallPatternNode(method, null, CilExpr.RequireArguments(method, arguments)));
+    }
+
+    /// <summary>匹配 newobj。</summary>
+    public static CilExpr New(CilMethodSpec constructor, params CilExpr[] arguments)
+    {
+        if (constructor is null)
+            throw new ArgumentNullException(nameof(constructor));
+        if (!constructor.IsConstructor)
+            throw new ArgumentException("P.New requires a constructor specification.", nameof(constructor));
+        return new CilExpr(new CallPatternNode(constructor, null,
+            CilExpr.RequireArguments(constructor, arguments), constructor.DeclaringType));
+    }
+
+    /// <summary>匹配 static field read。</summary>
+    public static CilExpr Field(CilFieldSpec field)
+    {
+        if (field is null)
+            throw new ArgumentNullException(nameof(field));
+        if (field.IsStatic == false)
+            throw new ArgumentException("P.Field requires a static field. Use instance.Field for an instance field.", nameof(field));
+        return new CilExpr(new FieldPatternNode(field, null));
+    }
+
+    public static CilExpr NewArray(CilTypeSpec elementType, CilExpr length)
+    {
+        elementType = RequireType(elementType);
+        if (length is null)
+            throw new ArgumentNullException(nameof(length));
+        return new CilExpr(new NewArrayPatternNode(elementType, new[] { length.Node }, elementType.MakeArrayType()));
+    }
+
+    public static CilExpr StoreElement(CilExpr array, CilExpr index, CilExpr value)
+        => new(new ArrayStorePatternNode(
+            array?.Node ?? throw new ArgumentNullException(nameof(array)),
+            index?.Node ?? throw new ArgumentNullException(nameof(index)),
+            value?.Node ?? throw new ArgumentNullException(nameof(value))));
+
+    public static CilExpr Constant(object? value, CilTypeSpec type)
+        => new(new ConstantPatternNode(value, RequireType(type)));
+
+    public static CilExpr Constant(bool value) => Constant(value, CilTypeSpec.Boolean);
+    public static CilExpr Constant(byte value) => Constant(value, CilTypeSpec.Byte);
+    public static CilExpr Constant(sbyte value) => Constant(value, CilTypeSpec.SByte);
+    public static CilExpr Constant(short value) => Constant(value, CilTypeSpec.Int16);
+    public static CilExpr Constant(ushort value) => Constant(value, CilTypeSpec.UInt16);
+    public static CilExpr Constant(int value) => Constant(value, CilTypeSpec.Int32);
+    public static CilExpr Constant(uint value) => Constant(value, CilTypeSpec.UInt32);
+    public static CilExpr Constant(long value) => Constant(value, CilTypeSpec.Int64);
+    public static CilExpr Constant(ulong value) => Constant(value, CilTypeSpec.UInt64);
+    public static CilExpr Constant(float value) => Constant(value, CilTypeSpec.Single);
+    public static CilExpr Constant(double value) => Constant(value, CilTypeSpec.Double);
+    public static CilExpr Constant(char value) => Constant(value, CilTypeSpec.Char);
+    public static CilExpr Constant(string value)
+        => Constant(value ?? throw new ArgumentNullException(nameof(value)), CilTypeSpec.String);
+    public static CilExpr Null(CilTypeSpec? nominalType = null)
+        => Constant(null, nominalType ?? CilTypeSpec.Object);
+
+    private static CilTypeSpec RequireType(CilTypeSpec? type)
+        => type ?? throw new ArgumentNullException(nameof(type));
+
+    private static string RequireCapture(string captureName)
+    {
+        if (string.IsNullOrWhiteSpace(captureName))
+            throw new ArgumentException("A non-empty capture name is required.", nameof(captureName));
+        return captureName;
+    }
+
+    private static string? NormalizeCapture(string? captureName)
+        => captureName is null ? null : RequireCapture(captureName);
 
     private static T Throw<T>()
         => throw new InvalidOperationException("MonoWeaver pattern placeholders may only be used inside a lambda passed to Cil.Value/Cil.Effect/Cil.Condition.");

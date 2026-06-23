@@ -35,7 +35,7 @@ internal static class PatternExpressionParser
                 => ParseBinary((BinaryExpression)expression),
             ExpressionType.NewArrayBounds => ParseNewArrayBounds((NewArrayExpression)expression),
             ExpressionType.New => ParseNew((NewExpression)expression),
-            ExpressionType.Default => new ConstantPatternNode(null, expression.Type),
+            ExpressionType.Default => new ConstantPatternNode(null, CilTypeSpec.From(expression.Type)),
             _ => throw Unsupported(expression, $"Expression node '{expression.NodeType}' is not supported by the single-expression matcher.")
         };
     }
@@ -47,7 +47,7 @@ internal static class PatternExpressionParser
 
         var instance = call.Object is null ? null : Parse(call.Object);
         var arguments = call.Arguments.Select(Parse).ToArray();
-        return new CallPatternNode(call.Method, instance, arguments, call.Type);
+        return new CallPatternNode(CilMethodSpec.From(call.Method), instance, arguments, CilTypeSpec.From(call.Type));
     }
 
     private static CilPatternNode ParsePlaceholder(MethodCallExpression call)
@@ -59,11 +59,11 @@ internal static class PatternExpressionParser
                 isThis: true,
                 index: null,
                 captureName: call.Arguments.Count == 0 ? null : GetRequiredString(call.Arguments[0]),
-                resultType: call.Type),
+                resultType: CilTypeSpec.From(call.Type).Assignable()),
 
             nameof(P.Arg) => ParseArgumentPlaceholder(call),
             nameof(P.Local) => ParseLocalPlaceholder(call),
-            nameof(P.Any) => new AnyPatternNode(GetRequiredString(call.Arguments[0]), call.Type),
+            nameof(P.Any) => new AnyPatternNode(GetRequiredString(call.Arguments[0]), CilTypeSpec.From(call.Type).Assignable()),
             nameof(P.Mark) => new MarkPatternNode(GetRequiredString(call.Arguments[0]), Parse(call.Arguments[1])),
             nameof(P.StoreElement) => ParseStoreElementPlaceholder(call),
             _ => throw Unsupported(call, $"Unknown pattern placeholder P.{name}.")
@@ -88,7 +88,7 @@ internal static class PatternExpressionParser
             capture = GetRequiredString(call.Arguments[1]);
         }
 
-        return new ArgumentPatternNode(false, index, capture, call.Type);
+        return new ArgumentPatternNode(false, index, capture, CilTypeSpec.From(call.Type).Assignable());
     }
 
     private static CilPatternNode ParseLocalPlaceholder(MethodCallExpression call)
@@ -109,7 +109,7 @@ internal static class PatternExpressionParser
             capture = GetRequiredString(call.Arguments[1]);
         }
 
-        return new LocalPatternNode(index, capture, call.Type);
+        return new LocalPatternNode(index, capture, CilTypeSpec.From(call.Type).Assignable());
     }
 
     private static CilPatternNode ParseMember(MemberExpression member)
@@ -123,30 +123,30 @@ internal static class PatternExpressionParser
             }
 
             var instance = member.Expression is null ? null : Parse(member.Expression);
-            return new FieldPatternNode(field, instance);
+            return new FieldPatternNode(CilFieldSpec.From(field), instance);
         }
 
         if (member.Member is PropertyInfo property)
         {
             var getter = property.GetMethod ?? throw Unsupported(member, $"Property '{property.Name}' has no getter.");
             var instance = member.Expression is null ? null : Parse(member.Expression);
-            return new CallPatternNode(getter, instance, Array.Empty<CilPatternNode>(), property.PropertyType);
+            return new CallPatternNode(CilMethodSpec.From(getter), instance, Array.Empty<CilPatternNode>(), CilTypeSpec.From(property.PropertyType));
         }
 
         throw Unsupported(member, $"Member kind '{member.Member.MemberType}' is not supported.");
     }
 
     private static CilPatternNode ParseConstant(ConstantExpression constant)
-        => new ConstantPatternNode(constant.Value, constant.Type);
+        => new ConstantPatternNode(constant.Value, CilTypeSpec.From(constant.Type));
 
     private static CilPatternNode ParseArrayLength(UnaryExpression unary)
-        => new ArrayLengthPatternNode(Parse(unary.Operand), unary.Type);
+        => new ArrayLengthPatternNode(Parse(unary.Operand), CilTypeSpec.From(unary.Type));
 
     private static CilPatternNode ParseUnary(UnaryExpression unary)
-        => new UnaryPatternNode(unary.NodeType, Parse(unary.Operand), unary.Method, unary.Type);
+        => new UnaryPatternNode(unary.NodeType, Parse(unary.Operand), unary.Method is null ? null : CilMethodSpec.From(unary.Method), CilTypeSpec.From(unary.Type));
 
     private static CilPatternNode ParseArrayIndex(BinaryExpression binary)
-        => new ArrayElementPatternNode(Parse(binary.Left), Parse(binary.Right), binary.Type);
+        => new ArrayElementPatternNode(Parse(binary.Left), Parse(binary.Right), CilTypeSpec.From(binary.Type));
 
     private static CilPatternNode ParseAssign(BinaryExpression binary)
     {
@@ -159,7 +159,7 @@ internal static class PatternExpressionParser
     }
 
     private static CilPatternNode ParseBinary(BinaryExpression binary)
-        => new BinaryPatternNode(binary.NodeType, Parse(binary.Left), Parse(binary.Right), binary.Method, binary.Type);
+        => new BinaryPatternNode(binary.NodeType, Parse(binary.Left), Parse(binary.Right), binary.Method is null ? null : CilMethodSpec.From(binary.Method), CilTypeSpec.From(binary.Type));
 
     private static CilPatternNode ParseNewArrayBounds(NewArrayExpression expression)
     {
@@ -168,7 +168,7 @@ internal static class PatternExpressionParser
 
         var elementType = expression.Type.GetElementType()
                           ?? throw Unsupported(expression, "Array element type could not be resolved.");
-        return new NewArrayPatternNode(elementType, expression.Expressions.Select(Parse).ToArray(), expression.Type);
+        return new NewArrayPatternNode(CilTypeSpec.From(elementType), expression.Expressions.Select(Parse).ToArray(), CilTypeSpec.From(expression.Type));
     }
 
     private static CilPatternNode ParseNew(NewExpression expression)
@@ -176,7 +176,7 @@ internal static class PatternExpressionParser
         if (expression.Constructor is null)
             throw Unsupported(expression, "A value-type default constructor without a ConstructorInfo is not currently supported.");
 
-        return new CallPatternNode(expression.Constructor, null, expression.Arguments.Select(Parse).ToArray(), expression.Type);
+        return new CallPatternNode(CilMethodSpec.From(expression.Constructor), null, expression.Arguments.Select(Parse).ToArray(), CilTypeSpec.From(expression.Type));
     }
 
     private static CilPatternNode ParseStoreElementPlaceholder(MethodCallExpression call)

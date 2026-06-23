@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -116,7 +116,7 @@ public sealed class CilMatcher
                 .OrderBy(_model.IndexOf)
                 .Last();
             result.Add(new CilMatch(Method, pattern, first, last,
-                root.ToPublic(_model.Method.Module.TypeSystem.Boolean), captures));
+                root.ToPublic(_model.Method, _model.Method.Module.TypeSystem.Boolean), captures));
         }
 
         return result;
@@ -128,14 +128,14 @@ public sealed class CilMatcher
         var rootInternal = new ValueInternalCapture(null, matched);
         var captures = MaterializeCaptures(context, Method.Module.TypeSystem.Boolean);
         return new CilMatch(Method, pattern, matched.Node.FirstInstruction, lastInstruction,
-            rootInternal.ToPublic(Method.Module.TypeSystem.Boolean), captures);
+            rootInternal.ToPublic(Method, Method.Module.TypeSystem.Boolean), captures);
     }
 
     private IReadOnlyDictionary<string, MatchCapture> MaterializeCaptures(MatchContext context, TypeReference booleanType)
     {
         var result = new Dictionary<string, MatchCapture>(StringComparer.Ordinal);
         foreach (var pair in context.Captures)
-            result[pair.Key] = pair.Value.ToPublic(booleanType);
+            result[pair.Key] = pair.Value.ToPublic(Method, booleanType);
         return result;
     }
 
@@ -195,7 +195,7 @@ internal abstract class InternalCapture
 {
     protected InternalCapture(string? name) => Name = name;
     public string? Name { get; }
-    public abstract MatchCapture ToPublic(TypeReference booleanType);
+    public abstract MatchCapture ToPublic(MethodDefinition method, TypeReference booleanType);
 }
 
 internal sealed class ValueInternalCapture : InternalCapture
@@ -205,23 +205,23 @@ internal sealed class ValueInternalCapture : InternalCapture
 
     public TargetOccurrence Occurrence { get; }
 
-    public override MatchCapture ToPublic(TypeReference booleanType)
+    public override MatchCapture ToPublic(MethodDefinition method, TypeReference booleanType)
     {
         var node = Occurrence.Node;
         if (node is TargetArgumentNode argument)
         {
-            return new MatchedArgument(Name, node.ResultType!, node.FirstInstruction,
+            return new MatchedArgument(method, Name, node.ResultType!, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer,
                 argument.IsThis, argument.ParameterIndex, argument.Parameter);
         }
 
         if (node is TargetLocalReadNode local)
         {
-            return new MatchedLocal(Name, local.Variable, node.FirstInstruction,
+            return new MatchedLocal(method, Name, local.Variable, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer);
         }
 
-        return new MatchedValue(Name, node.ResultType, node.FirstInstruction,
+        return new MatchedValue(method, Name, node.ResultType, node.FirstInstruction,
             node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer);
     }
 }
@@ -233,8 +233,8 @@ internal sealed class ConditionInternalCapture : InternalCapture
 
     public ConditionFragment Fragment { get; }
 
-    public override MatchCapture ToPublic(TypeReference booleanType)
-        => new MatchedCondition(Name, Fragment, booleanType);
+    public override MatchCapture ToPublic(MethodDefinition method, TypeReference booleanType)
+        => new MatchedCondition(method, Name, Fragment, booleanType);
 }
 
 internal sealed class MatchContext
@@ -356,7 +356,7 @@ internal sealed class ExpressionNodeMatcher
                 return true;
 
             case FieldPatternNode fieldPattern when target.Node is TargetFieldNode field:
-                if (!CecilIdentity.FieldMatches(field.Field, fieldPattern.Field))
+                if (!fieldPattern.Field.Matches(field.Field))
                     break;
                 if (!MatchOptionalChild(fieldPattern.Instance, field.Instance, field.ProducerInstruction, context))
                     break;
@@ -365,7 +365,7 @@ internal sealed class ExpressionNodeMatcher
 
             case NewArrayPatternNode newArrayPattern when target.Node is TargetNewArrayNode newArray:
                 if (!TypeMatches(newArray, newArrayPattern.ResultType)
-                    || !CecilIdentity.TypeMatches(newArray.ElementType, newArrayPattern.ElementType)
+                    || !newArrayPattern.ElementType.Matches(newArray.ElementType)
                     || newArrayPattern.Lengths.Count != newArray.Lengths.Count)
                     break;
                 for (var i = 0; i < newArrayPattern.Lengths.Count; i++)
@@ -412,7 +412,7 @@ internal sealed class ExpressionNodeMatcher
                 return true;
 
             case CallPatternNode callPattern when target.Node is TargetCallNode call:
-                if (!CecilIdentity.MethodMatches(call.Method, callPattern.Method)
+                if (!callPattern.Method.Matches(call.Method)
                     || callPattern.Arguments.Count != call.Arguments.Count
                     || (!_options.IgnoreCallOpcodeDifference
                         && !CallOpcodeMatches(callPattern.Method, call.ProducerInstruction.OpCode.Code)))
@@ -471,35 +471,44 @@ internal sealed class ExpressionNodeMatcher
 
     private static ExpressionType NormalizeBinary(ExpressionType operation) => operation;
 
-    private static bool CallOpcodeMatches(System.Reflection.MethodBase method, Code code)
+    private static bool CallOpcodeMatches(CilMethodSpec method, Code code)
     {
-        if (method is System.Reflection.ConstructorInfo)
+        if (method.IsConstructor)
             return code == Code.Newobj;
-        if (method.IsStatic)
+        if (!method.HasThis)
             return code == Code.Call;
         return code == Code.Callvirt;
     }
 
-    private bool TypeMatches(TargetExpressionNode target, Type patternType)
+    private bool TypeMatches(TargetExpressionNode target, CilTypeSpec patternType)
     {
         var targetType = target.ResultType;
         if (targetType is null)
-            return patternType == typeof(void);
-        if (patternType == typeof(void))
+            return patternType.IsVoid;
+        if (patternType.IsVoid)
             return false;
 
-        TypeReference patternTypeReference;
-        try
+        if (patternType.Matches(targetType))
+            return true;
+
+        if (!patternType.TryResolve(_model.Method.Module, out var patternTypeReference))
+            return false;
+
+        if (patternType.AllowsAssignableMatching)
         {
-            patternTypeReference = _model.Method.Module.ImportReference(patternType);
-        }
-        catch
-        {
-            return CecilIdentity.TypeMatches(targetType, patternType);
+            try
+            {
+                // Normal assignability only; do not use verification-stack widening here.
+                return targetType.IsAssignableTo(patternTypeReference);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        if (targetType.IsSameWith(patternTypeReference))
-            return true;
+        if (!patternType.AllowsStackCompatibility)
+            return false;
 
         var patternStackType = CreatePatternStackType(patternTypeReference);
         return !target.StackType.IsInvalid

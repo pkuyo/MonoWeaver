@@ -101,12 +101,15 @@ public sealed class CilMatch
 /// <summary>public pattern capture 的 base type。</summary>
 public abstract class MatchCapture
 {
-    protected MatchCapture(string? name, TypeReference? valueType)
+    protected MatchCapture(MethodDefinition method, string? name, TypeReference? valueType)
     {
+        Method = method ?? throw new ArgumentNullException(nameof(method));
         Name = name;
         ValueType = valueType;
     }
 
+    /// <summary>此 capture 所属的目标方法；纯 Cecil transform 不需要额外上下文。</summary>
+    public MethodDefinition Method { get; }
     public string? Name { get; }
     public TypeReference? ValueType { get; }
 }
@@ -117,9 +120,9 @@ public abstract class MatchCapture
 /// </summary>
 public class MatchedValue : MatchCapture
 {
-    internal MatchedValue(string? name, TypeReference? valueType, Instruction firstInstruction,
+    internal MatchedValue(MethodDefinition method, string? name, TypeReference? valueType, Instruction firstInstruction,
         Instruction producerInstruction, Instruction afterUseInstruction, Instruction? consumerInstruction)
-        : base(name, valueType)
+        : base(method, name, valueType)
     {
         FirstInstruction = firstInstruction;
         ProducerInstruction = producerInstruction;
@@ -136,10 +139,10 @@ public class MatchedValue : MatchCapture
 /// <summary>捕获到的显式 argument 或 <c>this</c> value。</summary>
 public sealed class MatchedArgument : MatchedValue
 {
-    internal MatchedArgument(string? name, TypeReference valueType, Instruction firstInstruction,
+    internal MatchedArgument(MethodDefinition method, string? name, TypeReference valueType, Instruction firstInstruction,
         Instruction producerInstruction, Instruction afterUseInstruction, Instruction? consumerInstruction,
         bool isThis, int parameterIndex, ParameterDefinition? parameter)
-        : base(name, valueType, firstInstruction, producerInstruction, afterUseInstruction, consumerInstruction)
+        : base(method, name, valueType, firstInstruction, producerInstruction, afterUseInstruction, consumerInstruction)
     {
         IsThis = isThis;
         ParameterIndex = parameterIndex;
@@ -154,9 +157,9 @@ public sealed class MatchedArgument : MatchedValue
 /// <summary>捕获到的 local load。</summary>
 public sealed class MatchedLocal : MatchedValue
 {
-    internal MatchedLocal(string? name, VariableDefinition variable, Instruction firstInstruction,
+    internal MatchedLocal(MethodDefinition method, string? name, VariableDefinition variable, Instruction firstInstruction,
         Instruction producerInstruction, Instruction afterUseInstruction, Instruction? consumerInstruction)
-        : base(name, variable.VariableType, firstInstruction, producerInstruction, afterUseInstruction, consumerInstruction)
+        : base(method, name, variable.VariableType, firstInstruction, producerInstruction, afterUseInstruction, consumerInstruction)
     {
         Variable = variable;
     }
@@ -186,8 +189,8 @@ public sealed class MatchedConditionExit
 /// </summary>
 public sealed class MatchedCondition : MatchCapture
 {
-    internal MatchedCondition(string? name, ConditionFragment fragment, TypeReference booleanType)
-        : base(name, booleanType)
+    internal MatchedCondition(MethodDefinition method, string? name, ConditionFragment fragment, TypeReference booleanType)
+        : base(method, name, booleanType)
     {
         Fragment = fragment;
         EntryInstruction = fragment.Entry.Leader;
