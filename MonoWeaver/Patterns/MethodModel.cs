@@ -11,8 +11,8 @@ namespace MonoWeaver.Patterns;
 
 
 /// <summary>
-/// pattern matcher 使用的刻意保持小型的 symbolic model。它不尝试 decompile 整个 method；
-/// 只保留 pattern candidate 需要的 expression dependency。
+/// pattern matcher 使用的小型 symbolic model。
+/// 它不尝试 decompile 整个 method，只保留 pattern candidate 需要的 expression dependency。
 /// </summary>
 internal sealed class MethodModel
 {
@@ -88,7 +88,7 @@ internal sealed class MethodModel
         next = null!;
         if (block.Successors.Count != 1 ||
             block.Successors[0].Kind != ControlFlowEdgeKind.Unconditional ||
-            Instructions[block.EndIndex].OpCode.Code is not Code.Br and not Code.Br_S) // 跳转只允许br/br_s
+            Instructions[block.EndIndex].OpCode.Code is not Code.Br and not Code.Br_S) //跳转只允许 br/br_s
             return false;
 
         for (var i = block.StartIndex; i < block.EndIndex; i++)
@@ -164,7 +164,7 @@ internal sealed class MethodModel
                 }
                 else if (old != depth)
                 {
-                    //防止异常IL代码造成程序异常
+                    //防止异常 IL 代码造成程序异常
                     var merged = Math.Min(old, depth);
                     if (merged != old)
                     {
@@ -191,7 +191,7 @@ internal sealed class MethodModel
     }
 
     /// <summary>
-    /// 创建node，对于非法指令/无法解析指令直接压unknown。
+    /// 创建 node，对于非法指令/无法解析指令直接压 unknown。
     /// </summary>
     private void SimulateInstruction(Instruction instruction, List<TargetExpressionNode> stack,
         BasicBlock block)
@@ -210,7 +210,7 @@ internal sealed class MethodModel
             stack.Add(node);
             _instructionResults[instruction] = node;
             if (candidate)
-                _valueCandidates.Add(node); //任何一次压栈均可做value候选
+                _valueCandidates.Add(node); //任何一次压栈均可做 value 候选
         }
 
         var code = instruction.OpCode.Code;
@@ -371,7 +371,7 @@ internal sealed class MethodModel
                 var index = Pop();
                 var array = Pop();
                 _effectCandidates.Add(new TargetEffect(new TargetArrayStoreNode(array, index, value,
-                    ResolveArrayElementType(array, instruction), instruction), instruction));// 类似于value[x] = y;
+                    ResolveArrayElementType(array, instruction), instruction), instruction));//类似于 value[x] = y;
                 return;
             }
 
@@ -531,8 +531,7 @@ internal sealed class MethodModel
                 return;
         }
 
-        // 保守 fallback。它保持 stack shape 可用，但不会假装理解当前 pattern DSL
-        // 无法表达的 operation。
+        //保守 fallback。它保持 stack shape 可用，但不会假装理解当前 pattern DSL 无法表达的 operation。
         var inputs = new List<TargetExpressionNode>();
         var popCount = SafePopCount(instruction);
         for (var i = 0; i < popCount; i++)
@@ -627,7 +626,7 @@ internal sealed class MethodModel
 
         var node = new TargetCallNode(method, instance, arguments, resultType, instruction);
         if (resultType is null)
-            _effectCandidates.Add(new TargetEffect(node, instruction)); //void call也算effect
+            _effectCandidates.Add(new TargetEffect(node, instruction)); //void call 也算 effect
         else
             push(node, true);
     }

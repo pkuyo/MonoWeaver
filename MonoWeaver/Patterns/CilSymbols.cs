@@ -3,10 +3,14 @@ using Mono.Cecil;
 
 namespace MonoWeaver.Patterns;
 
-/// <summary>创建不加载 CLR 程序集的 metadata symbol。</summary>
+/// <summary>
+/// 创建不加载 CLR 程序集的 metadata symbol。
+/// </summary>
 public static class CilSymbols
 {
-    /// <summary>以程序集简单名为前缀创建一组 named symbol。</summary>
+    /// <summary>
+    /// 以程序集简单名为前缀创建一组 named symbol。
+    /// </summary>
     public static CilAssemblySpec In(string assemblySimpleName)
         => new(assemblySimpleName);
 
@@ -15,7 +19,9 @@ public static class CilSymbols
     public static CilFieldSpec Field(FieldReference field) => CilFieldSpec.From(field);
 }
 
-/// <summary>仅用于 metadata identity 的程序集前缀；不会触发 Assembly.Load。</summary>
+/// <summary>
+/// 仅用于 metadata identity 的程序集前缀；不会触发 Assembly.Load。
+/// </summary>
 public sealed class CilAssemblySpec
 {
     internal CilAssemblySpec(string simpleName)

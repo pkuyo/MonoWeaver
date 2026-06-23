@@ -7,22 +7,31 @@ using MonoWeaver.Utils;
 
 namespace MonoWeaver.Patterns;
 
-/// <summary>控制 pattern type 的匹配严格度；默认始终为 <see cref="Exact"/>。</summary>
+/// <summary>
+/// 控制 pattern type 的匹配严格度；默认始终为 <see cref="Exact"/>。
+/// </summary>
 public enum CilTypeMatchMode
 {
-    /// <summary>metadata identity 必须一致。Boolean 不会匹配 Int32，enum 不会匹配底层整数。</summary>
+    /// <summary>
+    /// metadata identity 必须一致。Boolean 不会匹配 Int32，enum 不会匹配底层整数。
+    /// </summary>
     Exact,
 
-    /// <summary>允许正常的引用类型/继承赋值；不会把不同 value type 当成相同类型。</summary>
+    /// <summary>
+    /// 允许正常的引用类型/继承赋值；不会把不同 value type 当成相同类型。
+    /// </summary>
     Assignable,
 
-    /// <summary>显式允许 verification stack category 兼容，仅用于需要匹配编译器 lowering 的场景。</summary>
+    /// <summary>
+    /// 显式允许 verification stack category 兼容，仅用于需要匹配编译器 lowering 的场景。
+    /// </summary>
     VerificationStackCompatible,
 }
 
 /// <summary>
-/// 不要求目标类型被 CLR 加载的类型签名。可以来自运行时 <see cref="Type"/>、
-/// Cecil <see cref="TypeReference"/>，也可以只描述 metadata full name。
+/// 不要求目标类型被 CLR 加载的类型签名。
+/// 可以来自运行时 <see cref="Type"/>、Cecil <see cref="TypeReference"/>，
+/// 也可以只描述 metadata full name。
 /// </summary>
 public sealed class CilTypeSpec
 {
@@ -140,9 +149,9 @@ public sealed class CilTypeSpec
         => new(typeReference ?? throw new ArgumentNullException(nameof(typeReference)));
 
     /// <summary>
-    /// 仅按 metadata identity 描述类型。<paramref name="fullName"/> 使用 Cecil 格式，
-    /// 嵌套类型以 '/' 分隔；<paramref name="assemblyName"/> 只写程序集简单名。
-    /// assemblyName 为 null 时不约束程序集。
+    /// 仅按 metadata identity 描述类型。
+    /// <paramref name="fullName"/> 使用 Cecil 格式，嵌套类型以 '/' 分隔；
+    /// <paramref name="assemblyName"/> 只写程序集简单名，为 null 时不约束程序集。
     /// </summary>
     public static CilTypeSpec Named(string fullName, string? assemblyName = null, bool isValueType = false)
         => new(fullName, assemblyName, isValueType);
@@ -202,7 +211,9 @@ public sealed class CilTypeSpec
 
     public CilTypeMatchMode MatchMode => _matchMode;
 
-    /// <summary>返回使用指定匹配策略的新 spec；原对象保持不变。</summary>
+    /// <summary>
+    /// 返回使用指定匹配策略的新 spec；原对象保持不变。
+    /// </summary>
     public CilTypeSpec WithMatchMode(CilTypeMatchMode matchMode)
     {
         if (!Enum.IsDefined(typeof(CilTypeMatchMode), matchMode))
@@ -549,7 +560,9 @@ public sealed class CilTypeSpec
     }
 }
 
-/// <summary>不要求 CLR 加载声明类型的方法签名。</summary>
+/// <summary>
+/// 不要求 CLR 加载声明类型的方法签名。
+/// </summary>
 public sealed class CilMethodSpec
 {
     private readonly MethodBase? _runtimeMethod;
@@ -694,7 +707,9 @@ public sealed class CilMethodSpec
     }
 }
 
-/// <summary>不要求 CLR 加载声明类型的字段签名。</summary>
+/// <summary>
+/// 不要求 CLR 加载声明类型的字段签名。
+/// </summary>
 public sealed class CilFieldSpec
 {
     private readonly FieldInfo? _runtimeField;

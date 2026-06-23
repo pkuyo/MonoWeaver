@@ -6,8 +6,8 @@ using System.Linq.Expressions;
 namespace MonoWeaver.Patterns;
 
 /// <summary>
-/// 不依赖 CLR 泛型参数的 CIL 表达式构造器。它只构造 pattern tree，不执行目标代码，
-/// 因此可直接使用未加载程序集中的 Cecil TypeReference/MethodReference。
+/// 不依赖 CLR 泛型参数的 CIL 表达式构造器。
+/// 它只构造模式树，不执行目标代码，因此可以直接使用未加载程序集中的 Cecil 引用。
 /// </summary>
 public sealed class CilExpr
 {
@@ -20,7 +20,9 @@ public sealed class CilExpr
 
     public CilTypeSpec ResultType => Node.ResultType;
 
-    /// <summary>以当前表达式作为 instance 调用方法。</summary>
+    /// <summary>
+    /// 以当前表达式作为 instance 调用方法。
+    /// </summary>
     public CilExpr Call(CilMethodSpec method, params CilExpr[] arguments)
     {
         if (method is null)
@@ -32,7 +34,9 @@ public sealed class CilExpr
         return new CilExpr(new CallPatternNode(method, Node, children));
     }
 
-    /// <summary>读取当前表达式 instance 上的字段。</summary>
+    /// <summary>
+    /// 读取当前表达式 instance 上的字段。
+    /// </summary>
     public CilExpr Field(CilFieldSpec field)
     {
         if (field is null)
@@ -81,8 +85,14 @@ public sealed class CilExpr
         return Binary(ExpressionType.OrElse, this, right, CilTypeSpec.Boolean);
     }
 
-    /// BitAnd BitOr无重载运算符
+    /// <summary>
+    /// 匹配位与运算。BitAnd/BitOr 没有对应的 C# 重载运算符入口。
+    /// </summary>
     public CilExpr BitAnd(CilExpr right) => Binary(ExpressionType.And, this, right, ResultType);
+
+    /// <summary>
+    /// 匹配位或运算。BitAnd/BitOr 没有对应的 C# 重载运算符入口。
+    /// </summary>
     public CilExpr BitOr(CilExpr right) => Binary(ExpressionType.Or, this, right, ResultType);
     public CilExpr BitNot()
         => new(new UnaryPatternNode(ExpressionType.Not, Node, method: null, ResultType));
@@ -165,8 +175,8 @@ public sealed class CilExpr
     }
 
     /// <summary>
-    /// 为了让 <c>&amp;&amp;</c>/<c>||</c> 能自然构造短路 pattern，&amp; 和 | 在此 DSL 中也表示
-    /// AndAlso/OrElse；位运算请显式使用 BitAnd/BitOr。
+    /// 为了让 && 和 || 可以自然构造短路匹配，
+    /// & 和 | 在此 DSL 中也表示 AndAlso/OrElse；位运算请显式使用 BitAnd/BitOr。
     /// </summary>
     public static CilExpr operator &(CilExpr left, CilExpr right)
         => Require(left, nameof(left)).AndAlso(right);
@@ -240,7 +250,9 @@ public sealed class CilExpr
     }
 }
 
-/// <summary>常用 metadata type 的短名入口。</summary>
+/// <summary>
+/// 常用 metadata type 的短名入口。
+/// </summary>
 public static class CilType
 {
     public static CilTypeSpec Named(string fullName, string? assemblyName = null, bool isValueType = false)

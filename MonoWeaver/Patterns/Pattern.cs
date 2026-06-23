@@ -10,17 +10,19 @@ namespace MonoWeaver.Patterns;
 public enum PatternKind
 {
     Value, //匹配表达式返回一个值
-    Effect, //匹配表达式不返回东西
-    Condition, //匹配表达式返回 bool 并且影响分支
+    Effect, //匹配表达式不返回值
+    Condition, //匹配表达式返回 bool 并影响分支
 }
 
 /// <summary>
-/// 控制 matcher 在匹配时多积极地把 compiler-generated local 视为 transparent。
-/// matcher 有意保持保守：有歧义的 local 永远不会成为 match。
+/// 控制 matcher 在匹配时是否把 compiler-generated local 视为 transparent。
+/// matcher 会保持保守：有歧义的 local 永远不会成为 match。
 /// </summary>
 public enum TemporaryNormalization
 {
-    /// <summary>永不从 local read 追踪到它的 definition。</summary>
+    /// <summary>
+    /// 永不从 local read 追踪到它的 definition。
+    /// </summary>
     None,
 
     /// <summary>
@@ -34,25 +36,24 @@ public enum TemporaryNormalization
 /// </summary>
 public sealed class PatternOptions
 {
-    // 匹配临时变量(local)的策略
+    //匹配临时变量 local 的策略
     public TemporaryNormalization TemporaryNormalization { get; set; } = TemporaryNormalization.UniqueDefinitions;
 
-    // 忽略 call/callvirt 差异 （c#编译生成 对于non-virtual一样会有callvirt）
+    //忽略 call/callvirt 差异（C# 编译 non-virtual 调用时也可能生成 callvirt）
     public bool IgnoreCallOpcodeDifference { get; set; } = true;
 
-    //透明跳转展开 
-    //eg:
-    // brtrue.s IL_0010
-    // IL_0010:
-    // nop
-    // br.s IL_0020
-    // IL_0020:
-    // ....
+    //透明跳转展开，例如：
+    //brtrue.s IL_0010
+    //IL_0010:
+    //nop
+    //br.s IL_0020
+    //IL_0020:
+    //....
     public bool IgnoreTransparentControlFlow { get; set; } = true;
 }
 
 /// <summary>
-/// local capture 可以被约束为：在 matched load 处由某个 value expression 唯一定义。
+/// local capture 可以被约束为：在匹配到的 load 处由某个 value expression 唯一定义。
 /// </summary>
 public sealed class LocalDefinitionConstraint
 {
@@ -62,16 +63,20 @@ public sealed class LocalDefinitionConstraint
         Definition = definition;
     }
 
-    /// <summary>传给 <see cref="P.Local{T}(string)"/> 的名称。</summary>
+    /// <summary>
+    /// 传给 <see cref="P.Local{T}(string)"/> 的名称。
+    /// </summary>
     public string CaptureName { get; }
 
-    /// <summary>unique reaching definition 必须存储的 expression。</summary>
+    /// <summary>
+    /// unique reaching definition 必须存储的 expression。
+    /// </summary>
     public ExpressionPattern Definition { get; }
 }
 
 /// <summary>
-/// 从 lambda 表达式构建的可复用 pattern。lambda 只会被检查；
-/// 永远不会被编译或执行。
+/// 从 lambda 表达式构建的可复用 pattern。
+/// lambda 只会被检查，永远不会被编译或执行。
 /// </summary>
 public sealed class ExpressionPattern
 {
@@ -84,21 +89,29 @@ public sealed class ExpressionPattern
         Options = options ?? new PatternOptions();
     }
 
-    /// <summary>此 pattern 的使用方式。</summary>
+    /// <summary>
+    /// 此 pattern 的使用方式。
+    /// </summary>
     public PatternKind Kind { get; }
 
-    /// <summary>解析后的 pattern tree。</summary>
+    /// <summary>
+    /// 解析后的模式树。
+    /// </summary>
     public PatternNode Root { get; }
 
-    /// <summary>matcher 应用的选项。</summary>
+    /// <summary>
+    /// matcher 应用的选项。
+    /// </summary>
     public PatternOptions Options { get; }
 
-    /// <summary>捕获的 local 的附加约束。</summary>
+    /// <summary>
+    /// 捕获的 local 的附加约束。
+    /// </summary>
     public IReadOnlyList<LocalDefinitionConstraint> LocalDefinitionConstraints => _localDefinitionConstraints;
 
     /// <summary>
     /// 要求由 <paramref name="captureName"/> 捕获的 local 恰好有一个 stloc 来源，
-    /// 并要求其 stloc的来源匹配 <paramref name="definition"/>。
+    /// 并要求其 stloc 来源匹配 <paramref name="definition"/>。
     /// </summary>
     public ExpressionPattern LocalDefinedBy(string captureName, ExpressionPattern definition)
     {
@@ -120,36 +133,35 @@ public sealed class ExpressionPattern
 /// </summary>
 public static class Cil
 {
-    /// <summary>为会返回一个值的表达式创建 pattern。
-    /// （不需要实际保存到local或者arg，只要表达式返回值即可）
+    /// <summary>
+    /// 为会返回一个值的表达式创建 pattern。
+    /// 不需要实际保存到 local 或 arg，只要表达式返回值即可。
     /// </summary>
     public static ExpressionPattern Value<T>(Expression<Func<T>> expression, PatternOptions? options = null)
         => Build(PatternKind.Value, expression, options);
 
-    /// <summary>为会返回一个值的表达式创建 pattern。
-    /// （不需要实际保存到local或者arg，只要表达式返回值即可）并在hook内忽略该返回值
-    /// </summary>
-    /*
-    public static ExpressionPattern Effect<T>(Expression<Func<T>> expression, PatternOptions? options = null)
-        => Build(PatternKind.Effect, expression, options);
-    */
-
-    /// <summary>为无返回值的表达式创建 pattern。
+    /// <summary>
+    /// 为无返回值的表达式创建 pattern。
     /// </summary>
     public static ExpressionPattern Effect(Expression<Action> expression, PatternOptions? options = null)
         => Build(PatternKind.Effect, expression, options);
 
-    /// <summary>为会返回bool并可能进行分支的表达式创建 pattern。
-    /// （会按照短路结构匹配）
+    /// <summary>
+    /// 为会返回 bool 并可能进行分支的表达式创建 pattern。
+    /// 会按照短路结构匹配。
     /// </summary>
     public static ExpressionPattern Condition(Expression<Func<bool>> expression, PatternOptions? options = null)
         => Build(PatternKind.Condition, expression, options);
 
-    /// <summary>从 metadata-native expression 创建 value pattern；不会加载目标程序集。</summary>
+    /// <summary>
+    /// 从 metadata-native expression 创建 value pattern；不会加载目标程序集。
+    /// </summary>
     public static ExpressionPattern Value(CilExpr expression, PatternOptions? options = null)
         => Build(PatternKind.Value, expression, options);
 
-    /// <summary>从 metadata-native expression 创建 effect pattern；result type 必须为 void。</summary>
+    /// <summary>
+    /// 从 metadata-native expression 创建 effect pattern；result type 必须为 void。
+    /// </summary>
     public static ExpressionPattern Effect(CilExpr expression, PatternOptions? options = null)
     {
         if (expression is null)
@@ -159,7 +171,9 @@ public static class Cil
         return Build(PatternKind.Effect, expression, options);
     }
 
-    /// <summary>从 metadata-native value expression 创建其结果被 pop 丢弃的 effect pattern。</summary>
+    /// <summary>
+    /// 从 metadata-native value expression 创建其结果被 pop 丢弃的 effect pattern。
+    /// </summary>
     public static ExpressionPattern Discard(CilExpr expression, PatternOptions? options = null)
     {
         if (expression is null)
@@ -169,7 +183,9 @@ public static class Cil
         return Build(PatternKind.Effect, expression, options);
     }
 
-    /// <summary>从 metadata-native expression 创建短路条件 pattern。</summary>
+    /// <summary>
+    /// 从 metadata-native expression 创建短路条件 pattern。
+    /// </summary>
     public static ExpressionPattern Condition(CilExpr expression, PatternOptions? options = null)
     {
         if (expression is null)
@@ -199,7 +215,7 @@ public static class Cil
 }
 
 /// <summary>
-/// parser可识别的占位符。
+/// parser 可识别的占位符。
 /// 这些占位符只能出现在传给 <see cref="Cil"/> 的 lambda 内；
 /// 直接执行它们无实际意义，是错误用法。
 /// </summary>
@@ -217,13 +233,13 @@ public static class P
 
     /// <summary>
     /// 按参数序号匹配函数参数。
-    /// （注：index不包含this， 请使用This<T>匹配） 
+    /// 注：index 不包含 this，请使用 This&lt;T&gt; 匹配。
     /// </summary>
     public static T Arg<T>(int index) => Throw<T>();
 
     /// <summary>
     /// 按参数序号匹配并捕获函数参数。
-    /// （注：index不包含this， 请使用This<T>匹配） 
+    /// 注：index 不包含 this，请使用 This&lt;T&gt; 匹配。
     /// </summary>
     public static T Arg<T>(int index, string captureName) => Throw<T>();
 
@@ -248,12 +264,13 @@ public static class P
     public static T Local<T>(string captureName) => Throw<T>();
 
     /// <summary>
-    /// 匹配捕获任意符合指定 type 的 表达式。
+    /// 匹配并捕获任意符合指定 type 的表达式。
     /// </summary>
     public static T Any<T>(string captureName) => Throw<T>();
 
     /// <summary>
-    /// 标记具体的匹配段，方便精确匹配；对于能直接匹配的进来不要使用。可能会影响和其他Hook的兼容。
+    /// 标记具体的匹配段，方便精确匹配。
+    /// 对于能直接匹配的内容不要使用，可能会影响和其他 hook 的兼容。
     /// </summary>
     public static T Mark<T>(string captureName, T value) => Throw<T>();
 
@@ -263,11 +280,15 @@ public static class P
     public static void StoreElement<T>(T[] array, int index, T value)
         => ThrowVoid();
 
-    /// <summary>匹配 metadata type 指定的 instance，不要求该 type 被 CLR 加载。</summary>
+    /// <summary>
+    /// 匹配 metadata type 指定的 instance，不要求该 type 被 CLR 加载。
+    /// </summary>
     public static CilExpr This(CilTypeSpec type, string? captureName = null)
         => new(new ArgumentPatternNode(true, null, NormalizeCapture(captureName), RequireType(type)));
 
-    /// <summary>按显式参数 index 匹配 metadata type 指定的 argument。</summary>
+    /// <summary>
+    /// 按显式参数 index 匹配 metadata type 指定的 argument。
+    /// </summary>
     public static CilExpr Arg(int index, CilTypeSpec type, string? captureName = null)
     {
         if (index < 0)
@@ -275,7 +296,9 @@ public static class P
         return new CilExpr(new ArgumentPatternNode(false, index, NormalizeCapture(captureName), RequireType(type)));
     }
 
-    /// <summary>匹配任意序号、指定 metadata type 的 argument，并捕获。</summary>
+    /// <summary>
+    /// 匹配任意序号、指定 metadata type 的 argument，并捕获。
+    /// </summary>
     public static CilExpr Arg(CilTypeSpec type, string captureName)
         => new(new ArgumentPatternNode(false, null, RequireCapture(captureName), RequireType(type)));
 
@@ -296,7 +319,9 @@ public static class P
         => new(new MarkPatternNode(RequireCapture(captureName),
             value?.Node ?? throw new ArgumentNullException(nameof(value))));
 
-    /// <summary>匹配 static method call。</summary>
+    /// <summary>
+    /// 匹配 static method call。
+    /// </summary>
     public static CilExpr Call(CilMethodSpec method, params CilExpr[] arguments)
     {
         if (method is null)
@@ -306,7 +331,9 @@ public static class P
         return new CilExpr(new CallPatternNode(method, null, CilExpr.RequireArguments(method, arguments)));
     }
 
-    /// <summary>匹配 newobj。</summary>
+    /// <summary>
+    /// 匹配 newobj。
+    /// </summary>
     public static CilExpr New(CilMethodSpec constructor, params CilExpr[] arguments)
     {
         if (constructor is null)
@@ -317,7 +344,9 @@ public static class P
             CilExpr.RequireArguments(constructor, arguments), constructor.DeclaringType));
     }
 
-    /// <summary>匹配 static field read。</summary>
+    /// <summary>
+    /// 匹配 static field read。
+    /// </summary>
     public static CilExpr Field(CilFieldSpec field)
     {
         if (field is null)

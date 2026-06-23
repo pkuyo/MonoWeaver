@@ -7,13 +7,17 @@ using Mono.Cecil.Cil;
 
 namespace MonoWeaver.Patterns;
 
-/// <summary>当调用方要求 unique match，但结果为空或有歧义时抛出。</summary>
+/// <summary>
+/// 调用方要求唯一匹配，但结果为空或存在歧义时抛出。
+/// </summary>
 public sealed class CilPatternMatchException : Exception
 {
     public CilPatternMatchException(string message) : base(message) { }
 }
 
-/// <summary>一组 match，并提供会拒绝 ambiguous insertion point 的 helper。</summary>
+/// <summary>
+/// 一组匹配结果，并提供拒绝有歧义插入点的辅助方法。
+/// </summary>
 public sealed class CilMatchSet : IReadOnlyList<CilMatch>
 {
     private readonly IReadOnlyList<CilMatch> _matches;
@@ -31,8 +35,8 @@ public sealed class CilMatchSet : IReadOnlyList<CilMatch>
     public CilMatch this[int index] => _matches[index];
 
     /// <summary>
-    /// 返回唯一 match。0 个或多个 candidate 都会抛出异常，因为对 IL hook 来说，
-    /// 静默选择第一个 candidate 是不安全的。
+    /// 返回唯一匹配结果。0 个或多个候选都会抛出异常，
+    /// 因为对 IL hook 来说，静默选择第一个候选是不安全的。
     /// </summary>
     public CilMatch Single()
     {
@@ -50,7 +54,9 @@ public sealed class CilMatchSet : IReadOnlyList<CilMatch>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-/// <summary>一个精确 match，以及该 pattern 产生的所有 capture。</summary>
+/// <summary>
+/// 一个精确匹配结果，以及该 pattern 产生的所有 capture。
+/// </summary>
 public sealed class CilMatch
 {
     private readonly IReadOnlyDictionary<string, MatchCapture> _captures;
@@ -73,12 +79,16 @@ public sealed class CilMatch
     public MatchCapture Root { get; }
     public IReadOnlyDictionary<string, MatchCapture> Captures => _captures;
 
-    /// <summary>把 root 作为 value/effect match 返回。</summary>
+    /// <summary>
+    /// 把 root 作为 value/effect 匹配结果返回。
+    /// </summary>
     public MatchedValue Value()
         => Root as MatchedValue
            ?? throw new InvalidOperationException($"The root capture is {Root.GetType().Name}, not {nameof(MatchedValue)}.");
 
-    /// <summary>把 root 作为 Boolean condition match 返回。</summary>
+    /// <summary>
+    /// 把 root 作为 Boolean 条件匹配结果返回。
+    /// </summary>
     public MatchedCondition Condition()
         => Root as MatchedCondition
            ?? throw new InvalidOperationException($"The root capture is {Root.GetType().Name}, not {nameof(MatchedCondition)}.");
@@ -98,7 +108,9 @@ public sealed class CilMatch
     }
 }
 
-/// <summary>public pattern capture 的 base type。</summary>
+/// <summary>
+/// 对外暴露的 pattern capture 基类。
+/// </summary>
 public abstract class MatchCapture
 {
     protected MatchCapture(MethodDefinition method, string? name, TypeReference? valueType)
@@ -108,15 +120,18 @@ public abstract class MatchCapture
         ValueType = valueType;
     }
 
-    /// <summary>此 capture 所属的目标方法；纯 Cecil transform 不需要额外上下文。</summary>
+    /// <summary>
+    /// 此 capture 所属的目标方法；纯 Cecil transform 不需要额外上下文。
+    /// </summary>
     public MethodDefinition Method { get; }
     public string? Name { get; }
     public TypeReference? ValueType { get; }
 }
 
 /// <summary>
-/// 一个 matched value occurrence。<see cref="AfterUseInstruction"/> 标识此 occurrence 使用的
-/// 具体 load/producer，而 <see cref="ProducerInstruction"/> 标识其原始 definition。
+/// 一个匹配到的 value occurrence。
+/// <see cref="AfterUseInstruction"/> 标识此次使用对应的 load/producer，
+/// <see cref="ProducerInstruction"/> 标识其原始 definition。
 /// </summary>
 public class MatchedValue : MatchCapture
 {
@@ -136,7 +151,9 @@ public class MatchedValue : MatchCapture
     public Instruction? ConsumerInstruction { get; }
 }
 
-/// <summary>捕获到的显式 argument 或 <c>this</c> value。</summary>
+/// <summary>
+/// 捕获到的显式 argument 或 <c>this</c> value。
+/// </summary>
 public sealed class MatchedArgument : MatchedValue
 {
     internal MatchedArgument(MethodDefinition method, string? name, TypeReference valueType, Instruction firstInstruction,
@@ -154,7 +171,9 @@ public sealed class MatchedArgument : MatchedValue
     public ParameterDefinition? Parameter { get; }
 }
 
-/// <summary>捕获到的 local load。</summary>
+/// <summary>
+/// 捕获到的 local load。
+/// </summary>
 public sealed class MatchedLocal : MatchedValue
 {
     internal MatchedLocal(MethodDefinition method, string? name, VariableDefinition variable, Instruction firstInstruction,
@@ -167,7 +186,9 @@ public sealed class MatchedLocal : MatchedValue
     public VariableDefinition Variable { get; }
 }
 
-/// <summary>来自 matched short-circuit condition fragment 的一个 true/false exit edge。</summary>
+/// <summary>
+/// 来自已匹配短路条件片段的一条 true/false 出口边。
+/// </summary>
 public sealed class MatchedConditionExit
 {
     internal MatchedConditionExit(Instruction terminator, Instruction target, bool value, bool isFallThrough)
@@ -185,7 +206,8 @@ public sealed class MatchedConditionExit
 }
 
 /// <summary>
-/// 一个 matched Boolean decision。它可能对应多个 conditional branch，而不是一个 materialized Boolean value。
+/// 一个匹配到的 Boolean decision。
+/// 它可能对应多个 conditional branch，而不是一个物化后的 Boolean value。
 /// </summary>
 public sealed class MatchedCondition : MatchCapture
 {

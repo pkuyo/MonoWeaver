@@ -10,6 +10,9 @@ using MonoWeaver.Utils;
 namespace MonoWeaver.Patterns;
 
 
+/// <summary>
+/// 将表达式 pattern 匹配到目标方法的 CIL 上。
+/// </summary>
 public sealed class PatternMatcher
 {
     private readonly MethodModel _model;
@@ -23,7 +26,9 @@ public sealed class PatternMatcher
 
     public static PatternMatcher For(MethodDefinition method) => new(method);
 
-    /// <summary>查找所有精确匹配点。插入 IL 前请使用 <see cref="CilMatchSet.Single"/>。</summary>
+    /// <summary>
+    /// 查找所有精确匹配点。插入 IL 前请使用 <see cref="CilMatchSet.Single"/>。
+    /// </summary>
     public CilMatchSet Find(ExpressionPattern pattern)
     {
         if (pattern is null)
@@ -299,7 +304,8 @@ internal sealed class ExpressionNodeMatcher
             return context.TryAdd(mark.CaptureName, new ValueInternalCapture(mark.CaptureName, matched));
         }
 
-        if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead /*IL有ldloc尝试找前继*/
+        //IL 有 ldloc 时尝试追踪前继 stloc。
+        if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead
             && _options.TemporaryNormalization == TemporaryNormalization.UniqueDefinitions
             && _model.LocalDefinitions.TryGetUniqueDefinition(localRead,
                 out var store, out var storedValue, out _))
@@ -309,7 +315,7 @@ internal sealed class ExpressionNodeMatcher
             {
                 try
                 {
-                    // 存在前继则替换node尝试匹配
+                    //存在前继则替换 node 尝试匹配
                     if (TryMatch(pattern, target.WithNode(storedValue), context, out matched))
                         return true;
                 }
@@ -554,9 +560,9 @@ internal sealed class ExpressionNodeMatcher
         if (operation is not ExpressionType.LeftShift and not ExpressionType.RightShift)
             return right;
 
-        // Roslyn may lower a variable C# shift count as (count & 31/63) before shl/shr.
-        // The mask is part of language lowering rather than user-authored expression shape,
-        // so accept either operand order and expose the semantic count to the pattern.
+        //Roslyn 可能把 C# 中的变量位移量 lowering 成 shl/shr 前的 (count & 31/63)。
+        //这个 mask 属于语言 lowering，不属于用户写出的表达式形状，因此接受两种操作数顺序，
+        //并把语义上的 count 暴露给 pattern。
         if (right is not TargetBinaryNode { Operation: ExpressionType.And } mask)
             return right;
 
@@ -597,7 +603,7 @@ internal sealed class ExpressionNodeMatcher
         {
             try
             {
-                // Normal assignability only; do not use verification-stack widening here.
+                //这里只使用普通赋值规则，不使用 verification-stack widening。
                 return targetType.IsAssignableTo(patternTypeReference);
             }
             catch
@@ -752,9 +758,8 @@ internal sealed class ConditionPatternMatcher
                 return true;
             }
 
-            // For side-effect-free Boolean operands, Roslyn can collapse && into a
-            // materialized bitwise and followed by brfalse. Treat that lowering as the
-            // same condition, while still preferring the real short-circuit CFG shape.
+            //对于无副作用的 Boolean 操作数，Roslyn 可能把 && lowering 成物化的 bitwise and，
+            //再接一个 brfalse。这里将这种 lowering 当成同一个条件处理，但仍优先匹配真实短路 CFG 结构。
             var materialized = new BinaryPatternNode(ExpressionType.And, and.Left, and.Right,
                 and.Method, and.ResultType);
             return TryMatchLeaf(materialized, entry, context, out fragment);
@@ -871,8 +876,8 @@ internal sealed class ConditionPatternMatcher
                 return false;
             }
 
-            // Compilers commonly branch on the inverse comparison to make the desired path
-            // fall through. Match the same semantic condition and swap its exits.
+            //编译器经常对反向比较做分支，让期望路径自然 fall through。
+            //这里匹配相同语义的条件，并交换 true/false 出口。
             negateFragment = true;
         }
 
