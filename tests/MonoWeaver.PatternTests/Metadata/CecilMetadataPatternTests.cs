@@ -3,7 +3,6 @@ using System.IO;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
-using MonoWeaver.Cecil;
 using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
 using MonoWeaver.Utils;
@@ -27,7 +26,7 @@ public sealed class CecilMetadataPatternTests
         var match = target.Match(Cil.Value(
             P.Arg(0, player).Call(getState).Mark("state"))).Single();
 
-        match.Value("state").AfterUse().Transform(transform);
+        match.Value("state").AfterUse().Transform(transform).Apply();
 
         var imported = (MethodReference)target.Body.Instructions
             .Where(i => i.OpCode.Code == Code.Call)
@@ -50,7 +49,7 @@ public sealed class CecilMetadataPatternTests
         using var game = PatternTestModules.Open("GameAssembly");
         using var hooks = PatternTestModules.Open("Bad.Hooks");
         var target = GameReadState(game);
-        var invalid = hooks.RequireType("Hooks.Callbacks").RequireMethod("Transform", hooks.TypeSystem.Boolean);
+        var invalid = hooks.RequireType("Hooks.Callbacks").RequireMethod("Transform", hooks.TypeSystem.String);
 
         var player = CilTypeSpec.From(target.Parameters[0].ParameterType);
         var getState = CilMethodSpec.From((MethodReference)target.Body.Instructions
@@ -130,7 +129,7 @@ public sealed class CecilMetadataPatternTests
         var getState = CilMethodSpec.From((MethodReference)target.Body.Instructions
             .Single(instruction => instruction.Operand is MethodReference { Name: "GetState" }).Operand);
         target.Match(Cil.Value(P.Arg(0, player).Call(getState))).Single()
-            .Value().AfterUse().Transform(transform);
+            .Value().AfterUse().Transform(transform).Apply();
 
         var verifier = new ILMethodVerifier(target,
             VerifyOptions.Instructions | VerifyOptions.StackTypes);

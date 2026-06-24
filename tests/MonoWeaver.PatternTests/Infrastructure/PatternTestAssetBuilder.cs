@@ -241,6 +241,8 @@ internal static class PatternTestModules
         var resolver = new Mono.Cecil.DefaultAssemblyResolver();
         AddSearchDirectoryIfExists(resolver, PatternTestAssetBuilder.AssembliesDirectory);
         AddSearchDirectoryIfExists(resolver, AppContext.BaseDirectory);
+        AddSearchDirectoryIfExists(resolver,
+            Path.GetDirectoryName(typeof(ArgumenPlan).Assembly.Location));
         AddSearchDirectoryIfExists(resolver, Path.GetDirectoryName(typeof(object).Assembly.Location));
 
         return Mono.Cecil.ModuleDefinition.ReadModule(PatternTestAssetBuilder.GetAssemblyPath(assemblyName),

@@ -785,14 +785,17 @@ internal sealed class ConditionPatternMatcher
     private bool TryMatchAnd(BinaryPatternNode pattern, BasicBlock entry, MatchContext context,
         out ConditionFragment fragment)
     {
+        // && 的左侧必须从当前入口块开始；匹配失败说明这里不是目标短路条件的开头。
         if (!TryMatch(pattern.Left, entry, context, out var left))
         {
             fragment = null!;
             return false;
         }
 
+        // && 只有左侧为 true 时才会继续求值右侧，因此右侧入口应当是左侧 true 出口。
         var rightEntry = _model.ResolveTransparentTarget(left.TrueContinuation,
             _options.IgnoreTransparentControlFlow);
+        // 右侧无法从左侧 true 出口匹配，说明实际控制流不是 pattern 描述的 a && b。
         if (!TryMatch(pattern.Right, rightEntry, context, out var right))
         {
             fragment = null!;
@@ -803,6 +806,7 @@ internal sealed class ConditionPatternMatcher
             _options.IgnoreTransparentControlFlow);
         var rightFalse = _model.ResolveTransparentTarget(right.FalseContinuation,
             _options.IgnoreTransparentControlFlow);
+        // && 的 false 可以来自左侧 false 或右侧 false；两条路径必须汇入同一个 false continuation。
         if (!ReferenceEquals(leftFalse, rightFalse))
         {
             fragment = null!;
@@ -821,14 +825,17 @@ internal sealed class ConditionPatternMatcher
     private bool TryMatchOr(BinaryPatternNode pattern, BasicBlock entry, MatchContext context,
         out ConditionFragment fragment)
     {
+        // || 的左侧必须从当前入口块开始；匹配失败说明这里不是目标短路条件的开头。
         if (!TryMatch(pattern.Left, entry, context, out var left))
         {
             fragment = null!;
             return false;
         }
 
+        // || 只有左侧为 false 时才会继续求值右侧，因此右侧入口应当是左侧 false 出口。
         var rightEntry = _model.ResolveTransparentTarget(left.FalseContinuation,
             _options.IgnoreTransparentControlFlow);
+        // 右侧无法从左侧 false 出口匹配，说明实际控制流不是 pattern 描述的 a || b。
         if (!TryMatch(pattern.Right, rightEntry, context, out var right))
         {
             fragment = null!;
@@ -839,6 +846,7 @@ internal sealed class ConditionPatternMatcher
             _options.IgnoreTransparentControlFlow);
         var rightTrue = _model.ResolveTransparentTarget(right.TrueContinuation,
             _options.IgnoreTransparentControlFlow);
+        // || 的 true 可以来自左侧 true 或右侧 true；两条路径必须汇入同一个 true continuation。
         if (!ReferenceEquals(leftTrue, rightTrue))
         {
             fragment = null!;
@@ -913,4 +921,3 @@ internal sealed class ConditionPatternMatcher
         return true;
     }
 }
-

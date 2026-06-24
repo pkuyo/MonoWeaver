@@ -7,6 +7,5 @@
     <Project Path="tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj" />
   </Folder>
   <Project Path="MonoWeaver.Fuzz/MonoWeaver.Fuzz.csproj" />
-  <Project Path="MonoWeaver.MonoMod/MonoWeaver.MonoMod.csproj" />
   <Project Path="MonoWeaver/MonoWeaver.csproj" />
 </Solution>

@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../MonoWeaver/MonoWeaver.csproj" />
-    <ProjectReference Include="../../MonoWeaver.MonoMod/MonoWeaver.MonoMod.csproj" />
   </ItemGroup>
 
   <ItemGroup>
