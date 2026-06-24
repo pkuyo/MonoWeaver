@@ -1,18 +1,20 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
 namespace MonoWeaver.Utils;
 
 /// <summary>
-/// ÔÚ Mono.Cecil Éú³ÉµÄ IL ÖĞ·¢³ö¶ÔÔËĞĞÊ±Î¯ÍĞµÄµ÷ÓÃ¡£
+/// åœ¨ Mono.Cecil ç”Ÿæˆçš„ IL ä¸­å‘å‡ºå¯¹è¿è¡Œæ—¶å§”æ‰˜çš„è°ƒç”¨ã€‚
 /// </summary>
 /// <remarks>
-/// ²Î¿¼ Monomod (https://github.com/MonoMod/MonoMod) ÖĞµÄ IILReferenceBag¡£
+/// å‚è€ƒ Monomod (https://github.com/MonoMod/MonoMod) ä¸­çš„ IILReferenceBagã€‚
 /// </remarks>
 public static class CecilDelegateEmission
 {
@@ -25,7 +27,7 @@ public static class CecilDelegateEmission
             throw new ArgumentNullException(nameof(callback));
 
         var invoke = typeof(TDelegate).GetMethod("Invoke")
-                     ?? throw new ArgumentException($"'{typeof(TDelegate)}' ²»ÊÇÎ¯ÍĞÀàĞÍ¡£",
+                     ?? throw new ArgumentException($"'{typeof(TDelegate)}' ä¸æ˜¯å§”æ‰˜ç±»å‹ã€‚",
                          nameof(callback));
 
         if (callback.GetInvocationList().Length == 1 && callback.Target is null)
@@ -62,9 +64,12 @@ public static class CecilDelegateEmission
         var returnType = module.ImportReference(invoke.ReturnType);
 
         var referenceBag = RuntimeCecilDelegateReferenceBag.Instance;
+        var emissionModule = referenceBag.GetEmissionModule(module);
         var referenceId = referenceBag.Store(callback);
         var getReference = referenceBag.GetGetter<TDelegate>(module);
-        var invoker = referenceBag.GetDelegateInvoker<TDelegate>(module, invoke);
+        var invoker = referenceBag.GetDelegateInvoker<TDelegate>(emissionModule.Module, invoke);
+        if (!ReferenceEquals(emissionModule.Module, module))
+            invoker = module.ImportReference(invoker);
 
         return new CecilDelegateCall(returnType, parameterTypes, extraStackSlots: 1,
             () => new Instruction[]
@@ -72,37 +77,42 @@ public static class CecilDelegateEmission
                 Instruction.Create(OpCodes.Ldc_I4, referenceId),
                 Instruction.Create(OpCodes.Call, getReference),
                 Instruction.Create(OpCodes.Call, invoker),
-            });
+            },
+            emissionModule.EnsureLoaded);
     }
 }
 
 /// <summary>
-/// ÃèÊöÒ»´ÎÒÑ¾­×¼±¸ºÃµÄÎ¯ÍĞµ÷ÓÃ£¬°üÀ¨ÕæÊµÇ©Ãû¡¢¶îÍâÕ»Î»ºÍ´ı²åÈëÖ¸Áî¡£
+/// æè¿°ä¸€æ¬¡å·²ç»å‡†å¤‡å¥½çš„å§”æ‰˜è°ƒç”¨ï¼ŒåŒ…æ‹¬çœŸå®ç­¾åã€é¢å¤–æ ˆä½å’Œå¾…æ’å…¥æŒ‡ä»¤ã€‚
 /// </summary>
 public sealed class CecilDelegateCall
 {
     private readonly Func<IReadOnlyList<Instruction>> _instructionFactory;
+    private readonly Action? _beforeApply;
 
     internal CecilDelegateCall(TypeReference returnType, IReadOnlyList<TypeReference> parameterTypes,
-        int extraStackSlots, Func<IReadOnlyList<Instruction>> instructionFactory)
+        int extraStackSlots, Func<IReadOnlyList<Instruction>> instructionFactory,
+        Action? beforeApply = null)
     {
         ReturnType = returnType ?? throw new ArgumentNullException(nameof(returnType));
         ParameterTypes = parameterTypes ?? throw new ArgumentNullException(nameof(parameterTypes));
         ExtraStackSlots = extraStackSlots;
         _instructionFactory = instructionFactory ?? throw new ArgumentNullException(nameof(instructionFactory));
+        _beforeApply = beforeApply;
     }
 
     public TypeReference ReturnType { get; }
     public IReadOnlyList<TypeReference> ParameterTypes { get; }
     public int ExtraStackSlots { get; }
     public IReadOnlyList<Instruction> CreateInstructions() => _instructionFactory();
+    internal void PrepareForApply() => _beforeApply?.Invoke();
 }
 
 /// <summary>
-/// ÎÄ¼şÒ»ÄÚ²¿Ê¹ÓÃµÄÒıÓÃ°ü³éÏó¡£
+/// æ–‡ä»¶ä¸€å†…éƒ¨ä½¿ç”¨çš„å¼•ç”¨åŒ…æŠ½è±¡ã€‚
 /// </summary>
 /// <remarks>
-/// ²Î¿¼ Monomod (https://github.com/MonoMod/MonoMod) ÖĞµÄ IILReferenceBag¡£
+/// å‚è€ƒ Monomod (https://github.com/MonoMod/MonoMod) ä¸­çš„ IILReferenceBagã€‚
 /// </remarks>
 internal interface ICecilDelegateReferenceBag
 {
@@ -117,18 +127,19 @@ internal interface ICecilDelegateReferenceBag
 }
 
 /// <summary>
-/// ÔËĞĞÊ±ÒıÓÃ°ü£º±£´æÎ¯ÍĞ£¬²¢ÎªÃ¿¸öÄ¿±êÄ£¿éºÍÎ¯ÍĞÀàĞÍ»º´æÇ¿ÀàĞÍµ÷ÓÃÆ÷¡£
+/// è¿è¡Œæ—¶å¼•ç”¨åŒ…ï¼šä¿å­˜å§”æ‰˜ï¼Œå¹¶ä¸ºæ¯ä¸ªç›®æ ‡æ¨¡å—å’Œå§”æ‰˜ç±»å‹ç¼“å­˜å¼ºç±»å‹è°ƒç”¨å™¨ã€‚
 /// </summary>
 /// <remarks>
-/// ¡¾²Î¿¼À´Ô´¡¿ÕûÌå½á¹¹²Î¿¼ÓÃ»§Ìá¹©µÄÎÄ¼ş¶şÖĞµÄ RuntimeILReferenceBag Óë GetDelegateInvoker&lt;T&gt;¡£
-/// ÎÄ¼ş¶şÍ¨¹ı DynamicMethodDefinition ÔÚÔËĞĞÊ±Éú³Éµ÷ÓÃÆ÷£»±¾ÊµÏÖĞèÒªÈÃ Cecil ²úÎï¿ÉĞ´Èë³ÌĞò¼¯£¬
-/// Òò¶ø°ÑµÈ¼Ûµ÷ÓÃÆ÷Ö±½ÓÉú³ÉÎªÄ¿±êÄ£¿éÖĞµÄÄÚ²¿¾²Ì¬·½·¨¡£
+/// ã€å‚è€ƒæ¥æºã€‘æ•´ä½“ç»“æ„å‚è€ƒç”¨æˆ·æä¾›çš„æ–‡ä»¶äºŒä¸­çš„ RuntimeILReferenceBag ä¸ GetDelegateInvoker&lt;T&gt;ã€‚
+/// æ–‡ä»¶äºŒé€šè¿‡ DynamicMethodDefinition åœ¨è¿è¡Œæ—¶ç”Ÿæˆè°ƒç”¨å™¨ï¼›æœ¬å®ç°éœ€è¦è®© Cecil äº§ç‰©å¯å†™å…¥ç¨‹åºé›†ï¼Œ
+/// å› è€ŒæŠŠç­‰ä»·è°ƒç”¨å™¨ç›´æ¥ç”Ÿæˆä¸ºç›®æ ‡æ¨¡å—ä¸­çš„å†…éƒ¨é™æ€æ–¹æ³•ã€‚
 /// </remarks>
 internal sealed class RuntimeCecilDelegateReferenceBag : ICecilDelegateReferenceBag
 {
     public static readonly RuntimeCecilDelegateReferenceBag Instance = new();
 
     private readonly ConditionalWeakTable<ModuleDefinition, ModuleInvokerCache> _moduleCaches = new();
+    private readonly ConditionalWeakTable<ModuleDefinition, GeneratedDelegateAssemblyState> _generatedAssemblies = new();
 
     private RuntimeCecilDelegateReferenceBag()
     {
@@ -138,9 +149,27 @@ internal sealed class RuntimeCecilDelegateReferenceBag : ICecilDelegateReference
         where TDelegate : Delegate
         => CecilDelegateReferenceStore<TDelegate>.Store(callback);
 
+    public DelegateEmissionModule GetEmissionModule(ModuleDefinition module)
+    {
+        if (module is null)
+            throw new ArgumentNullException(nameof(module));
+
+        if (!RequiresGeneratedAssembly(module))
+            return new DelegateEmissionModule(module, ensureLoaded: null);
+
+        var state = _generatedAssemblies.GetValue(module,
+            static key => new GeneratedDelegateAssemblyState(key));
+        var generated = state.GetWritableAssembly();
+        return new DelegateEmissionModule(generated.Module, generated.EnsureLoaded);
+    }
+
     public MethodReference GetGetter<TDelegate>(ModuleDefinition module)
         where TDelegate : Delegate
-        => module.ImportReference(CecilDelegateReferenceStore<TDelegate>.GetterMethod);
+    {
+        if (module is null)
+            throw new ArgumentNullException(nameof(module));
+        return module.ImportReference(CecilDelegateReferenceStore<TDelegate>.GetterMethod);
+    }
 
     public MethodReference GetDelegateInvoker<TDelegate>(ModuleDefinition module, MethodInfo invoke)
         where TDelegate : Delegate
@@ -177,7 +206,7 @@ internal sealed class RuntimeCecilDelegateReferenceBag : ICecilDelegateReference
             name = $"{baseName}_{++suffix}";
 
         var container = new TypeDefinition(generatedNamespace, name,
-            Mono.Cecil.TypeAttributes.NotPublic |
+            Mono.Cecil.TypeAttributes.Public |
             Mono.Cecil.TypeAttributes.Abstract |
             Mono.Cecil.TypeAttributes.Sealed |
             Mono.Cecil.TypeAttributes.BeforeFieldInit,
@@ -196,7 +225,7 @@ internal sealed class RuntimeCecilDelegateReferenceBag : ICecilDelegateReference
         var delegateType = module.ImportReference(typeof(TDelegate));
 
         var invoker = new MethodDefinition($"Invoke_{index}",
-            Mono.Cecil.MethodAttributes.Assembly |
+            Mono.Cecil.MethodAttributes.Public |
             Mono.Cecil.MethodAttributes.Static |
             Mono.Cecil.MethodAttributes.HideBySig,
             returnType);
@@ -235,10 +264,126 @@ internal sealed class RuntimeCecilDelegateReferenceBag : ICecilDelegateReference
         public Dictionary<Type, MethodReference> Invokers { get; } = new();
         public TypeDefinition? Container { get; set; }
     }
+
+    private static bool RequiresGeneratedAssembly(ModuleDefinition module)
+        => ContainsInvalidPathChar(module.Name) ||
+           ContainsInvalidPathChar(module.Assembly?.Name.Name);
+
+    private static bool ContainsInvalidPathChar(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+
+        var invalid = Path.GetInvalidPathChars();
+        return value.Any(ch => invalid.Contains(ch));
+    }
+
+    internal readonly struct DelegateEmissionModule
+    {
+        public DelegateEmissionModule(ModuleDefinition module, Action? ensureLoaded)
+        {
+            Module = module ?? throw new ArgumentNullException(nameof(module));
+            EnsureLoaded = ensureLoaded;
+        }
+
+        public ModuleDefinition Module { get; }
+        public Action? EnsureLoaded { get; }
+    }
+
+    private sealed class GeneratedDelegateAssemblyState
+    {
+        private readonly ModuleDefinition _sourceModule;
+        private readonly object _gate = new();
+        private GeneratedDelegateAssembly? _current;
+
+        public GeneratedDelegateAssemblyState(ModuleDefinition sourceModule)
+            => _sourceModule = sourceModule ?? throw new ArgumentNullException(nameof(sourceModule));
+
+        public GeneratedDelegateAssembly GetWritableAssembly()
+        {
+            lock (_gate)
+            {
+                if (_current is null || _current.IsFrozen)
+                    _current = GeneratedDelegateAssembly.Create(_sourceModule);
+                return _current;
+            }
+        }
+    }
+
+    private sealed class GeneratedDelegateAssembly
+    {
+        private static int _nextAssemblyId;
+
+        private readonly object _gate = new();
+        private Assembly? _loadedAssembly;
+        private bool _isFrozen;
+
+        private GeneratedDelegateAssembly(AssemblyDefinition assembly)
+            => Assembly = assembly ?? throw new ArgumentNullException(nameof(assembly));
+
+        public AssemblyDefinition Assembly { get; }
+        public ModuleDefinition Module => Assembly.MainModule;
+
+        public bool IsFrozen
+        {
+            get
+            {
+                lock (_gate)
+                    return _isFrozen;
+            }
+        }
+
+        public static GeneratedDelegateAssembly Create(ModuleDefinition sourceModule)
+        {
+            var name = CreateAssemblyName(sourceModule);
+            var assembly = AssemblyDefinition.CreateAssembly(
+                new AssemblyNameDefinition(name, new Version(0, 0, 0, 0)),
+                name,
+                ModuleKind.Dll);
+            return new GeneratedDelegateAssembly(assembly);
+        }
+
+        public void EnsureLoaded()
+        {
+            lock (_gate)
+            {
+                if (_loadedAssembly is not null)
+                    return;
+
+                _isFrozen = true;
+                using var stream = new MemoryStream();
+                Assembly.Write(stream);
+                _loadedAssembly = System.Reflection.Assembly.Load(stream.ToArray());
+            }
+        }
+
+        private static string CreateAssemblyName(ModuleDefinition sourceModule)
+        {
+            var baseName = SanitizeModuleName(sourceModule.Name);
+            var id = Interlocked.Increment(ref _nextAssemblyId);
+            return $"MonoWeaver.Generated.{baseName}.{id}";
+        }
+
+        private static string SanitizeModuleName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return "Module";
+
+            var invalid = Path.GetInvalidPathChars();
+            var sanitized = new string(name.Where(ch => !invalid.Contains(ch)).ToArray()).Trim();
+            if (sanitized.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+                sanitized.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                sanitized = sanitized.Substring(0, sanitized.Length - 4);
+            }
+
+            return string.IsNullOrWhiteSpace(sanitized) ? "Module" : sanitized;
+        }
+    }
 }
 
 /// <summary>
-/// °´Î¯ÍĞÀàĞÍ¸ôÀëµÄÔËĞĞÊ±ÒıÓÃ±í¡£
+/// æŒ‰å§”æ‰˜ç±»å‹éš”ç¦»çš„è¿è¡Œæ—¶å¼•ç”¨è¡¨ã€‚
 /// </summary>
 public static class CecilDelegateReferenceStore<TDelegate>
     where TDelegate : Delegate

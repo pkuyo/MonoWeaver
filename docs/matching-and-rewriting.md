@@ -117,9 +117,14 @@ match.Before().CallVoid(touch, args => args.Arg(0));
 match.Before()
      .CallValue(factory)
      .StoreLocal(method.Body.Variables[0]);
+
+match.Before()
+     .CallValue(factory)
+     .Store(match.Value("target")); // 自动写回捕获到的 local 或 argument
 ```
 
-纯 Cecil 的 `CallValue` 在选择 `LeaveOnStack`、`Discard`、`StoreLocal` 或 `StoreArgument` 前不会提交修改。
+纯 Cecil 的 `CallValue` 在选择 `LeaveOnStack`、`Discard`、`StoreLocal`、`StoreArgument`
+或 `Store(capture)` 前不会提交修改。
 
 ## 4. 条件重写
 
@@ -168,7 +173,26 @@ gate.Transform(rewriteCondition);
 /// 等价于  if (RewriteCondition(a && b))
 ```
 
-MonoWeaver 会处理该条件分支的 true/false 出口，而不是假设存在唯一的“条件后方”指令。因此 condition 没有普通的 `match.After()`；需要改结果时使用 `Transform`，需要提前执行代码时使用 `BeforeEvaluation()`。
+如果只想消费原始 bool，但不改变条件走向，使用 `Observe`：
+
+```csharp
+gate.Observe(observer);
+
+// static void Observe(bool original)
+```
+
+`Observe` 的 callback 也可以返回非 void 值；返回值默认丢弃，也可以显式存回 local 或 argument：
+
+```csharp
+var target = match.Value("target");
+
+gate.Observe(factory, args => args.Arg(0))
+    .Store(target);
+
+// static int Factory(bool original, int value)
+```
+
+MonoWeaver 会处理该条件分支的 true/false 出口，而不是假设存在唯一的“条件后方”指令。因此 condition 没有普通的 `match.After()`；需要改结果时使用 `Transform`，需要保留结果但观察或存其他值时使用 `Observe`，需要提前执行代码时使用 `BeforeEvaluation()`。
 
 ## 5. 插入时做了什么
 

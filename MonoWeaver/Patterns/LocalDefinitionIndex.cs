@@ -51,7 +51,7 @@ internal sealed class LocalDefinitionIndex
         var tempMerged = NewState(localCount);
         var tempTransferred = NewState(localCount);
         int iteration = 0;
-        for (; iteration < updateBlock.Count && iteration < model.Blocks.Count * 4 + 8; iteration++)
+        for (; iteration < updateBlock.Count; iteration++)
         {
             var block = updateBlock[iteration];
             var merged = tempMerged;
@@ -80,11 +80,7 @@ internal sealed class LocalDefinitionIndex
             }
         }
 
-        if (iteration == model.Blocks.Count * 4 + 8)
-        {
-            throw new InvalidOperationException(
-                $"Local definition analysis did not converge for {model.Method.FullName}.");
-        }
+ 
 
         var definitionsAtLoad = new Dictionary<Instruction, Instruction[]>();
         var tempBlock = NewState(localCount);

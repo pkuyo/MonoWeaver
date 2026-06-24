@@ -28,6 +28,11 @@ public static partial class PatternTransformExtensions
         return PatternMatcher.For(method).Find(pattern);
     }
 
+    public static PatternMatcher For(this MethodDefinition method)
+    {
+        return PatternMatcher.For(method);
+    }
+
     /// <summary>在该 value occurrence 的具体 use 后创建 transform site。</summary>
     public static MatchedValueSite AfterUse(this MatchedValue value)
     {
@@ -87,6 +92,34 @@ public static partial class PatternTransformExtensions
             throw new ArgumentNullException(nameof(condition));
         var call = CecilDelegateEmission.Prepare(condition.Method, callback);
         return Transform(condition, condition.Method, call, additionalArguments);
+    }
+
+    /// <summary>
+    /// Observe condition exits without changing the original branch decision. The callback first parameter
+    /// receives the original Boolean exit value. Non-void callback results may be discarded or stored.
+    /// </summary>
+    public static CallResultPlan Observe(this MatchedCondition condition, MethodReference callback,
+        Action<CallArguments>? additionalArguments = null)
+        => Observe(condition, condition.Method, callback, additionalArguments);
+
+    public static CallResultPlan Observe(this MatchedCondition condition, CilMethodSpec callback,
+        Action<CallArguments>? additionalArguments = null)
+    {
+        if (condition is null)
+            throw new ArgumentNullException(nameof(condition));
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return condition.Observe(callback.Resolve(condition.Method.Module), additionalArguments);
+    }
+
+    public static CallResultPlan Observe<TDelegate>(this MatchedCondition condition, TDelegate callback,
+        Action<CallArguments>? additionalArguments = null)
+        where TDelegate : Delegate
+    {
+        if (condition is null)
+            throw new ArgumentNullException(nameof(condition));
+        var call = CecilDelegateEmission.Prepare(condition.Method, callback);
+        return Observe(condition, condition.Method, call, additionalArguments);
     }
 
     /// <summary>在 root 或指定 value capture 的具体 use 后创建 value site。</summary>
@@ -165,7 +198,55 @@ public static partial class PatternTransformExtensions
         var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
             method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Transform");
         return new CallResultPlan(method, () => ApplyConditionTransform(condition, method,
-            arguments, _ => callback.CreateInstructions(), callback.ExtraStackSlots));
+            arguments, _ => callback.CreateInstructions(), callback.ExtraStackSlots),
+            callback.PrepareForApply);
+    }
+
+    public static CallResultPlan Observe(MatchedCondition condition, MethodDefinition method,
+        MethodReference callback, Action<CallArguments>? additionalArguments)
+    {
+        if (condition is null)
+            throw new ArgumentNullException(nameof(condition));
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        if (!ReferenceEquals(condition.Method, method))
+            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
+        if (!condition.CanRewrite)
+            throw new NotSupportedException(condition.RewriteFailureReason
+                                            ?? "The captured condition cannot be safely observed.");
+
+        var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
+            method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Observe");
+        return new CallResultPlan(method, arguments, callback.ReturnType,
+            p => ApplyConditionObserve(condition, method, arguments,
+                CreateMethodCallEmitter(callback), extraStackSlots: 0, p),
+            allowLeaveOnStack: false);
+    }
+
+    public static CallResultPlan Observe(MatchedCondition condition, MethodDefinition method,
+        CecilDelegateCall callback, Action<CallArguments>? additionalArguments)
+    {
+        if (condition is null)
+            throw new ArgumentNullException(nameof(condition));
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        if (!ReferenceEquals(condition.Method, method))
+            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
+        if (!condition.CanRewrite)
+            throw new NotSupportedException(condition.RewriteFailureReason
+                                            ?? "The captured condition cannot be safely observed.");
+
+        var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
+            method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Observe");
+        return new CallResultPlan(method, arguments, callback.ReturnType,
+            p => ApplyConditionObserve(condition, method, arguments,
+                _ => callback.CreateInstructions(), callback.ExtraStackSlots, p),
+            allowLeaveOnStack: false,
+            callback.PrepareForApply);
     }
 
 }
@@ -203,7 +284,8 @@ public sealed class MatchedEffectSite
         var callArguments = CallArguments.ConfigAndValidateCall(_site.Method, call, arguments,
             implicitValueType: null, implicitValueIsNull: false, "CallVoid");
         return new CallResultPlan(_site, callArguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots);
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            beforeApply: call.PrepareForApply);
     }
 
     /// <summary>
@@ -234,7 +316,8 @@ public sealed class MatchedEffectSite
         var callArguments = CallArguments.ConfigAndValidateCall(_site.Method, call, arguments,
             implicitValueType: null, implicitValueIsNull: false, "CallValue");
         return new CallResultPlan(_site, callArguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots);
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            beforeApply: call.PrepareForApply);
     }
 }
 
@@ -285,7 +368,8 @@ public sealed class MatchedValueSite
         var arguments = CallArguments.ConfigAndValidateCall(_value.Method, call, additionalArguments,
             valueType, false, "Transform");
         return new CallResultPlan(_site, arguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots);
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            beforeApply: call.PrepareForApply);
     }
 
     /// <summary>
@@ -317,7 +401,8 @@ public sealed class MatchedValueSite
         var arguments = CallArguments.ConfigAndValidateCall(_value.Method, call, additionalArguments,
             valueType, false, "Observe");
         return new CallResultPlan(_site, arguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots,  true);
+            _ => call.CreateInstructions(), call.ExtraStackSlots, true,
+            beforeApply: call.PrepareForApply);
     }
 
     private TypeReference RequireValueType()
@@ -345,8 +430,11 @@ public sealed class CallResultPlan
     private readonly TypeReference? _returnType;
     private readonly Func<ModuleDefinition, IReadOnlyList<Instruction>>? _callbackEmitter;
     private readonly Action? _customApply;
+    private readonly Action<CallResultPlan>? _customApplyWithPlan;
+    private readonly Action? _beforeApply;
     private readonly int _extraStackSlots;
     private readonly bool _emitDupBeforeArguments;
+    private readonly bool _allowLeaveOnStack = true;
 
     private DestBehaivor _destination = DestBehaivor.LeaveOnStack;
     private VariableDefinition? _destinationLocal;
@@ -356,7 +444,7 @@ public sealed class CallResultPlan
 
     internal CallResultPlan(EmissionSite site, CallArguments arguments, TypeReference returnType,
         Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter, int extraStackSlots,
-        bool emitDupBeforeArguments = false)
+        bool emitDupBeforeArguments = false, Action? beforeApply = null)
     {
         _site = site ?? throw new ArgumentNullException(nameof(site));
         _method = site.Method;
@@ -367,12 +455,27 @@ public sealed class CallResultPlan
             throw new ArgumentOutOfRangeException(nameof(extraStackSlots));
         _extraStackSlots = extraStackSlots;
         _emitDupBeforeArguments = emitDupBeforeArguments;
+        _beforeApply = beforeApply;
     }
 
-    internal CallResultPlan(MethodDefinition method, Action customApply)
+    internal CallResultPlan(MethodDefinition method, Action customApply, Action? beforeApply = null)
     {
         _method = method ?? throw new ArgumentNullException(nameof(method));
         _customApply = customApply ?? throw new ArgumentNullException(nameof(customApply));
+        _beforeApply = beforeApply;
+    }
+
+    internal CallResultPlan(MethodDefinition method, CallArguments arguments, TypeReference returnType,
+        Action<CallResultPlan> customApply, bool allowLeaveOnStack, Action? beforeApply = null)
+    {
+        _method = method ?? throw new ArgumentNullException(nameof(method));
+        _arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
+        _returnType = returnType ?? throw new ArgumentNullException(nameof(returnType));
+        _customApplyWithPlan = customApply ?? throw new ArgumentNullException(nameof(customApply));
+        _allowLeaveOnStack = allowLeaveOnStack;
+        _beforeApply = beforeApply;
+        if (!_allowLeaveOnStack && !_returnType.IsVoid())
+            _destination = DestBehaivor.Discard;
     }
 
     public TypeReference? ReturnType => _returnType;
@@ -380,6 +483,8 @@ public sealed class CallResultPlan
     public CallResultPlan LeaveOnStack()
     {
         RequireValueResult();
+        if (!_allowLeaveOnStack)
+            throw new InvalidOperationException("This plan cannot leave a result on the stack.");
         _destination = DestBehaivor.LeaveOnStack;
         _destinationLocal = null;
         _destinationArgument = null;
@@ -440,6 +545,23 @@ public sealed class CallResultPlan
         return this;
     }
 
+    public CallResultPlan Store(MatchedValue capture)
+    {
+        if (capture is null)
+            throw new ArgumentNullException(nameof(capture));
+        if (!ReferenceEquals(capture.Method, _method))
+            throw new ArgumentException("The captured value belongs to a different method.", nameof(capture));
+
+        return capture switch
+        {
+            MatchedLocal local => StoreLocal(local.Variable),
+            MatchedArgument { IsThis: false, Parameter: { } parameter } => StoreArgument(parameter),
+            MatchedArgument { IsThis: true } => throw new InvalidOperationException(
+                "Cannot store into the captured this argument."),
+            _ => throw new InvalidOperationException("The captured value is not a writable local or argument."),
+        };
+    }
+
     public CallResultPlan Apply()
     {
         if (_applied)
@@ -447,12 +569,23 @@ public sealed class CallResultPlan
 
         if (_customApply is not null)
         {
+            _beforeApply?.Invoke();
             _customApply();
             _applied = true;
             return this;
         }
 
+        if (_customApplyWithPlan is not null)
+        {
+            _beforeApply?.Invoke();
+            _customApplyWithPlan(this);
+            _applied = true;
+            return this;
+        }
+
         //防止越界
+        _beforeApply?.Invoke();
+
         _method.Body.MaxStackSize = checked(_method.Body.MaxStackSize + AdditionalStackSlots);
         BranchModifier.ExpandShortBranches(_method.Body);
         var processor = _method.Body.GetILProcessor();
@@ -518,7 +651,7 @@ public sealed class CallResultPlan
             _site.Insert(processor, instruction, ref current, ref firstInserted);
     }
 
-    private IReadOnlyList<Instruction> CreateDestinationInstructions()
+    internal IReadOnlyList<Instruction> CreateDestinationInstructions()
     {
         if (_returnType is null || _returnType.IsVoid())
             return Array.Empty<Instruction>();
@@ -535,7 +668,7 @@ public sealed class CallResultPlan
 
     private void RequireValueResult()
     {
-        if (_customApply is not null)
+        if (_customApply is not null && _customApplyWithPlan is null)
             throw new InvalidOperationException("This plan does not expose a single stack result.");
         if (_returnType is null || _returnType.IsVoid())
             throw new InvalidOperationException("This call does not return a value.");
@@ -692,7 +825,11 @@ public sealed class CallArguments
             throw new InvalidOperationException("The target method has no instance argument.");
 
         TypeReference thisType = _target.DeclaringType;
-        if (_target.DeclaringType.IsValueType)
+
+        if (thisType is null)
+            throw new InvalidOperationException("method declaring type is null");
+
+        if (thisType.IsValueType)
             thisType = new ByReferenceType(_target.DeclaringType);
 
         _argPlans.Add(new ArgumenPlan(thisType, isNull: false,
@@ -1193,6 +1330,109 @@ public static partial class PatternTransformExtensions
         result.AddRange(callbackEmitter(method.Module));
         result.Add(Instruction.Create(OpCodes.Brtrue, trueTarget));
         result.Add(Instruction.Create(OpCodes.Br, falseTarget));
+        return result;
+    }
+
+    private static void ApplyConditionObserve(MatchedCondition condition, MethodDefinition method,
+        CallArguments arguments, Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
+        int extraStackSlots, CallResultPlan plan)
+    {
+        if (condition is null)
+            throw new ArgumentNullException(nameof(condition));
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        if (arguments is null)
+            throw new ArgumentNullException(nameof(arguments));
+        if (callbackEmitter is null)
+            throw new ArgumentNullException(nameof(callbackEmitter));
+        if (plan is null)
+            throw new ArgumentNullException(nameof(plan));
+        if (!ReferenceEquals(condition.Method, method))
+            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
+        if (!condition.CanRewrite)
+            throw new InvalidOperationException(condition.RewriteFailureReason
+                ?? "The captured condition cannot be safely observed.");
+
+        var fragment = condition.Fragment;
+        var trueTarget = fragment.TrueContinuation.Leader;
+        var falseTarget = fragment.FalseContinuation.Leader;
+        var exits = fragment.TrueExits.Select(static edge => (Edge: edge, Value: true))
+            .Concat(fragment.FalseExits.Select(static edge => (Edge: edge, Value: false)))
+            .ToArray();
+
+        if (exits.Length == 0)
+            throw new InvalidOperationException("The captured condition has no exit edges.");
+
+        var groups = exits.GroupBy(static exit => exit.Edge.From).ToArray();
+        foreach (var group in groups)
+        {
+            var fallExits = group.Where(static exit => exit.Edge.IsFallThrough).ToArray();
+            var branchExits = group.Where(static exit => !exit.Edge.IsFallThrough).ToArray();
+            if (fallExits.Length > 1 || branchExits.Length > 1)
+            {
+                throw new NotSupportedException(
+                    $"Condition block IL_{group.Key.Leader.Offset:X4} has an unsupported exit shape.");
+            }
+
+            EnsureAnchor(method, group.Key.Terminator);
+            EnsureSameExceptionRegion(method.Body, group.Key.Terminator, trueTarget);
+            EnsureSameExceptionRegion(method.Body, group.Key.Terminator, falseTarget);
+        }
+
+        var requiredStack = 1 + arguments.ArgPlans.Count + extraStackSlots;
+        if (plan.ReturnType is { } returnType && !returnType.IsVoid())
+            requiredStack = Math.Max(requiredStack, 1);
+        method.Body.MaxStackSize = checked(method.Body.MaxStackSize + requiredStack);
+        BranchModifier.ExpandShortBranches(method.Body);
+        var processor = method.Body.GetILProcessor();
+        foreach (var argument in arguments.ArgPlans)
+            argument.EmitStore(processor, InsertPosition.After);
+
+        foreach (var group in groups)
+        {
+            var fallExits = group.Where(static exit => exit.Edge.IsFallThrough).ToArray();
+            var branchExits = group.Where(static exit => !exit.Edge.IsFallThrough).ToArray();
+            var emitted = new List<Instruction>();
+
+            if (fallExits.Length == 0 && branchExits.Length != 0)
+            {
+                var allFallThrough = group.Key.Successors.SingleOrDefault(static edge => edge.IsFallThrough)
+                                     ?? throw new InvalidOperationException("The source condition has no fall-through edge.");
+                EnsureSameExceptionRegion(method.Body, group.Key.Terminator, allFallThrough.To.Leader);
+                emitted.Add(Instruction.Create(OpCodes.Br, allFallThrough.To.Leader));
+            }
+
+            if (fallExits.Length != 0)
+                emitted.AddRange(CreateConditionObserveBridge(method, arguments, callbackEmitter,
+                    fallExits[0].Value, fallExits[0].Value ? trueTarget : falseTarget, plan));
+
+            Instruction? branchBridge = null;
+            if (branchExits.Length != 0)
+            {
+                var bridge = CreateConditionObserveBridge(method, arguments, callbackEmitter,
+                    branchExits[0].Value, branchExits[0].Value ? trueTarget : falseTarget, plan);
+                branchBridge = bridge[0];
+                emitted.AddRange(bridge);
+            }
+
+            InsertAfter(processor, group.Key.Terminator, emitted);
+            if (branchBridge is not null)
+                RetargetTakenBranch(group.Key.Terminator, branchBridge);
+        }
+    }
+
+    private static IReadOnlyList<Instruction> CreateConditionObserveBridge(MethodDefinition method,
+        CallArguments arguments, Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
+        bool originalValue, Instruction originalTarget, CallResultPlan plan)
+    {
+        var result = new List<Instruction>
+        {
+            Instruction.Create(OpCodes.Ldc_I4, originalValue ? 1 : 0),
+        };
+        result.AddRange(arguments.CreateLoadInstructions(method.Module));
+        result.AddRange(callbackEmitter(method.Module));
+        result.AddRange(plan.CreateDestinationInstructions());
+        result.Add(Instruction.Create(OpCodes.Br, originalTarget));
         return result;
     }
 

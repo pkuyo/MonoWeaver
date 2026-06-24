@@ -23,6 +23,13 @@ public static partial class Target
         return false;
     }
 
+    public static bool ConditionObserve(B value)
+    {
+        if (value.CallB() && Ops.CallA())
+            return true;
+        return false;
+    }
+
     public static int Select(bool condition, int value)
     {
         if (condition)

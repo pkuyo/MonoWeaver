@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MonoWeaver.Cecil;
@@ -130,6 +133,74 @@ public sealed class PatternTransformTests
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
+    [Fact]
+    public void RuntimeDelegatesForInvalidModuleNameShareGeneratedAssemblyUntilApply()
+    {
+        var invalidPathChar = Path.GetInvalidPathChars().FirstOrDefault(ch => ch != '\0');
+        if (invalidPathChar == default)
+            return;
+
+        using var module = PatternTestSupport.OpenFixtureModule();
+        module.Name = "Pattern" + invalidPathChar + "Fixtures.dll";
+        module.Assembly.Name.Name = "Pattern" + invalidPathChar + "Fixtures";
+
+        var transformMethod = PatternTestSupport.FixtureMethod(module, "ChainTransform");
+        var observeMethod = PatternTestSupport.FixtureMethod(module, "Observe");
+        var captured = new B();
+        var receiver = new RuntimeDelegateReceiver();
+        var loadedAssemblies = new List<string>();
+        AssemblyLoadEventHandler handler = (_, args) =>
+        {
+            var name = args.LoadedAssembly.GetName().Name;
+            if (name is not null &&
+                name.StartsWith("MonoWeaver.Generated.PatternFixtures.", StringComparison.Ordinal))
+            {
+                loadedAssemblies.Add(name);
+            }
+        };
+
+        AppDomain.CurrentDomain.AssemblyLoad += handler;
+        try
+        {
+            var transform = transformMethod.Match(ChainPattern(PatternDsl.CilExpr)).Single()
+                .Value("hook")
+                .AfterUse()
+                .Transform((Func<B, B>)(value => ReferenceEquals(value, captured) ? captured : value));
+            var observe = observeMethod.Match(ChainPattern(PatternDsl.CilExpr)).Single()
+                .Value("hook")
+                .AfterUse()
+                .Observe((Action<B>)receiver.ObserveB);
+
+            Assert.Empty(loadedAssemblies);
+
+            transform.Apply();
+            Assert.Single(loadedAssemblies);
+
+            observe.Apply();
+            Assert.Single(loadedAssemblies);
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.AssemblyLoad -= handler;
+        }
+
+        var generatedAssemblyName = loadedAssemblies.Single();
+        Assert.Equal(generatedAssemblyName, AssemblyScopeName(SingleRuntimeInvokeReference(transformMethod)));
+        Assert.Equal(generatedAssemblyName, AssemblyScopeName(SingleRuntimeInvokeReference(observeMethod)));
+        Assert.DoesNotContain(module.Types, type =>
+            type.Namespace == "MonoWeaver.Generated" &&
+            type.Name.StartsWith("__CecilDelegateInvokers", StringComparison.Ordinal));
+
+        var loadedAssembly = AppDomain.CurrentDomain.GetAssemblies()
+            .Single(assembly => assembly.GetName().Name == generatedAssemblyName);
+        var invokerType = loadedAssembly.GetType("MonoWeaver.Generated.__CecilDelegateInvokers");
+        Assert.NotNull(invokerType);
+        var invokers = invokerType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.Name.StartsWith("Invoke_", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, invokers.Length);
+    }
+
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
     public void InsertionCallCanStoreResultInExistingLocal(PatternDsl dsl)
@@ -174,6 +245,51 @@ public sealed class PatternTransformTests
             && instruction.Operand is MethodReference { Name: nameof(Ops.FortyTwo) });
         Assert.True(callbackCall.Next?.OpCode.Code is
             Code.Stloc or Code.Stloc_S or Code.Stloc_0 or Code.Stloc_1 or Code.Stloc_2 or Code.Stloc_3);
+        PatternTestSupport.AssertNoVerificationErrors(method);
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void InsertionCallCanStoreResultInCapturedLocal(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "BeforeExpression");
+        var pattern = DualPattern.Value(dsl,
+            () => P.Local<int>(0, "target"),
+            () => P.Local(0, CilType.Int32, "target"));
+        var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.FortyTwo))!);
+
+        var match = method.Match(pattern).Single();
+        MatchedValue target = match.Value("target");
+        match.BeforeEvaluation("target").CallValue(callback).Store(target).Apply();
+
+        var callbackCall = method.Body.Instructions.Single(instruction =>
+            instruction.OpCode.Code == Code.Call
+            && instruction.Operand is MethodReference { Name: nameof(Ops.FortyTwo) });
+        Assert.True(callbackCall.Next?.OpCode.Code is
+            Code.Stloc or Code.Stloc_S or Code.Stloc_0 or Code.Stloc_1 or Code.Stloc_2 or Code.Stloc_3);
+        PatternTestSupport.AssertNoVerificationErrors(method);
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void InsertionCallCanStoreResultInCapturedArgument(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "Select");
+        var pattern = DualPattern.Value(dsl,
+            () => P.Arg<int>(1, "target"),
+            () => P.Arg(1, CilType.Int32, "target"));
+        var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.FortyTwo))!);
+
+        var match = method.Match(pattern).Single();
+        MatchedValue target = match.Value("target");
+        match.BeforeEvaluation("target").CallValue(callback).Store(target).Apply();
+
+        var callbackCall = method.Body.Instructions.Single(instruction =>
+            instruction.OpCode.Code == Code.Call
+            && instruction.Operand is MethodReference { Name: nameof(Ops.FortyTwo) });
+        Assert.True(callbackCall.Next?.OpCode.Code is Code.Starg or Code.Starg_S);
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
@@ -229,6 +345,49 @@ public sealed class PatternTransformTests
         condition.Transform((Func<bool, bool>)(value => invert ? !value : value)).Apply();
 
         Assert.Equal(expectedCallSites, RuntimeInvokeCallCount(method));
+        PatternTestSupport.AssertNoVerificationErrors(method);
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void ConditionObserveVoidCallbackPreservesOriginalBranch(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "ConditionTransform");
+        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Condition("ab");
+        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
+        var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.ObserveBool))!);
+
+        condition.Observe(callback).Apply();
+
+        Assert.Equal(expectedCallSites, method.Body.Instructions.Count(instruction =>
+            instruction.OpCode.Code == Code.Call
+            && instruction.Operand is MethodReference { Name: nameof(Ops.ObserveBool) }));
+        PatternTestSupport.AssertNoVerificationErrors(method);
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void ConditionObserveCanStoreCallbackResultInCapturedTarget(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "ConditionObserve");
+        var match = method.Match(ObserveConditionPattern(dsl)).Single();
+        var condition = match.Condition("gate");
+        var target = match.Value("target");
+        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
+        var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.ObserveConditionB))!);
+
+        condition.Observe(callback, args => args.Capture(target))
+            .Store(target)
+            .Apply();
+
+        var callbackCalls = method.Body.Instructions.Where(instruction =>
+            instruction.OpCode.Code == Code.Call
+            && instruction.Operand is MethodReference { Name: nameof(Ops.ObserveConditionB) }).ToArray();
+        Assert.Equal(expectedCallSites, callbackCalls.Length);
+        Assert.All(callbackCalls, instruction =>
+            Assert.True(instruction.Next?.OpCode.Code is Code.Starg or Code.Starg_S));
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
@@ -303,11 +462,32 @@ public sealed class PatternTransformTests
                 .AndAlso(P.Call(callC).OrElse(P.Call(callD))));
     }
 
+    private static ExpressionPattern ObserveConditionPattern(PatternDsl dsl)
+    {
+        var bType = RuntimeSymbols.Type<B>(assignable: true);
+        var callA = RuntimeSymbols.Method<Ops>(nameof(Ops.CallA));
+        var callB = RuntimeSymbols.Method<B>(nameof(B.CallB));
+        return DualPattern.Condition(dsl,
+            () => P.Mark("gate", P.Arg<B>(0, "target").CallB() && Ops.CallA()),
+            () => P.Mark("gate", P.Arg(0, bType, "target").Call(callB).AndAlso(P.Call(callA))));
+    }
+
     private static int RuntimeInvokeCallCount(MethodDefinition method)
         => method.Body.Instructions.Count(instruction =>
             instruction.OpCode.Code == Code.Call
             && instruction.Operand is MethodReference mf
             && mf.FullName.Contains("__CecilDelegateInvokers"));
+
+    private static MethodReference SingleRuntimeInvokeReference(MethodDefinition method)
+        => method.Body.Instructions
+            .Select(instruction => instruction.Operand)
+            .OfType<MethodReference>()
+            .Single(reference =>
+                reference.Name.StartsWith("Invoke_", StringComparison.Ordinal) &&
+                reference.DeclaringType.FullName.Contains("__CecilDelegateInvokers"));
+
+    private static string AssemblyScopeName(MethodReference reference)
+        => Assert.IsType<AssemblyNameReference>(reference.DeclaringType.Scope).Name;
 
     private sealed class RuntimeDelegateReceiver
     {

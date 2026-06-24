@@ -54,6 +54,8 @@ public sealed class Ops
     public static int IdentityInt(int value) => value;
     public static T Identity<T>(T value) => value;
     public static void ObserveB(B value) { }
+    public static void ObserveBool(bool value) { }
+    public static B ObserveConditionB(bool value, B target) => target;
     public static void ObserveInt(int value) { }
     public static int FortyTwo() => 42;
     public static bool CallA() => throw new NotSupportedException();
