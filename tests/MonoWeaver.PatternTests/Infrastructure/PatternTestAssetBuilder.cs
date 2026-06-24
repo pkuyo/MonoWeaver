@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Policy;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -123,7 +124,7 @@ internal static class PatternTestAssetBuilder
                 hash.AppendData(buffer, 0, read);
         }
 
-        return Convert.ToHexString(hash.GetHashAndReset());
+        return BitConverter.ToString(hash.GetHashAndReset()).Replace("-", "");
 
         void AppendText(string value)
             => hash.AppendData(Encoding.UTF8.GetBytes(value));
@@ -175,8 +176,7 @@ internal static class PatternTestAssetBuilder
         process.StartInfo.RedirectStandardError = true;
         process.StartInfo.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
         process.StartInfo.Environment["MSBUILDDISABLENODEREUSE"] = "1";
-        foreach (var argument in arguments)
-            process.StartInfo.ArgumentList.Add(argument);
+        process.StartInfo.Arguments = string.Join(" ", arguments);
 
         process.Start();
         // Drain both redirected streams concurrently. Reading stdout to completion before
@@ -194,16 +194,42 @@ internal static class PatternTestAssetBuilder
         throw new InvalidOperationException(string.Join(Environment.NewLine,
             $"{description} failed with exit code {process.ExitCode}.",
             "Command:",
-            "  " + process.StartInfo.FileName + " " + string.Join(' ', arguments.Select(QuoteArgument)),
+            "  " + process.StartInfo.FileName + " " + string.Join(" ", arguments.Select(QuoteArgument)),
             "stdout:",
             string.IsNullOrWhiteSpace(stdout) ? "  <empty>" : stdout,
             "stderr:",
             string.IsNullOrWhiteSpace(stderr) ? "  <empty>" : stderr));
     }
 
+
+    public static bool IsPathFullyQualified(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return false;
+        string p = path.Replace('/', '\\');
+
+        if (p.StartsWith(@"\\?\"))
+        {
+            p = p.Substring(4);
+
+            return IsDriveFullyQualified(p);
+        }
+
+        return IsDriveFullyQualified(p);
+    }
+
+    private static bool IsDriveFullyQualified(string p)
+    {
+        return p.Length >= 3
+            && char.IsLetter(p[0])
+            && p[1] == ':'
+            && p[2] == '\\';
+    }
+
+ 
     private static string? ResolveCommand(string command)
     {
-        if (Path.IsPathFullyQualified(command))
+        if (IsPathFullyQualified(command))
             return File.Exists(command) ? command : null;
 
         var path = Environment.GetEnvironmentVariable("PATH");
@@ -212,10 +238,10 @@ internal static class PatternTestAssetBuilder
 
         var extensions = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split(';')
             : new[] { string.Empty };
 
-        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var directory in path.Split(Path.PathSeparator))
         {
             foreach (var extension in extensions)
             {

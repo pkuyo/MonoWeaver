@@ -60,27 +60,44 @@ public static partial class CecilTypeSystem
 
         private static CoreTypeSigs CreateCoreTypeSigs()
         {
-            using var assembly = CreateCoreTypeAssembly();
-            var module = assembly.MainModule;
+            using var module = OpenRuntimeModule(typeof(object));
             return new CoreTypeSigs(
-                Create(module.ImportReference(typeof(object))),
-                Create(module.ImportReference(typeof(void))),
-                Create(module.ImportReference(typeof(string))),
-                Create(module.ImportReference(typeof(Array))),
-                Create(module.ImportReference(typeof(Nullable<>))),
-                Create(module.ImportReference(typeof(ICloneable))),
-                Create(module.ImportReference(typeof(ValueType))),
-                Create(module.ImportReference(typeof(Enum))), 
-                Create(module.ImportReference(typeof(Delegate))),
-                Create(module.ImportReference(typeof(MulticastDelegate))));
+                Create(RequireRuntimeType(module, typeof(object))),
+                Create(RequireRuntimeType(module, typeof(void))),
+                Create(RequireRuntimeType(module, typeof(string))),
+                Create(RequireRuntimeType(module, typeof(Array))),
+                Create(RequireRuntimeType(module, typeof(Nullable<>))),
+                Create(RequireRuntimeType(module, typeof(ICloneable))),
+                Create(RequireRuntimeType(module, typeof(ValueType))),
+                Create(RequireRuntimeType(module, typeof(Enum))), 
+                Create(RequireRuntimeType(module, typeof(Delegate))),
+                Create(RequireRuntimeType(module, typeof(MulticastDelegate))));
         }
 
-        private static AssemblyDefinition CreateCoreTypeAssembly()
+        private static ModuleDefinition OpenRuntimeModule(Type anchor)
         {
-            return AssemblyDefinition.CreateAssembly(
-                new AssemblyNameDefinition("MonoWeaver.TypeSig.CoreTypes", new Version()),
-                "CoreTypes",
-                ModuleKind.Dll);
+            var location = anchor.Assembly.Location;
+            if (string.IsNullOrWhiteSpace(location))
+                throw new NotSupportedException(
+                    $"Cannot locate runtime assembly for '{anchor.FullName}'.");
+
+            return ModuleDefinition.ReadModule(location);
+        }
+
+        private static TypeDefinition RequireRuntimeType(ModuleDefinition module, Type type)
+        {
+            var fullName = type.FullName
+                ?? throw new ArgumentException("Runtime type must have a full name.", nameof(type));
+            return RequireRuntimeType(module, fullName);
+        }
+
+        private static TypeDefinition RequireRuntimeType(ModuleDefinition module, string fullName)
+        {
+            var type = module.GetType(fullName);
+            if (type is null)
+                throw new InvalidOperationException(
+                    $"Runtime type '{fullName}' was not found in module '{module.FileName}'.");
+            return type;
         }
 
         internal static class SystemCollections
@@ -95,13 +112,12 @@ public static partial class CecilTypeSystem
 
             private static SystemCollectionsTypeSigs CreateTypeSigs()
             {
-                using var assembly = CreateCoreTypeAssembly();
-                var module = assembly.MainModule;
+                using var module = OpenRuntimeModule(typeof(global::System.Collections.IEnumerable));
                 return new SystemCollectionsTypeSigs(
-                    Create(module.ImportReference(typeof(global::System.Collections.IEnumerable))),
-                    Create(module.ImportReference(typeof(global::System.Collections.ICollection))),
-                    Create(module.ImportReference(typeof(global::System.Collections.IList))),
-                    Create(module.ImportReference(typeof(global::System.Collections.IStructuralComparable))));
+                    Create(RequireRuntimeType(module, typeof(global::System.Collections.IEnumerable))),
+                    Create(RequireRuntimeType(module, typeof(global::System.Collections.ICollection))),
+                    Create(RequireRuntimeType(module, typeof(global::System.Collections.IList))),
+                    Create(RequireRuntimeType(module, typeof(global::System.Collections.IStructuralComparable))));
             }
         }
 
@@ -117,12 +133,13 @@ public static partial class CecilTypeSystem
 
             private static SystemThreadingTypeSigs CreateTypeSigs()
             {
-                using var assembly = CreateCoreTypeAssembly();
-                var module = assembly.MainModule;
-                var task = module.ImportReference(typeof(global::System.Threading.Tasks.Task));
-                var taskT = module.ImportReference(typeof(global::System.Threading.Tasks.Task<>));
-                var valueTask = CreateValueTaskReference(module, "ValueTask", task.Scope, false);
-                var valueTaskT = CreateValueTaskReference(module, "ValueTask`1", task.Scope, true);
+                using var module = OpenRuntimeModule(typeof(global::System.Threading.Tasks.Task));
+                var task = RequireRuntimeType(module, typeof(global::System.Threading.Tasks.Task));
+                var taskT = RequireRuntimeType(module, typeof(global::System.Threading.Tasks.Task<>));
+                var valueTask = TryGetRuntimeType(module, "System.Threading.Tasks.ValueTask")
+                                ?? CreateValueTaskReference(module, "ValueTask", task.Scope, false);
+                var valueTaskT = TryGetRuntimeType(module, "System.Threading.Tasks.ValueTask`1")
+                                 ?? CreateValueTaskReference(module, "ValueTask`1", task.Scope, true);
 
                 return new SystemThreadingTypeSigs(
                     Create(task),
@@ -130,6 +147,9 @@ public static partial class CecilTypeSystem
                     Create(taskT),
                     Create(valueTaskT));
             }
+
+            private static TypeReference? TryGetRuntimeType(ModuleDefinition module, string fullName)
+                => module.GetType(fullName);
 
             private static TypeReference CreateValueTaskReference(
                 ModuleDefinition module,

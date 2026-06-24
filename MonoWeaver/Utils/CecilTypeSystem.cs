@@ -466,7 +466,7 @@ public static partial class CecilTypeSystem
                 case GenericParameter genericParameter:
                     for (int i = 0; i < genericParameter.Constraints.Count; i++)
                     {
-                        if (!CanAccessType(localType, genericParameter.Constraints[i].ConstraintType, visiting))
+                        if (!CanAccessType(localType, genericParameter.Constraints[i], visiting))
                             return false;
                     }
                     return true;
@@ -552,7 +552,7 @@ public static partial class CecilTypeSystem
             var genericParameter = genericParameters[i];
             for (int j = 0; j < genericParameter.Constraints.Count; j++)
             {
-                var constraintType = TryInflateGenericType(genericParameter.Constraints[j].ConstraintType,
+                var constraintType = TryInflateGenericType(genericParameter.Constraints[j],
                     typeContext, methodContext);
                 if (!CanAccessType(localType, constraintType, new HashSet<TypeSig>()))
                     return false;
@@ -1098,7 +1098,7 @@ public static partial class CecilTypeSystem
 
         foreach (var constraint in gp.Constraints)
         {
-            var constraintType = constraint.ConstraintType.StripType();
+            var constraintType = constraint.StripType();
             //查看约束进一步判别
             if (constraintType is GenericParameter constraintGp)//还是泛型参数则递归
             {
@@ -1190,7 +1190,7 @@ public static partial class CecilTypeSystem
         // 对每个显式约束：where T : C, IFoo 处理，假定T为每一个约束类型进行赋值比较判断
         foreach (var c in fromGp.Constraints)
         {
-            var ct = c.ConstraintType.StripType();
+            var ct = c.StripType();
 
             if (IsAssignableFromCore(to, ct, ilRule, context))
                 return true;
@@ -1382,7 +1382,7 @@ public static partial class CecilTypeSystem
 
         for (int i = 0; i < parameter.Constraints.Count; i++)
         {
-            var constraintType = TryInflateGenericType(parameter.Constraints[i].ConstraintType, typeContext, methodContext).StripType();
+            var constraintType = TryInflateGenericType(parameter.Constraints[i], typeContext, methodContext).StripType();
             if (!CheckTypeConstraints(constraintType, typeContext, methodContext, visiting))
                 return false;
 
