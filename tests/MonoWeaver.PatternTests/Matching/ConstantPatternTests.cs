@@ -14,9 +14,9 @@ public sealed class ConstantPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "IntConstant");
         var pattern = DualPattern.Value(dsl, () => 123, () => P.Constant(123));
 
-        var value = method.Match(pattern).Single().Value();
+        var value = method.Match(pattern).Single();
 
-        Assert.True(value.ProducerInstruction.OpCode.Code is Code.Ldc_I4 or Code.Ldc_I4_S);
+        Assert.True(value.DefinitionInstruction.OpCode.Code is Code.Ldc_I4 or Code.Ldc_I4_S);
     }
 
     [Theory]
@@ -29,7 +29,7 @@ public sealed class ConstantPatternTests
             () => 1234567890123L,
             () => P.Constant(1234567890123L));
 
-        Assert.Equal(Code.Ldc_I8, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldc_I8, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -40,7 +40,7 @@ public sealed class ConstantPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "FloatConstant");
         var pattern = DualPattern.Value(dsl, () => 1.25f, () => P.Constant(1.25f));
 
-        Assert.Equal(Code.Ldc_R4, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldc_R4, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -51,7 +51,7 @@ public sealed class ConstantPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "DoubleConstant");
         var pattern = DualPattern.Value(dsl, () => 2.5d, () => P.Constant(2.5d));
 
-        Assert.Equal(Code.Ldc_R8, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldc_R8, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -64,7 +64,7 @@ public sealed class ConstantPatternTests
             () => "mono-weaver",
             () => P.Constant("mono-weaver"));
 
-        Assert.Equal(Code.Ldstr, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldstr, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -77,7 +77,7 @@ public sealed class ConstantPatternTests
             () => default(object),
             () => P.Null(CilType.Object));
 
-        Assert.Equal(Code.Ldnull, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldnull, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -101,6 +101,6 @@ public sealed class ConstantPatternTests
 
         var match = method.Match(pattern).Single();
 
-        Assert.Equal(Code.Ldc_R8, match.Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldc_R8, match.DefinitionInstruction.OpCode.Code);
     }
 }

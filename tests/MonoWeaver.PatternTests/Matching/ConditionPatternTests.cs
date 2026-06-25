@@ -15,11 +15,11 @@ public sealed class ConditionPatternTests
             () => P.Arg<bool>(0),
             () => P.Arg(0, CilType.Boolean));
 
-        var condition = method.Match(pattern).Single().Condition();
+        var condition = method.Match(pattern).Single();
 
-        Assert.Single(condition.TrueExits);
-        Assert.Single(condition.FalseExits);
-        Assert.NotSame(condition.TrueContinuation, condition.FalseContinuation);
+        Assert.Single(condition.Fragment.TrueExits);
+        Assert.Single(condition.Fragment.FalseExits);
+        Assert.NotSame(condition.Fragment.TrueContinuation, condition.Fragment.FalseContinuation);
     }
 
     [Theory]
@@ -32,10 +32,10 @@ public sealed class ConditionPatternTests
             () => !P.Arg<bool>(0),
             () => !P.Arg(0, CilType.Boolean));
 
-        var condition = method.Match(pattern).Single().Condition();
+        var condition = method.Match(pattern).Single();
 
-        Assert.Single(condition.TrueExits);
-        Assert.Single(condition.FalseExits);
+        Assert.Single(condition.Fragment.TrueExits);
+        Assert.Single(condition.Fragment.FalseExits);
     }
 
     [Theory]
@@ -50,10 +50,10 @@ public sealed class ConditionPatternTests
             () => Ops.CallA() && Ops.CallC(),
             () => P.Call(callA).AndAlso(P.Call(callC)));
 
-        var condition = method.Match(pattern).Single().Condition();
+        var condition = method.Match(pattern).Single();
 
-        Assert.Single(condition.TrueExits);
-        Assert.Equal(2, condition.FalseExits.Count);
+        Assert.Single(condition.Fragment.TrueExits);
+        Assert.Equal(2, condition.Fragment.FalseExits.Count);
         Assert.True(condition.CanRewrite, condition.RewriteFailureReason);
     }
 
@@ -69,10 +69,10 @@ public sealed class ConditionPatternTests
             () => Ops.CallA() || Ops.CallC(),
             () => P.Call(callA).OrElse(P.Call(callC)));
 
-        var condition = method.Match(pattern).Single().Condition();
+        var condition = method.Match(pattern).Single();
 
-        Assert.Equal(2, condition.TrueExits.Count);
-        Assert.Single(condition.FalseExits);
+        Assert.Equal(2, condition.Fragment.TrueExits.Count);
+        Assert.Single(condition.Fragment.FalseExits);
         Assert.True(condition.CanRewrite, condition.RewriteFailureReason);
     }
 
@@ -86,10 +86,10 @@ public sealed class ConditionPatternTests
             () => P.Arg<bool>(0) && P.Arg<bool>(1),
             () => P.Arg(0, CilType.Boolean).AndAlso(P.Arg(1, CilType.Boolean)));
 
-        var condition = method.Match(pattern).Single().Condition();
+        var condition = method.Match(pattern).Single();
 
-        Assert.Single(condition.TrueExits);
-        Assert.Single(condition.FalseExits);
+        Assert.Single(condition.Fragment.TrueExits);
+        Assert.Single(condition.Fragment.FalseExits);
     }
 
     [Theory]
@@ -102,10 +102,10 @@ public sealed class ConditionPatternTests
             () => P.Arg<bool>(0) || P.Arg<bool>(1),
             () => P.Arg(0, CilType.Boolean).OrElse(P.Arg(1, CilType.Boolean)));
 
-        var condition = method.Match(pattern).Single().Condition();
+        var condition = method.Match(pattern).Single();
 
-        Assert.Single(condition.TrueExits);
-        Assert.Single(condition.FalseExits);
+        Assert.Single(condition.Fragment.TrueExits);
+        Assert.Single(condition.Fragment.FalseExits);
     }
 
     [Theory]
@@ -127,10 +127,10 @@ public sealed class ConditionPatternTests
                 .AndAlso(P.Call(callC).OrElse(P.Call(callD))));
 
         var match = method.Match(pattern).Single();
-        var ab = match.Condition("ab");
+        var ab = match.Captures.Condition("ab");
 
-        Assert.Single(ab.TrueExits);
-        Assert.Equal(2, ab.FalseExits.Count);
+        Assert.Single(ab.Fragment.TrueExits);
+        Assert.Equal(2, ab.Fragment.FalseExits.Count);
         Assert.True(ab.CanRewrite, ab.RewriteFailureReason);
     }
 
@@ -198,9 +198,9 @@ public sealed class ConditionPatternTests
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, methodName);
         var condition = method.Match(DualPattern.Condition(dsl, expression, cilExpr))
-            .Single().Condition();
+            .Single();
 
-        Assert.Single(condition.TrueExits);
-        Assert.Single(condition.FalseExits);
+        Assert.Single(condition.Fragment.TrueExits);
+        Assert.Single(condition.Fragment.FalseExits);
     }
 }

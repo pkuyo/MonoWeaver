@@ -22,7 +22,7 @@ internal static class Program
         typeof(Program).GetMethod(nameof(Probe), BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new MissingMethodException(typeof(Program).FullName, nameof(Probe));
 
-    private static readonly ExpressionPattern Pattern =
+    private static readonly ValuePattern Pattern =
         Cil.Value(P.Arg(0, CilType.Int32) + 1);
 
     private static int _sink;
@@ -158,8 +158,7 @@ internal static class Program
     {
         method.Match(Pattern)
             .Single()
-            .BeforeEvaluation()
-            .CallVoid(callback);
+            .Before(callback);
 
         return method.Body.Instructions.Count;
     }

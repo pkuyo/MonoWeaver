@@ -120,21 +120,21 @@ sum.AfterUse()
 
 ```csharp
 match.Before()
-     .CallVoid(touch, args => args.Arg(0))
+     .Call(touch, args => args.Arg(0))
      .Apply();
 
 match.Before()
-     .CallValue(factory)
+     .Call(factory)
      .StoreLocal(method.Body.Variables[0])
      .Apply();
 
 match.Before()
-     .CallValue(factory)
+     .Call(factory)
      .Store(match.Value("target")) // 自动写回捕获到的 local 或 argument
      .Apply();
 ```
 
-这些 API 会先返回 `CallResultPlan`。在调用 `Apply()` 或 `ApplyWithVerify(...)` 之前不会修改 IL；`CallValue` 这类 non-void call 需要先选择 `LeaveOnStack`、`Discard`、`StoreLocal`、`StoreArgument` 或 `Store(capture)` 作为返回值去向。
+这些 API 会先返回 `CallResultPlan`。在调用 `Apply()` 或 `ApplyWithVerify(...)` 之前不会修改 IL；`Call` 的 non-void call 需要先选择 `LeaveOnStack`、`Discard`、`StoreLocal`、`StoreArgument` 或 `Store(capture)` 作为返回值去向。
 
 ## 4. 条件重写
 
@@ -219,7 +219,7 @@ MonoWeaver 会处理该条件分支的 true/false 出口，而不是假设存在
 
 ## 6. Delegate 回调
 
-`Transform`、`Observe`、`CallVoid` 和 `CallValue` 都同时支持三类 callback：
+`Transform`、`Observe` 和 `Call` 都同时支持三类 callback：
 
 - `MethodReference`：适合已经在 Cecil metadata 中拿到的 static 方法引用。
 - `CilMethodSpec`：适合 metadata-native DSL，不需要把目标程序集加载进 CLR。
@@ -231,7 +231,7 @@ sum.AfterUse()
    .Apply();
 
 match.Before()
-     .CallVoid((Action)Hooks.Touch)
+     .Call((Action)Hooks.Touch)
      .Apply();
 ```
 

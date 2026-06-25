@@ -22,7 +22,7 @@ verifier.ThrowIfHasErrors();
 
 ## 与 transform plan 配合
 
-`Transform`、`Observe`、`CallVoid` 和 `CallValue` 返回的 `CallResultPlan` 可以直接使用 `ApplyWithVerify`：
+`Transform`、`Observe` 和 `Call` 返回的 `CallResultPlan` 可以直接使用 `ApplyWithVerify`：
 
 ```csharp
 match.Value("sum")

@@ -16,7 +16,7 @@ public sealed class UnaryPatternTests
             () => -P.Arg<int>(0),
             () => -P.Arg(0, CilType.Int32));
 
-        Assert.Equal(Code.Neg, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Neg, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -29,7 +29,7 @@ public sealed class UnaryPatternTests
             () => ~P.Arg<int>(0),
             () => ~P.Arg(0, CilType.Int32));
 
-        Assert.Equal(Code.Not, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Not, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -42,7 +42,7 @@ public sealed class UnaryPatternTests
             () => !P.Arg<bool>(0),
             () => !P.Arg(0, CilType.Boolean));
 
-        Assert.Equal(Code.Ceq, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ceq, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -55,7 +55,7 @@ public sealed class UnaryPatternTests
             () => (long)P.Arg<int>(0),
             () => P.Arg(0, CilType.Int32).ConvertTo(CilType.Int64));
 
-        Assert.Equal(Code.Conv_I8, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Conv_I8, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -68,7 +68,7 @@ public sealed class UnaryPatternTests
             () => checked((byte)P.Arg<int>(0)),
             () => P.Arg(0, CilType.Int32).ConvertTo(CilType.Byte, @checked: true));
 
-        var code = method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code;
+        var code = method.Match(pattern).Single().DefinitionInstruction.OpCode.Code;
         Assert.True(code is Code.Conv_Ovf_U1 or Code.Conv_Ovf_U1_Un);
     }
 
@@ -108,7 +108,7 @@ public sealed class UnaryPatternTests
             () => (string)P.Arg<object>(0),
             () => P.Arg(0, CilType.Object.Assignable()).ConvertTo(CilType.String));
 
-        Assert.Equal(Code.Castclass, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Castclass, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -121,7 +121,7 @@ public sealed class UnaryPatternTests
             () => P.Arg<object>(0) as string,
             () => P.Arg(0, CilType.Object.Assignable()).As(CilType.String));
 
-        Assert.Equal(Code.Isinst, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Isinst, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -134,7 +134,7 @@ public sealed class UnaryPatternTests
             () => (object)P.Arg<int>(0),
             () => P.Arg(0, CilType.Int32).ConvertTo(CilType.Object));
 
-        Assert.Equal(Code.Box, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Box, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -147,7 +147,7 @@ public sealed class UnaryPatternTests
             () => (int)P.Arg<object>(0),
             () => P.Arg(0, CilType.Object.Assignable()).ConvertTo(CilType.Int32));
 
-        Assert.Equal(Code.Unbox_Any, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Unbox_Any, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]

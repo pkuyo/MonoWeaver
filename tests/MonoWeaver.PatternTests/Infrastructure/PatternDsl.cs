@@ -25,18 +25,18 @@ public static class PatternDslData
 
 internal static class DualPattern
 {
-    public static ExpressionPattern Value<T>(PatternDsl dsl,
+    public static ValuePattern<T> Value<T>(PatternDsl dsl,
         Expression<Func<T>> expression,
         Func<CilExpr> cilExpr,
         PatternOptions? options = null)
         => dsl switch
         {
             PatternDsl.Expression => Cil.Value(expression, options),
-            PatternDsl.CilExpr => Cil.Value(cilExpr(), options),
+            PatternDsl.CilExpr => ValuePatternFromCilExpr<T>(cilExpr(), options),
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
 
-    public static ExpressionPattern Effect(PatternDsl dsl,
+    public static EffectPattern Effect(PatternDsl dsl,
         Expression<Action> expression,
         Func<CilExpr> cilExpr,
         PatternOptions? options = null)
@@ -47,7 +47,7 @@ internal static class DualPattern
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
 
-    public static ExpressionPattern Discard(PatternDsl dsl,
+    public static EffectPattern Discard(PatternDsl dsl,
         Expression<Action> expression,
         Func<CilExpr> cilExpr,
         PatternOptions? options = null)
@@ -58,7 +58,7 @@ internal static class DualPattern
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
 
-    public static ExpressionPattern Condition(PatternDsl dsl,
+    public static ConditionPattern Condition(PatternDsl dsl,
         Expression<Func<bool>> expression,
         Func<CilExpr> cilExpr,
         PatternOptions? options = null)
@@ -68,4 +68,13 @@ internal static class DualPattern
             PatternDsl.CilExpr => Cil.Condition(cilExpr(), options),
             _ => throw new ArgumentOutOfRangeException(nameof(dsl)),
         };
+
+    private static ValuePattern<T> ValuePatternFromCilExpr<T>(CilExpr expression, PatternOptions? options)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        if (expression.ResultType.IsVoid)
+            throw new ArgumentException("A value pattern must have a non-Void result type.", nameof(expression));
+        return new ValuePattern<T>(expression.Node, options);
+    }
 }

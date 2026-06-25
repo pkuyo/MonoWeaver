@@ -16,12 +16,32 @@ internal enum InsertPosition
 }
 
 /// <summary>
-/// 只依赖 Mono.Cecil 的 matcher/transform 入口。不会创建 delegate、动态方法、
-/// AssemblyLoadContext 或加载目标程序集，适用于 net48 宿主和离线程序集改写。
+/// Pattern match 的统一改写 API
 /// </summary>
 public static partial class PatternTransformExtensions
 {
-    public static CilMatchSet Match(this MethodDefinition method, ExpressionPattern pattern)
+    public static CilMatchSet<ValueMatch<T>> Match<T>(this MethodDefinition method, ValuePattern<T> pattern)
+    {
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        return PatternMatcher.For(method).Find(pattern);
+    }
+
+    public static CilMatchSet<ValueMatch> Match(this MethodDefinition method, ValuePattern pattern)
+    {
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        return PatternMatcher.For(method).Find(pattern);
+    }
+
+    public static CilMatchSet<EffectMatch> Match(this MethodDefinition method, EffectPattern pattern)
+    {
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        return PatternMatcher.For(method).Find(pattern);
+    }
+
+    public static CilMatchSet<ConditionMatch> Match(this MethodDefinition method, ConditionPattern pattern)
     {
         if (method is null)
             throw new ArgumentNullException(nameof(method));
@@ -30,1498 +50,706 @@ public static partial class PatternTransformExtensions
 
     public static PatternMatcher For(this MethodDefinition method)
     {
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
         return PatternMatcher.For(method);
     }
 
-    /// <summary>在该 value occurrence 的具体 use 后创建 transform site。</summary>
-    public static MatchedValueSite AfterUse(this MatchedValue value)
-    {
-        if (value is null)
-            throw new ArgumentNullException(nameof(value));
-        return new MatchedValueSite(value.Method, value, value.AfterUseInstruction,
-            InsertPosition.After);
-    }
+    // ---------------------------- common before hooks ----------------------------
 
-    /// <summary>在该 value 的原始 producer 后创建 transform site。</summary>
-    public static MatchedValueSite AfterProducer(this MatchedValue value)
-    {
-        if (value is null)
-            throw new ArgumentNullException(nameof(value));
-        return new MatchedValueSite(value.Method, value, value.ProducerInstruction,
-            InsertPosition.After);
-    }
+    /// <summary>在 value occurrence 开始求值前调用一个 void callback。</summary>
+    public static RewritePlan Before(this ValueTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
+        => CreateVoidCallBefore(Require(target), target.FirstInstruction, callback, arguments,
+            "Value.Before");
 
-    /// <summary>在该 value expression 开始求值前创建普通 insertion site。</summary>
-    public static MatchedEffectSite BeforeEvaluation(this MatchedValue value)
+    public static RewritePlan Before(this ValueTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
     {
-        if (value is null)
-            throw new ArgumentNullException(nameof(value));
-        return new MatchedEffectSite(value.Method, value.FirstInstruction, InsertPosition.Before);
-    }
-
-    /// <summary>在 condition fragment 开始求值前创建普通 insertion site。</summary>
-    public static MatchedEffectSite BeforeEvaluation(this MatchedCondition condition)
-    {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        return new MatchedEffectSite(condition.Method, condition.EntryInstruction,
-            InsertPosition.Before);
-    }
-
-    /// <summary>使用 static MethodReference 改写 condition；callback 首参数接收原 Boolean。</summary>
-    public static CallResultPlan Transform(this MatchedCondition condition, MethodReference callback,
-        Action<CallArguments>? additionalArguments = null)
-        => Transform(condition, condition.Method, callback, additionalArguments);
-    
-
-    public static CallResultPlan Transform(this MatchedCondition condition, CilMethodSpec callback,
-        Action<CallArguments>? additionalArguments = null)
-    {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
+        target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        return condition.Transform(callback.Resolve(condition.Method.Module), additionalArguments);
+        return target.Before(callback.Resolve(target.Method.Module), arguments);
     }
 
-    public static CallResultPlan Transform<TDelegate>(this MatchedCondition condition, TDelegate callback,
-        Action<CallArguments>? additionalArguments = null)
+    public static RewritePlan Before<TDelegate>(this ValueTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
+        => CreateVoidDelegateCall(Require(target), target.FirstInstruction,
+            InsertPosition.Before, callback, arguments, "Value.Before");
+
+    public static RewritePlan Before(this ValueTarget target, Action callback)
+        => target.Before<Action>(callback);
+
+    /// <summary>在 value 求值完成后、原 consumer 使用它之前调用一个 void callback。</summary>
+    public static RewritePlan After(this ValueTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
     {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        var call = CecilDelegateEmission.Prepare(condition.Method, callback);
-        return Transform(condition, condition.Method, call, additionalArguments);
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        RequireReturn(callback, requireVoid: true, "Value.After");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Value.After");
+        var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
+        callArguments.ValidateForSite(site, "Value.After");
+        return new RewritePlan(site, callArguments, callback.ReturnType,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0);
     }
+
+    public static RewritePlan After(this ValueTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.After(callback.Resolve(target.Method.Module), arguments);
+    }
+
+    public static RewritePlan After<TDelegate>(this ValueTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
+        => CreateVoidDelegateCall(Require(target), target.ResultInstruction,
+            InsertPosition.After, callback, arguments, "Value.After");
+
+    public static RewritePlan After(this ValueTarget target, Action callback)
+        => target.After<Action>(callback);
+
+    /// <summary>在 effect 开始前调用一个 void callback。</summary>
+    public static RewritePlan Before(this EffectTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
+        => CreateVoidCallBefore(Require(target), target.FirstInstruction, callback, arguments,
+            "Effect.Before");
+
+    public static RewritePlan Before(this EffectTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Before(callback.Resolve(target.Method.Module), arguments);
+    }
+
+    public static RewritePlan Before<TDelegate>(this EffectTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
+        => CreateVoidDelegateCall(Require(target), target.FirstInstruction,
+            InsertPosition.Before, callback, arguments, "Effect.Before");
+
+    public static RewritePlan Before(this EffectTarget target, Action callback)
+        => target.Before<Action>(callback);
+
+    /// <summary>在 condition 开始求值前调用一个 void callback。</summary>
+    public static RewritePlan Before(this ConditionTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
+        => CreateVoidCallBefore(Require(target), target.FirstInstruction, callback, arguments,
+            "Condition.Before");
+
+    public static RewritePlan Before(this ConditionTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Before(callback.Resolve(target.Method.Module), arguments);
+    }
+
+    public static RewritePlan Before<TDelegate>(this ConditionTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
+        => CreateVoidDelegateCall(Require(target), target.FirstInstruction,
+            InsertPosition.Before, callback, arguments, "Condition.Before");
+
+    public static RewritePlan Before(this ConditionTarget target, Action callback)
+        => target.Before<Action>(callback);
+
+    // ---------------------------- value ----------------------------
 
     /// <summary>
-    /// 获取分支结果但不修改，可存其他值到栈上（不可把返回值直接留栈）
+    /// callback 的第一个参数接收当前 occurrence 的原值，返回值成为新的 stack value。
     /// </summary>
-    public static CallResultPlan Observe(this MatchedCondition condition, MethodReference callback,
-        Action<CallArguments>? additionalArguments = null)
-        => Observe(condition, condition.Method, callback, additionalArguments);
-
-    public static CallResultPlan Observe(this MatchedCondition condition, CilMethodSpec callback,
+    public static RewritePlan Transform(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? additionalArguments = null)
     {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
+        target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        return condition.Observe(callback.Resolve(condition.Method.Module), additionalArguments);
+        RequireReturn(callback, requireVoid: false, "Value.Transform");
+        RequireAssignable(callback.ReturnType, target.ValueType, actualIsNull: false,
+            "transform return value", "matched value type");
+
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
+            additionalArguments, target.ValueType, implicitValueIsNull: false, "Value.Transform");
+        var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
+        arguments.ValidateForSite(site, "Value.Transform");
+        return new RewritePlan(site, arguments, callback.ReturnType,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0);
     }
 
-    public static CallResultPlan Observe<TDelegate>(this MatchedCondition condition, TDelegate callback,
+    public static RewritePlan Transform(this ValueTarget target, CilMethodSpec callback,
+        Action<CallArguments>? additionalArguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Transform(callback.Resolve(target.Method.Module), additionalArguments);
+    }
+
+    public static RewritePlan Transform<TDelegate>(this ValueTarget target, TDelegate callback,
         Action<CallArguments>? additionalArguments = null)
         where TDelegate : Delegate
     {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        var call = CecilDelegateEmission.Prepare(condition.Method, callback);
-        return Observe(condition, condition.Method, call, additionalArguments);
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        return CreateValueTransform(target, call, additionalArguments, "Value.Transform");
     }
 
-    /// <summary>在 root 或指定 value capture 的具体 use 后创建 value site。</summary>
-    public static MatchedValueSite AfterUse(this CilMatch match, string? captureName = null)
-        => RequireValue(match, captureName).AfterUse();
+    public static RewritePlan Transform<T>(this ValueMatch<T> target, Func<T, T> callback)
+        => ((ValueTarget)Require(target)).Transform<Func<T, T>>(callback);
 
-    /// <summary>在 root 或指定 value capture 的原始 producer 后创建 value site。</summary>
-    public static MatchedValueSite AfterProducer(this CilMatch match, string? captureName = null)
-        => RequireValue(match, captureName).AfterProducer();
-
-    /// <summary>在 root 或指定 value capture 开始求值前创建普通 insertion site。</summary>
-    public static MatchedEffectSite BeforeEvaluation(this CilMatch match, string? captureName = null)
-        => RequireValue(match, captureName).BeforeEvaluation();
-
-    public static MatchedEffectSite Before(this CilMatch match)
+    /// <summary>把原值复制给 void callback，原值继续交给原 consumer。</summary>
+    public static RewritePlan Observe(this ValueTarget target, MethodReference callback,
+        Action<CallArguments>? additionalArguments = null)
     {
-        if (match is null)
-            throw new ArgumentNullException(nameof(match));
-        return new MatchedEffectSite(match.Method, match.FirstInstruction, InsertPosition.Before);
-    }
-
-    public static MatchedEffectSite After(this CilMatch match)
-    {
-        if (match is null)
-            throw new ArgumentNullException(nameof(match));
-        if (match.Pattern.Kind == PatternKind.Condition)
-        {
-            throw new InvalidOperationException(
-                "A branch-based condition has no single after-site. Use TransformCondition instead.");
-        }
-        return new MatchedEffectSite(match.Method, match.LastInstruction, InsertPosition.After);
-    }
-
-    public static CallResultPlan Transform(MatchedCondition condition, MethodDefinition method,
-       MethodReference callback, Action<CallArguments>? additionalArguments)
-    {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        if (method is null)
-            throw new ArgumentNullException(nameof(method));
+        target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        if (!ReferenceEquals(condition.Method, method))
-            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
-        RequireReturn(callback.ReturnType, false, "Condition Transform");
-        if (callback.ReturnType.MetadataType != MetadataType.Boolean)
-            throw new ArgumentException("A condition transform callback must return System.Boolean.", nameof(callback));
-        if (!condition.CanRewrite)
-            throw new NotSupportedException(condition.RewriteFailureReason
-                                            ?? "The captured condition cannot be safely rewritten.");
+        RequireReturn(callback, requireVoid: true, "Value.Observe");
 
-        var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
-            method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Transform");
-        return new CallResultPlan(method, () => ApplyConditionTransform(condition, method,
-            arguments, CreateMethodCallEmitter(callback), extraStackSlots: 0));
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
+            additionalArguments, target.ValueType, implicitValueIsNull: false, "Value.Observe");
+        var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
+        arguments.ValidateForSite(site, "Value.Observe");
+        return new RewritePlan(site, arguments, callback.ReturnType,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0, emitDupBeforeArguments: true);
     }
 
-    public static CallResultPlan Transform(MatchedCondition condition, MethodDefinition method,
-        CecilDelegateCall callback, Action<CallArguments>? additionalArguments)
+    public static RewritePlan Observe(this ValueTarget target, CilMethodSpec callback,
+        Action<CallArguments>? additionalArguments = null)
     {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        if (method is null)
-            throw new ArgumentNullException(nameof(method));
+        target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        if (!ReferenceEquals(condition.Method, method))
-            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
-        RequireReturn(callback.ReturnType, false, "Condition Transform");
-        if (callback.ReturnType.MetadataType != MetadataType.Boolean)
-            throw new ArgumentException("A condition transform callback must return System.Boolean.", nameof(callback));
-        if (!condition.CanRewrite)
-            throw new NotSupportedException(condition.RewriteFailureReason
-                                            ?? "The captured condition cannot be safely rewritten.");
-
-        var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
-            method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Transform");
-        return new CallResultPlan(method, () => ApplyConditionTransform(condition, method,
-            arguments, _ => callback.CreateInstructions(), callback.ExtraStackSlots),
-            callback.PrepareForApply);
+        return target.Observe(callback.Resolve(target.Method.Module), additionalArguments);
     }
 
-    public static CallResultPlan Observe(MatchedCondition condition, MethodDefinition method,
-        MethodReference callback, Action<CallArguments>? additionalArguments)
-    {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        if (method is null)
-            throw new ArgumentNullException(nameof(method));
-        if (callback is null)
-            throw new ArgumentNullException(nameof(callback));
-        if (!ReferenceEquals(condition.Method, method))
-            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
-        if (!condition.CanRewrite)
-            throw new NotSupportedException(condition.RewriteFailureReason
-                                            ?? "The captured condition cannot be safely observed.");
-
-        var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
-            method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Observe");
-        return new CallResultPlan(method, arguments, callback.ReturnType,
-            p => ApplyConditionObserve(condition, method, arguments,
-                CreateMethodCallEmitter(callback), extraStackSlots: 0, p),
-            allowLeaveOnStack: false);
-    }
-
-    public static CallResultPlan Observe(MatchedCondition condition, MethodDefinition method,
-        CecilDelegateCall callback, Action<CallArguments>? additionalArguments)
-    {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        if (method is null)
-            throw new ArgumentNullException(nameof(method));
-        if (callback is null)
-            throw new ArgumentNullException(nameof(callback));
-        if (!ReferenceEquals(condition.Method, method))
-            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
-        if (!condition.CanRewrite)
-            throw new NotSupportedException(condition.RewriteFailureReason
-                                            ?? "The captured condition cannot be safely observed.");
-
-        var arguments = CallArguments.ConfigAndValidateCall(method, callback, additionalArguments,
-            method.Module.TypeSystem.Boolean, implicitValueIsNull: false, "Condition Observe");
-        return new CallResultPlan(method, arguments, callback.ReturnType,
-            p => ApplyConditionObserve(condition, method, arguments,
-                _ => callback.CreateInstructions(), callback.ExtraStackSlots, p),
-            allowLeaveOnStack: false,
-            callback.PrepareForApply);
-    }
-
-}
-
-/// <summary>普通 Cecil insertion point；不假定 stack 上已经有 matched value。</summary>
-public sealed class MatchedEffectSite
-{
-    private readonly EmissionSite _site;
-
-    internal MatchedEffectSite(MethodDefinition method, Instruction anchor, InsertPosition position)
-        => _site = new EmissionSite(method, anchor, position);
-
-    /// <summary>调用返回 void 的 static method。</summary>
-    public CallResultPlan CallVoid(MethodReference callback, Action<CallArguments>? arguments = null)
-    {
-        PatternTransformExtensions.RequireReturn(callback, true, "CallVoid");
-        var callArguments = CallArguments.ConfigAndValidateCall(_site.Method, callback, arguments,
-            implicitValueType: null, implicitValueIsNull: false, "CallVoid");
-        return new CallResultPlan(_site, callArguments, callback.ReturnType,
-            PatternTransformExtensions.CreateMethodCallEmitter(callback), extraStackSlots: 0);
-    }
-
-    public CallResultPlan CallVoid(CilMethodSpec callback, Action<CallArguments>? arguments = null)
-    {
-        if (callback is null)
-            throw new ArgumentNullException(nameof(callback));
-        return CallVoid(callback.Resolve(_site.Method.Module), arguments);
-    }
-
-    public CallResultPlan CallVoid<TDelegate>(TDelegate callback, Action<CallArguments>? arguments = null)
+    public static RewritePlan Observe<TDelegate>(this ValueTarget target, TDelegate callback,
+        Action<CallArguments>? additionalArguments = null)
         where TDelegate : Delegate
     {
-        var call = CecilDelegateEmission.Prepare(_site.Method, callback);
-        PatternTransformExtensions.RequireReturn(call.ReturnType, true, "CallVoid");
-        var callArguments = CallArguments.ConfigAndValidateCall(_site.Method, call, arguments,
-            implicitValueType: null, implicitValueIsNull: false, "CallVoid");
-        return new CallResultPlan(_site, callArguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots,
-            beforeApply: call.PrepareForApply);
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        return CreateValueObserve(target, call, additionalArguments, "Value.Observe");
     }
 
-    /// <summary>
-    /// 创建 non-void call plan。直到调用 LeaveOnStack/Discard/StoreLocal/StoreArgument 之前，
-    /// method body 不会被修改。
-    /// </summary>
-    public CallResultPlan CallValue(MethodReference callback, Action<CallArguments>? arguments = null)
+    public static RewritePlan Observe<T>(this ValueMatch<T> target, Action<T> callback)
+        => ((ValueTarget)Require(target)).Observe<Action<T>>(callback);
+
+    /// <summary>用一段自包含、最终留下一个值的 IL 替换当前 value occurrence。</summary>
+    public static RewritePlan Replace(this ValueTarget target, Instruction first,
+        params Instruction[] remaining)
+        => Replace(target, JoinReplacement(first, remaining));
+
+    public static RewritePlan Replace(this ValueTarget target, IEnumerable<Instruction> replacement,
+        int extraStackSlots = 0)
     {
-        PatternTransformExtensions.RequireReturn(callback, false, "CallValue");
-        var callArguments = CallArguments.ConfigAndValidateCall(_site.Method, callback, arguments,
-            implicitValueType: null, implicitValueIsNull: false, "CallValue");
-        return new CallResultPlan(_site, callArguments, callback.ReturnType,
-            PatternTransformExtensions.CreateMethodCallEmitter(callback), extraStackSlots: 0);
+        if (replacement is null)
+            throw new ArgumentNullException(nameof(replacement));
+        return Replace(target, _ => replacement, extraStackSlots);
     }
 
-    public CallResultPlan CallValue(CilMethodSpec callback, Action<CallArguments>? arguments = null)
+    public static RewritePlan Replace(this ValueTarget target,
+        Func<ModuleDefinition, IEnumerable<Instruction>> replacement, int extraStackSlots = 0)
     {
-        if (callback is null)
-            throw new ArgumentNullException(nameof(callback));
-        return CallValue(callback.Resolve(_site.Method.Module), arguments);
-    }
-
-    public CallResultPlan CallValue<TDelegate>(TDelegate callback, Action<CallArguments>? arguments = null)
-        where TDelegate : Delegate
-    {
-        var call = CecilDelegateEmission.Prepare(_site.Method, callback);
-        PatternTransformExtensions.RequireReturn(call.ReturnType, false, "CallValue");
-        var callArguments = CallArguments.ConfigAndValidateCall(_site.Method, call, arguments,
-            implicitValueType: null, implicitValueIsNull: false, "CallValue");
-        return new CallResultPlan(_site, callArguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots,
-            beforeApply: call.PrepareForApply);
-    }
-}
-
-
-
-public sealed class MatchedValueSite
-{
-    private readonly EmissionSite _site;
-    private readonly MatchedValue _value;
-
-    internal MatchedValueSite(MethodDefinition method, MatchedValue value,
-        Instruction anchor, InsertPosition position)
-    {
-        _value = value ?? throw new ArgumentNullException(nameof(value));
-        if (!ReferenceEquals(_value.Method, method))
-            throw new ArgumentException("The matched value does not belong to the target method.", nameof(value));
-        _site = new EmissionSite(method, anchor, position);
-    }
-
-
-    public CallResultPlan Transform(MethodReference callback, Action<CallArguments>? additionalArguments = null)
-    {
-        var valueType = RequireValueType();
-        PatternTransformExtensions.RequireReturn(callback, false, "Transform");
-        PatternTransformExtensions.RequireAssignable(callback.ReturnType, valueType, actualIsNull: false,
-            "Transform return value", "matched value type");
-        var arguments = CallArguments.ConfigAndValidateCall(_value.Method, callback, additionalArguments,
-            valueType, false, "Transform");
-        return new CallResultPlan(_site, arguments, callback.ReturnType,
-            PatternTransformExtensions.CreateMethodCallEmitter(callback), extraStackSlots: 0);
-    }
-
-    public CallResultPlan Transform(CilMethodSpec callback, Action<CallArguments>? additionalArguments = null)
-    {
-        if (callback is null)
-            throw new ArgumentNullException(nameof(callback));
-        return Transform(callback.Resolve(_site.Method.Module), additionalArguments);
-    }
-
-    public CallResultPlan Transform<TDelegate>(TDelegate callback, Action<CallArguments>? additionalArguments = null)
-        where TDelegate : Delegate
-    {
-        var valueType = RequireValueType();
-        var call = CecilDelegateEmission.Prepare(_site.Method, callback);
-        PatternTransformExtensions.RequireReturn(call.ReturnType, false, "Transform");
-        PatternTransformExtensions.RequireAssignable(call.ReturnType, valueType, actualIsNull: false,
-            "Transform return value", "matched value type");
-        var arguments = CallArguments.ConfigAndValidateCall(_value.Method, call, additionalArguments,
-            valueType, false, "Transform");
-        return new CallResultPlan(_site, arguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots,
-            beforeApply: call.PrepareForApply);
-    }
-
-    /// <summary>
-    /// duplicate matched value 后调用返回 void 的 static callback；原值继续交给原 consumer。
-    /// </summary>
-    public CallResultPlan Observe(MethodReference callback, Action<CallArguments>? additionalArguments = null)
-    {
-        var valueType = RequireValueType();
-        PatternTransformExtensions.RequireReturn(callback, true, "Observe");
-        var arguments = CallArguments.ConfigAndValidateCall(_value.Method, callback, additionalArguments,
-            valueType, false, "Observe");
-        return new CallResultPlan(_site, arguments, callback.ReturnType,
-            PatternTransformExtensions.CreateMethodCallEmitter(callback), extraStackSlots: 0, true);
-    }
-
-    public CallResultPlan Observe(CilMethodSpec callback, Action<CallArguments>? additionalArguments = null)
-    {
-        if (callback is null)
-            throw new ArgumentNullException(nameof(callback));
-        return Observe(callback.Resolve(_site.Method.Module), additionalArguments);
-    }
-
-    public CallResultPlan Observe<TDelegate>(TDelegate callback, Action<CallArguments>? additionalArguments = null)
-        where TDelegate : Delegate
-    {
-        var valueType = RequireValueType();
-        var call = CecilDelegateEmission.Prepare(_site.Method, callback);
-        PatternTransformExtensions.RequireReturn(call.ReturnType, true, "Observe");
-        var arguments = CallArguments.ConfigAndValidateCall(_value.Method, call, additionalArguments,
-            valueType, false, "Observe");
-        return new CallResultPlan(_site, arguments, call.ReturnType,
-            _ => call.CreateInstructions(), call.ExtraStackSlots, true,
-            beforeApply: call.PrepareForApply);
-    }
-
-    private TypeReference RequireValueType()
-        => _value.ValueType
-           ?? throw new InvalidOperationException("The matched occurrence is an effect and has no stack value type.");
-}
-
-public sealed class CallResultPlan
-{
-    private record MehtodBodySnapShot(Instruction[] Instructions, OpCode[] OpCodes, object?[] Operands,
-            VariableDefinition[] Variables, ExceptionHandler[] Handlers, int MaxStack);
-
-    private enum DestBehaivor
-    {
-        None,
-        LeaveOnStack,
-        Discard,
-        StoreLocal,
-        StoreArgument
-    }
-
-    private readonly MethodDefinition _method;
-    private readonly EmissionSite? _site;
-    private readonly CallArguments? _arguments;
-    private readonly TypeReference? _returnType;
-    private readonly Func<ModuleDefinition, IReadOnlyList<Instruction>>? _callbackEmitter;
-    private readonly Action? _customApply;
-    private readonly Action<CallResultPlan>? _customApplyWithPlan;
-    private readonly Action? _beforeApply;
-    private readonly int _extraStackSlots;
-    private readonly bool _emitDupBeforeArguments;
-    private readonly bool _allowLeaveOnStack = true;
-
-    private DestBehaivor _destination = DestBehaivor.LeaveOnStack;
-    private VariableDefinition? _destinationLocal;
-    private ParameterDefinition? _destinationArgument;
-
-    private bool _applied;
-
-    internal CallResultPlan(EmissionSite site, CallArguments arguments, TypeReference returnType,
-        Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter, int extraStackSlots,
-        bool emitDupBeforeArguments = false, Action? beforeApply = null)
-    {
-        _site = site ?? throw new ArgumentNullException(nameof(site));
-        _method = site.Method;
-        _arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
-        _returnType = returnType ?? throw new ArgumentNullException(nameof(returnType));
-        _callbackEmitter = callbackEmitter ?? throw new ArgumentNullException(nameof(callbackEmitter));
+        target = Require(target);
+        if (replacement is null)
+            throw new ArgumentNullException(nameof(replacement));
         if (extraStackSlots < 0)
             throw new ArgumentOutOfRangeException(nameof(extraStackSlots));
-        _extraStackSlots = extraStackSlots;
-        _emitDupBeforeArguments = emitDupBeforeArguments;
-        _beforeApply = beforeApply;
+
+        return new RewritePlan(target.Method, () => ApplyLinearReplacement(target.Method,
+            target.FirstInstruction, target.ResultInstruction, replacement,
+            expectedFinalDepth: 1, extraStackSlots, "Value.Replace"));
     }
 
-    internal CallResultPlan(MethodDefinition method, Action customApply, Action? beforeApply = null)
+    /// <summary>跳过原 value expression，改为调用一个无隐式原值参数的 producer callback。</summary>
+    public static RewritePlan Replace(this ValueTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
     {
-        _method = method ?? throw new ArgumentNullException(nameof(method));
-        _customApply = customApply ?? throw new ArgumentNullException(nameof(customApply));
-        _beforeApply = beforeApply;
-    }
-
-    internal CallResultPlan(MethodDefinition method, CallArguments arguments, TypeReference returnType,
-        Action<CallResultPlan> customApply, bool allowLeaveOnStack, Action? beforeApply = null)
-    {
-        _method = method ?? throw new ArgumentNullException(nameof(method));
-        _arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
-        _returnType = returnType ?? throw new ArgumentNullException(nameof(returnType));
-        _customApplyWithPlan = customApply ?? throw new ArgumentNullException(nameof(customApply));
-        _allowLeaveOnStack = allowLeaveOnStack;
-        _beforeApply = beforeApply;
-        if (!_allowLeaveOnStack && !_returnType.IsVoid())
-            _destination = DestBehaivor.Discard;
-    }
-
-    public TypeReference? ReturnType => _returnType;
-
-    public CallResultPlan LeaveOnStack()
-    {
-        RequireValueResult();
-        if (!_allowLeaveOnStack)
-            throw new InvalidOperationException("This plan cannot leave a result on the stack.");
-        _destination = DestBehaivor.LeaveOnStack;
-        _destinationLocal = null;
-        _destinationArgument = null;
-        return this;
-    }
-
-    public CallResultPlan Discard()
-    {
-        RequireValueResult();
-        _destination = DestBehaivor.Discard;
-        _destinationLocal = null;
-        _destinationArgument = null;
-        return this;
-    }
-
-
-    public CallResultPlan StoreLocal(int variableIndex)
-    {
-        if (_method.Body.Variables.Count <= variableIndex || variableIndex < 0)
-            throw new ArgumentOutOfRangeException(nameof(variableIndex));
-        return StoreLocal(_method.Body.Variables[variableIndex]);
-    }
-
-    public CallResultPlan StoreLocal(VariableDefinition variable)
-    {
-        if (variable is null)
-            throw new ArgumentNullException(nameof(variable));
-        RequireValueResult();
-        if (!_method.Body.Variables.Contains(variable))
-            throw new ArgumentException("The local does not belong to the target method body.", nameof(variable));
-        PatternTransformExtensions.RequireAssignable(_returnType!, variable.VariableType, actualIsNull: false,
-            "call return value", "local type");
-        _destination = DestBehaivor.StoreLocal;
-        _destinationLocal = variable;
-        _destinationArgument = null;
-        return this;
-    }
-
-    public CallResultPlan StoreArgument(int parameterIndex)
-    {
-        if (_method.Parameters.Count <= parameterIndex || parameterIndex < 0)
-            throw new ArgumentOutOfRangeException(nameof(parameterIndex));
-        return StoreArgument(_method.Parameters[parameterIndex]);
-    }
-
-    public CallResultPlan StoreArgument(ParameterDefinition parameter)
-    {
-        if (parameter is null)
-            throw new ArgumentNullException(nameof(parameter));
-        RequireValueResult();
-        if (!_method.Parameters.Contains(parameter))
-            throw new ArgumentException("The parameter does not belong to the target method.", nameof(parameter));
-        PatternTransformExtensions.RequireAssignable(_returnType!, parameter.ParameterType, actualIsNull: false,
-            "call return value", "argument type");
-        _destination = DestBehaivor.StoreArgument;
-        _destinationLocal = null;
-        _destinationArgument = parameter;
-        return this;
-    }
-
-    public CallResultPlan Store(MatchedValue capture)
-    {
-        if (capture is null)
-            throw new ArgumentNullException(nameof(capture));
-        if (!ReferenceEquals(capture.Method, _method))
-            throw new ArgumentException("The captured value belongs to a different method.", nameof(capture));
-
-        return capture switch
-        {
-            MatchedLocal local => StoreLocal(local.Variable),
-            MatchedArgument { IsThis: false, Parameter: { } parameter } => StoreArgument(parameter),
-            MatchedArgument { IsThis: true } => throw new InvalidOperationException(
-                "Cannot store into the captured this argument."),
-            _ => throw new InvalidOperationException("The captured value is not a writable local or argument."),
-        };
-    }
-
-    public CallResultPlan Apply()
-    {
-        if (_applied)
-            throw new InvalidOperationException("This call plan was already applied.");
-        var label = _method.Body.Instructions.FirstOrDefault(i => 
-            i.OpCode.FlowControl is FlowControl.Cond_Branch or FlowControl.Branch && 
-            CecilHelper.IsMonoModILLabel(i.Operand.GetType()));
-
-        try
-        {
-            if (label != null)
-            {
-                CecilHelper.BranchLabelsToTarget(CecilHelper.GetContext(label));
-            }
-            if (_customApply is not null)
-            {
-                _beforeApply?.Invoke();
-                _customApply();
-                _applied = true;
-                return this;
-            }
-
-            if (_customApplyWithPlan is not null)
-            {
-                _beforeApply?.Invoke();
-                _customApplyWithPlan(this);
-                _applied = true;
-                return this;
-            }
-
-            //防止越界
-            _beforeApply?.Invoke();
-
-            _method.Body.MaxStackSize = checked(_method.Body.MaxStackSize + AdditionalStackSlots);
-            BranchModifier.ExpandShortBranches(_method.Body);
-            var processor = _method.Body.GetILProcessor();
-
-            var current = _site!.Anchor;
-            Instruction? firstInserted = null;
-            Emit(processor, ref current, ref firstInserted);
-
-            _applied = true;
-            return this;
-        }
-        finally
-        {
-            if (label != null)
-            {
-                CecilHelper.BranchTargetsToLabels(CecilHelper.GetContext(label));
-            }
-        }
-    }
-
-    public CallResultPlan ApplyWithVerify(VerifyOptions options)
-    {
-        var snapshot = CaptureBody(_method.Body);
-        try
-        {
-            Apply();
-            _method.Verify(options).ThrowIfHasErrors();
-            return this;
-        }
-        catch
-        {
-            RestoreBody(_method.Body, snapshot);
-            _arguments?.ResetStores();
-            _applied = false;
-            throw;
-        }
-    }
-
-    internal int AdditionalStackSlots
-    {
-        get
-        {
-            var slots = _extraStackSlots + (_arguments?.ArgPlans.Count ?? 0);
-            if (_emitDupBeforeArguments)
-                slots++;
-            if (_site is not null && _returnType is not null && !_returnType.IsVoid()
-                && !_emitDupBeforeArguments)
-                slots = Math.Max(slots, 1);
-            return slots;
-        }
-    }
-
-    internal void Emit(ILProcessor processor, ref Instruction current, ref Instruction? firstInserted)
-    {
-        if (_site is null || _arguments is null || _callbackEmitter is null)
-            throw new InvalidOperationException("This call plan does not target a single emission site.");
-
-        foreach (var argument in _arguments.ArgPlans)
-            argument.EmitStore(processor, _site.Position);
-
-        if (_emitDupBeforeArguments)
-            _site.Insert(processor, Instruction.Create(OpCodes.Dup), ref current, ref firstInserted);
-
-        foreach (var argument in _arguments.ArgPlans)
-            argument.EmitLoad(_site, processor, ref current, ref firstInserted);
-
-        foreach (var instruction in _callbackEmitter(_site.Method.Module))
-            _site.Insert(processor, instruction, ref current, ref firstInserted);
-
-        foreach (var instruction in CreateDestinationInstructions())
-            _site.Insert(processor, instruction, ref current, ref firstInserted);
-    }
-
-    internal IReadOnlyList<Instruction> CreateDestinationInstructions()
-    {
-        if (_returnType is null || _returnType.IsVoid())
-            return Array.Empty<Instruction>();
-
-        return _destination switch
-        {
-            DestBehaivor.LeaveOnStack => Array.Empty<Instruction>(),
-            DestBehaivor.Discard => new[] { Instruction.Create(OpCodes.Pop) },
-            DestBehaivor.StoreLocal => new[] { Instruction.Create(OpCodes.Stloc, _destinationLocal!) },
-            DestBehaivor.StoreArgument => new[] { Instruction.Create(OpCodes.Starg, _destinationArgument!) },
-            _ => throw new InvalidOperationException("Unknown call result destination."),
-        };
-    }
-
-    private void RequireValueResult()
-    {
-        if (_customApply is not null && _customApplyWithPlan is null)
-            throw new InvalidOperationException("This plan does not expose a single stack result.");
-        if (_returnType is null || _returnType.IsVoid())
-            throw new InvalidOperationException("This call does not return a value.");
-    }
-
-    private static MehtodBodySnapShot CaptureBody(MethodBody body)
-    {
-        var instructions = body.Instructions.ToArray();
-        return new MehtodBodySnapShot(instructions,
-            instructions.Select(static instruction => instruction.OpCode).ToArray(),
-            instructions.Select(static instruction => instruction.Operand).ToArray(),
-            body.Variables.ToArray(),
-            body.ExceptionHandlers.Select(CloneHandler).ToArray(),
-            body.MaxStackSize);
-    }
-
-    private static void RestoreBody(MethodBody body, MehtodBodySnapShot snapshot)
-    {
-        body.Instructions.Clear();
-        for (var i = 0; i < snapshot.Instructions.Length; i++)
-        {
-            var instruction = snapshot.Instructions[i];
-            instruction.OpCode = snapshot.OpCodes[i];
-            instruction.Operand = snapshot.Operands[i];
-            body.Instructions.Add(instruction);
-        }
-
-        body.Variables.Clear();
-        foreach (var variable in snapshot.Variables)
-            body.Variables.Add(variable);
-
-        body.ExceptionHandlers.Clear();
-        foreach (var handler in snapshot.Handlers)
-            body.ExceptionHandlers.Add(CloneHandler(handler));
-
-        body.MaxStackSize = snapshot.MaxStack;
-    }
-
-    private static ExceptionHandler CloneHandler(ExceptionHandler handler)
-    {
-        return new ExceptionHandler(handler.HandlerType)
-        {
-            TryStart = handler.TryStart,
-            TryEnd = handler.TryEnd,
-            HandlerStart = handler.HandlerStart,
-            HandlerEnd = handler.HandlerEnd,
-            FilterStart = handler.FilterStart,
-            CatchType = handler.CatchType,
-        };
-
-    }
-}
-/// <summary>
-/// non-void call 的待提交结果。选择 destination 前不修改 IL；每个 plan 只能提交一次。
-/// </summary>
-/// <summary>描述 static MethodReference 调用前需要显式加载的参数。</summary>
-public sealed class CallArguments
-{
-    public static CallArguments ConfigAndValidateCall(MethodDefinition target, MethodReference callback,
-      Action<CallArguments>? configure, TypeReference? implicitValueType,
-      bool implicitValueIsNull, string operation = "Call")
-    {
+        target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        if (callback.HasThis)
-            throw new ArgumentException($"{operation} currently accepts only static MethodReference callbacks.", nameof(callback));
-        if (callback.Name is ".ctor" or ".cctor")
-            throw new ArgumentException($"{operation} cannot call a constructor.", nameof(callback));
-        if (callback.CallingConvention == MethodCallingConvention.VarArg)
-            throw new NotSupportedException("VarArg callback methods are not supported.");
-        if (callback is not GenericInstanceMethod && callback.GenericParameters.Count != 0)
-            throw new ArgumentException("Open generic callback methods are not supported. Supply a GenericInstanceMethod.", nameof(callback));
+        RequireReturn(callback, requireVoid: false, "Value.Replace");
+        RequireAssignable(callback.ReturnType, target.ValueType, actualIsNull: false,
+            "replacement return value", "matched value type");
 
-        if (callback.ContainsGenericParameter)
-            throw new ArgumentException("Callback signatures containing unbound generic parameters are not supported.", nameof(callback));
-
-        return ConfigAndValidateCall(target,
-            callback.Parameters.Select(static parameter => parameter.ParameterType).ToArray(),
-            configure, implicitValueType, implicitValueIsNull, operation);
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Value.Replace");
+        callArguments.ValidateForReplacement(target.FirstInstruction,
+            target.ResultInstruction, "Value.Replace");
+        return CreateCallbackReplacement(target.Method, target.FirstInstruction,
+            target.ResultInstruction, callArguments,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0,
+            expectedFinalDepth: 1, "Value.Replace");
     }
 
-    internal static CallArguments ConfigAndValidateCall(MethodDefinition target, CecilDelegateCall callback,
-      Action<CallArguments>? configure, TypeReference? implicitValueType,
-      bool implicitValueIsNull, string operation = "Call")
+    public static RewritePlan Replace(this ValueTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
     {
-        if (target is null)
-            throw new ArgumentNullException(nameof(target));
+        target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        if (!target.HasBody)
-            throw new ArgumentException("The target method has no IL body.", nameof(target));
-        return ConfigAndValidateCall(target, callback.ParameterTypes, configure,
-            implicitValueType, implicitValueIsNull, operation);
+        return target.Replace(callback.Resolve(target.Method.Module), arguments);
     }
 
-    private static CallArguments ConfigAndValidateCall(MethodDefinition target,
-        IReadOnlyList<TypeReference> parameterTypes, Action<CallArguments>? configure,
-        TypeReference? implicitValueType, bool implicitValueIsNull, string operation)
+    public static RewritePlan Replace<TDelegate>(this ValueTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
     {
-        var arguments = new CallArguments(target);
-        configure?.Invoke(arguments);
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        RequireReturn(call.ReturnType, requireVoid: false, "Value.Replace");
+        RequireAssignable(call.ReturnType, target.ValueType, actualIsNull: false,
+            "replacement return value", "matched value type");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, call, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Value.Replace");
+        callArguments.ValidateForReplacement(target.FirstInstruction,
+            target.ResultInstruction, "Value.Replace");
+        return CreateCallbackReplacement(target.Method, target.FirstInstruction,
+            target.ResultInstruction, callArguments,
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            expectedFinalDepth: 1, "Value.Replace", call.PrepareForApply);
+    }
 
-        var implicitCount = implicitValueType is null ? 0 : 1;
-        var suppliedCount = implicitCount + arguments.ArgPlans.Count;
-        if (parameterTypes.Count != suppliedCount)
+    public static RewritePlan Replace<T>(this ValueMatch<T> target, Func<T> callback)
+        => ((ValueTarget)Require(target)).Replace<Func<T>>(callback);
+
+    // ---------------------------- effect ----------------------------
+
+    /// <summary>在完整 effect 执行完之后调用一个 void callback。</summary>
+    public static RewritePlan After(this EffectTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        RequireReturn(callback, requireVoid: true, "Effect.After");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Effect.After");
+        var site = new EmissionSite(target.Method, target.LastInstruction, InsertPosition.After);
+        callArguments.ValidateForSite(site, "Effect.After");
+        return new RewritePlan(site, callArguments, callback.ReturnType,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0);
+    }
+
+    public static RewritePlan After(this EffectTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.After(callback.Resolve(target.Method.Module), arguments);
+    }
+
+    public static RewritePlan After<TDelegate>(this EffectTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
+        => CreateVoidDelegateCall(Require(target), target.LastInstruction,
+            InsertPosition.After, callback, arguments, "Effect.After");
+
+    public static RewritePlan After(this EffectTarget target, Action callback)
+        => target.After<Action>(callback);
+
+    /// <summary>用一段自包含、最终不留下 stack value 的 IL 替换整个 effect。</summary>
+    public static RewritePlan Replace(this EffectTarget target, Instruction first,
+        params Instruction[] remaining)
+        => Replace(target, JoinReplacement(first, remaining));
+
+    public static RewritePlan Replace(this EffectTarget target, IEnumerable<Instruction> replacement,
+        int extraStackSlots = 0)
+    {
+        if (replacement is null)
+            throw new ArgumentNullException(nameof(replacement));
+        return Replace(target, _ => replacement, extraStackSlots);
+    }
+
+    public static RewritePlan Replace(this EffectTarget target,
+        Func<ModuleDefinition, IEnumerable<Instruction>> replacement, int extraStackSlots = 0)
+    {
+        target = Require(target);
+        if (replacement is null)
+            throw new ArgumentNullException(nameof(replacement));
+        if (extraStackSlots < 0)
+            throw new ArgumentOutOfRangeException(nameof(extraStackSlots));
+
+        return new RewritePlan(target.Method, () => ApplyLinearReplacement(target.Method,
+            target.FirstInstruction, target.LastInstruction, replacement,
+            expectedFinalDepth: 0, extraStackSlots, "Effect.Replace"));
+    }
+
+    /// <summary>跳过原 effect，改为调用一个 void callback。</summary>
+    public static RewritePlan Replace(this EffectTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        RequireReturn(callback, requireVoid: true, "Effect.Replace");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Effect.Replace");
+        callArguments.ValidateForReplacement(target.FirstInstruction,
+            target.LastInstruction, "Effect.Replace");
+        return CreateCallbackReplacement(target.Method, target.FirstInstruction,
+            target.LastInstruction, callArguments,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0,
+            expectedFinalDepth: 0, "Effect.Replace");
+    }
+
+    public static RewritePlan Replace(this EffectTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Replace(callback.Resolve(target.Method.Module), arguments);
+    }
+
+    public static RewritePlan Replace<TDelegate>(this EffectTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
+    {
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        RequireReturn(call.ReturnType, requireVoid: true, "Effect.Replace");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, call, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Effect.Replace");
+        callArguments.ValidateForReplacement(target.FirstInstruction,
+            target.LastInstruction, "Effect.Replace");
+        return CreateCallbackReplacement(target.Method, target.FirstInstruction,
+            target.LastInstruction, callArguments,
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            expectedFinalDepth: 0, "Effect.Replace", call.PrepareForApply);
+    }
+
+    public static RewritePlan Replace(this EffectTarget target, Action callback)
+        => target.Replace<Action>(callback);
+
+    /// <summary>删除 effect。为保持所有 incoming target 有效，内部会留下一个 nop anchor。</summary>
+    public static RewritePlan Remove(this EffectTarget target)
+    {
+        target = Require(target);
+        return new RewritePlan(target.Method, () => ApplyLinearReplacement(target.Method,
+            target.FirstInstruction, target.LastInstruction,
+            _ => Array.Empty<Instruction>(), expectedFinalDepth: 0, extraStackSlots: 0,
+            "Effect.Remove", allowEmptyReplacement: true));
+    }
+
+    // ---------------------------- condition ----------------------------
+
+    /// <summary>callback 接收原逻辑结果并返回新的 Boolean decision。</summary>
+    public static RewritePlan Transform(this ConditionTarget target, MethodReference callback,
+        Action<CallArguments>? additionalArguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        RequireBooleanReturn(callback.ReturnType, "Condition.Transform");
+        RequireConditionRewrite(target, "transform");
+
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
+            additionalArguments, target.Method.Module.TypeSystem.Boolean,
+            implicitValueIsNull: false, "Condition.Transform");
+        arguments.ValidateForConditionExits(target, "Condition.Transform");
+        return new RewritePlan(target.Method, () =>
         {
-            throw new ArgumentException(
-                $"{operation} callback expects {parameterTypes.Count} parameters, but the site supplies {suppliedCount}.");
-        }
+            arguments.ValidateForConditionExits(target, "Condition.Transform");
+            arguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
+            ApplyConditionTransform(target, arguments,
+                CreateMethodCallEmitter(callback), extraStackSlots: 0);
+        }, arguments: arguments);
+    }
 
-        var parameterOffset = 0;
-        if (implicitValueType is not null)
+    public static RewritePlan Transform(this ConditionTarget target, CilMethodSpec callback,
+        Action<CallArguments>? additionalArguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Transform(callback.Resolve(target.Method.Module), additionalArguments);
+    }
+
+    public static RewritePlan Transform<TDelegate>(this ConditionTarget target, TDelegate callback,
+        Action<CallArguments>? additionalArguments = null)
+        where TDelegate : Delegate
+    {
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        RequireBooleanReturn(call.ReturnType, "Condition.Transform");
+        RequireConditionRewrite(target, "transform");
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, call,
+            additionalArguments,
+            target.Method.Module.TypeSystem.Boolean, implicitValueIsNull: false,
+            "Condition.Transform");
+        arguments.ValidateForConditionExits(target, "Condition.Transform");
+        return new RewritePlan(target.Method, () =>
         {
-            PatternTransformExtensions.RequireAssignable(implicitValueType, parameterTypes[0], implicitValueIsNull,
-                "matched value", "callback parameter 0");
-            parameterOffset = 1;
-        }
+            arguments.ValidateForConditionExits(target, "Condition.Transform");
+            arguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
+            ApplyConditionTransform(target, arguments,
+                _ => call.CreateInstructions(), call.ExtraStackSlots);
+        }, call.PrepareForApply, arguments);
+    }
 
-        for (var i = 0; i < arguments.ArgPlans.Count; i++)
+    public static RewritePlan Transform(this ConditionTarget target, Func<bool, bool> callback)
+        => Require(target).Transform<Func<bool, bool>>(callback);
+
+    /// <summary>把原逻辑结果传给 void callback，不改变 true/false continuation。</summary>
+    public static RewritePlan Observe(this ConditionTarget target, MethodReference callback,
+        Action<CallArguments>? additionalArguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        RequireReturn(callback, requireVoid: true, "Condition.Observe");
+        RequireConditionRewrite(target, "observe");
+
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
+            additionalArguments, target.Method.Module.TypeSystem.Boolean,
+            implicitValueIsNull: false, "Condition.Observe");
+        arguments.ValidateForConditionExits(target, "Condition.Observe");
+        return new RewritePlan(target.Method, () =>
         {
-            var source = arguments.ArgPlans[i];
-            PatternTransformExtensions.RequireAssignable(source.ArgType, parameterTypes[i + parameterOffset], source.IsNull,
-                $"argument source {i}", $"callback parameter {i + parameterOffset}");
-        }
-
-        return arguments;
+            arguments.ValidateForConditionExits(target, "Condition.Observe");
+            arguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
+            ApplyConditionObserve(target, arguments,
+                CreateMethodCallEmitter(callback), extraStackSlots: 0);
+        }, arguments: arguments);
     }
 
-    private readonly MethodDefinition _target;
-    private readonly List<IArgumenPlan> _argPlans = new();
-
-    internal CallArguments(MethodDefinition target)
-        => _target = target ?? throw new ArgumentNullException(nameof(target));
-
-    internal IReadOnlyList<IArgumenPlan> ArgPlans => _argPlans;
-
-    internal void ResetStores()
+    public static RewritePlan Observe(this ConditionTarget target, CilMethodSpec callback,
+        Action<CallArguments>? additionalArguments = null)
     {
-        foreach (var plan in _argPlans)
-            plan.ResetStore();
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Observe(callback.Resolve(target.Method.Module), additionalArguments);
     }
 
-    internal IReadOnlyList<Instruction> CreateLoadInstructions(ModuleDefinition module)
+    public static RewritePlan Observe<TDelegate>(this ConditionTarget target, TDelegate callback,
+        Action<CallArguments>? additionalArguments = null)
+        where TDelegate : Delegate
     {
-        var instructions = new List<Instruction>();
-        foreach (var plan in _argPlans)
-            instructions.AddRange(plan.CreateLoad(module));
-        return instructions;
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        RequireReturn(call.ReturnType, requireVoid: true, "Condition.Observe");
+        RequireConditionRewrite(target, "observe");
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, call,
+            additionalArguments,
+            target.Method.Module.TypeSystem.Boolean, implicitValueIsNull: false,
+            "Condition.Observe");
+        arguments.ValidateForConditionExits(target, "Condition.Observe");
+        return new RewritePlan(target.Method, () =>
+        {
+            arguments.ValidateForConditionExits(target, "Condition.Observe");
+            arguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
+            ApplyConditionObserve(target, arguments,
+                _ => call.CreateInstructions(), call.ExtraStackSlots);
+        }, call.PrepareForApply, arguments);
     }
 
-    public CallArguments This()
-    {
-        if (!_target.HasThis)
-            throw new InvalidOperationException("The target method has no instance argument.");
-
-        TypeReference thisType = _target.DeclaringType;
-
-        if (thisType is null)
-            throw new InvalidOperationException("method declaring type is null");
-
-        if (thisType.IsValueType)
-            thisType = new ByReferenceType(_target.DeclaringType);
-
-        _argPlans.Add(new ArgumenPlan(thisType, isNull: false,
-            static _ => new[] { Instruction.Create(OpCodes.Ldarg_0) }));
-        return this;
-    }
-
-
-    public CallArguments Capture(MatchedValue value)
-    {
-        if (!ReferenceEquals(value.Method, _target))
-            throw new ArgumentException("The captured argument belongs to a different method.", nameof(value));
-        _argPlans.Add(new CapturedArgumentPlan(value));
-        return this;
-
-    }
-
-
-    /// <summary>显式参数 index，不包含 this。</summary>
-    public CallArguments Arg(int parameterIndex)
-    {
-        if (parameterIndex < 0 || parameterIndex >= _target.Parameters.Count)
-            throw new ArgumentOutOfRangeException(nameof(parameterIndex));
-        return Arg(_target.Parameters[parameterIndex]);
-    }
-
-    public CallArguments Arg(ParameterDefinition parameter)
-    {
-        if (parameter is null)
-            throw new ArgumentNullException(nameof(parameter));
-        if (!_target.Parameters.Contains(parameter))
-            throw new ArgumentException("The parameter does not belong to the target method.", nameof(parameter));
-
-        _argPlans.Add(new ArgumenPlan(parameter.ParameterType, isNull: false,
-            _ => new[] { Instruction.Create(OpCodes.Ldarg, parameter) }));
-        return this;
-    }
-
-    public CallArguments Arg(MatchedArgument argument)
-    {
-        if (argument is null)
-            throw new ArgumentNullException(nameof(argument));
-        if (!ReferenceEquals(argument.Method, _target))
-            throw new ArgumentException("The captured argument belongs to a different method.", nameof(argument));
-        return argument.IsThis
-            ? This()
-            : Arg(argument.Parameter
-                  ?? throw new InvalidOperationException("The captured parameter could not be resolved."));
-    }
-
-    public CallArguments Local(VariableDefinition variable)
-    {
-        if (variable is null)
-            throw new ArgumentNullException(nameof(variable));
-        if (!_target.Body.Variables.Contains(variable))
-            throw new ArgumentException("The local does not belong to the target method body.", nameof(variable));
-
-        _argPlans.Add(new ArgumenPlan(variable.VariableType, isNull: false,
-            _ => new[] { Instruction.Create(OpCodes.Ldloc, variable) }));
-        return this;
-    }
-
-    public CallArguments Local(MatchedLocal local)
-    {
-        if (local is null)
-            throw new ArgumentNullException(nameof(local));
-        if (!ReferenceEquals(local.Method, _target))
-            throw new ArgumentException("The captured local belongs to a different method.", nameof(local));
-        return Local(local.Variable);
-    }
-
-    public CallArguments Null(TypeReference? nominalType = null)
-    {
-        var type = nominalType is null ? _target.Module.TypeSystem.Object : Import(nominalType);
-        _argPlans.Add(new ArgumenPlan(type, isNull: true,
-            static _ => new[] { Instruction.Create(OpCodes.Ldnull) }));
-        return this;
-    }
-
-    public CallArguments Null(CilTypeSpec? nominalType = null)
-        => Null(nominalType?.Resolve(_target.Module));
-    
-
-    public CallArguments Constant(bool value)
-        => AddConstant(_target.Module.TypeSystem.Boolean, () => Instruction.Create(OpCodes.Ldc_I4, value ? 1 : 0));
-    public CallArguments Constant(byte value)
-        => AddConstant(_target.Module.TypeSystem.Byte, () => Instruction.Create(OpCodes.Ldc_I4, value));
-    public CallArguments Constant(sbyte value)
-        => AddConstant(_target.Module.TypeSystem.SByte, () => Instruction.Create(OpCodes.Ldc_I4, value));
-    public CallArguments Constant(short value)
-        => AddConstant(_target.Module.TypeSystem.Int16, () => Instruction.Create(OpCodes.Ldc_I4, value));
-    public CallArguments Constant(ushort value)
-        => AddConstant(_target.Module.TypeSystem.UInt16, () => Instruction.Create(OpCodes.Ldc_I4, value));
-    public CallArguments Constant(int value)
-        => AddConstant(_target.Module.TypeSystem.Int32, () => Instruction.Create(OpCodes.Ldc_I4, value));
-    public CallArguments Constant(uint value)
-        => AddConstant(_target.Module.TypeSystem.UInt32, () => Instruction.Create(OpCodes.Ldc_I4, unchecked((int)value)));
-    public CallArguments Constant(long value)
-        => AddConstant(_target.Module.TypeSystem.Int64, () => Instruction.Create(OpCodes.Ldc_I8, value));
-    public CallArguments Constant(ulong value)
-        => AddConstant(_target.Module.TypeSystem.UInt64, () => Instruction.Create(OpCodes.Ldc_I8, unchecked((long)value)));
-    public CallArguments Constant(float value)
-        => AddConstant(_target.Module.TypeSystem.Single, () => Instruction.Create(OpCodes.Ldc_R4, value));
-    public CallArguments Constant(double value)
-        => AddConstant(_target.Module.TypeSystem.Double, () => Instruction.Create(OpCodes.Ldc_R8, value));
-    public CallArguments Constant(char value)
-        => AddConstant(_target.Module.TypeSystem.Char, () => Instruction.Create(OpCodes.Ldc_I4, value));
-    public CallArguments Constant(string value)
-    {
-        if (value is null)
-            throw new ArgumentNullException(nameof(value));
-        return AddConstant(_target.Module.TypeSystem.String, () => Instruction.Create(OpCodes.Ldstr, value));
-    }
+    public static RewritePlan Observe(this ConditionTarget target, Action<bool> callback)
+        => Require(target).Observe<Action<bool>>(callback);
 
     /// <summary>
-    /// 为 enum/小整数等显式声明 nominal parameter type；value 仍按 int32 压栈。
+    /// 跳过原 condition fragment，用一段自包含、最终留下一个 Boolean 的 IL 决定原 true/false continuation。
     /// </summary>
-    public CallArguments ConstantI4(int value, TypeReference nominalType)
+    public static RewritePlan Replace(this ConditionTarget target, Instruction first,
+        params Instruction[] remaining)
+        => Replace(target, JoinReplacement(first, remaining));
+
+    public static RewritePlan Replace(this ConditionTarget target, IEnumerable<Instruction> replacement,
+        int extraStackSlots = 0)
     {
-        if (nominalType is null)
-            throw new ArgumentNullException(nameof(nominalType));
-        return AddConstant(Import(nominalType), () => Instruction.Create(OpCodes.Ldc_I4, value));
+        if (replacement is null)
+            throw new ArgumentNullException(nameof(replacement));
+        return Replace(target, _ => replacement, extraStackSlots);
     }
 
-    public CallArguments ConstantI4(int value, CilTypeSpec nominalType)
+    public static RewritePlan Replace(this ConditionTarget target,
+        Func<ModuleDefinition, IEnumerable<Instruction>> replacement, int extraStackSlots = 0)
     {
-        if (nominalType is null)
-            throw new ArgumentNullException(nameof(nominalType));
-        return ConstantI4(value, nominalType.Resolve(_target.Module));
+        target = Require(target);
+        if (replacement is null)
+            throw new ArgumentNullException(nameof(replacement));
+        if (extraStackSlots < 0)
+            throw new ArgumentOutOfRangeException(nameof(extraStackSlots));
+        RequireConditionRewrite(target, "replace");
+        return new RewritePlan(target.Method, () => ApplyConditionReplacement(target,
+            replacement, extraStackSlots));
     }
 
-    private CallArguments AddConstant(TypeReference type, Func<Instruction> factory)
+    /// <summary>跳过原 condition，改为调用一个无原值参数、返回 Boolean 的 predicate。</summary>
+    public static RewritePlan Replace(this ConditionTarget target, MethodReference callback,
+        Action<CallArguments>? arguments = null)
     {
-        _argPlans.Add(new ArgumenPlan(type, isNull: false,
-            _ => new[] { factory() }));
-        return this;
-    }
-
-    private TypeReference Import(TypeReference type)
-        => ReferenceEquals(type.Module, _target.Module) ? type : _target.Module.ImportReference(type);
-}
-
-
-internal sealed class EmissionSite
-{
-    public EmissionSite(MethodDefinition method, Instruction anchor, InsertPosition position)
-    {
-        Method = method ?? throw new ArgumentNullException(nameof(method));
-        Anchor = anchor ?? throw new ArgumentNullException(nameof(anchor));
-        Position = position;
-    }
-
-    public MethodDefinition Method { get; }
-    public Instruction Anchor { get; }
-    public InsertPosition Position { get; }
-
-    internal void Insert(ILProcessor processor, Instruction instruction,
-        ref Instruction current, ref Instruction? firstInserted)
-    {
-        if (Position == InsertPosition.After)
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        RequireBooleanReturn(callback.ReturnType, "Condition.Replace");
+        RequireConditionRewrite(target, "replace");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Condition.Replace");
+        callArguments.ValidateForConditionReplacement(target, "Condition.Replace");
+        return new RewritePlan(target.Method, () =>
         {
-            processor.InsertAfter(current, instruction);
-            current = instruction;
-            firstInserted ??= instruction;
-            return;
-        }
+            callArguments.ValidateForConditionReplacement(target, "Condition.Replace");
+            callArguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
+            ApplyConditionReplacement(target,
+                module => callArguments.CreateLoadInstructions(module)
+                    .Concat(CreateMethodCallEmitter(callback)(module)), extraStackSlots: 0);
+        }, arguments: callArguments);
+    }
 
-        if (firstInserted is null)
+    public static RewritePlan Replace(this ConditionTarget target, CilMethodSpec callback,
+        Action<CallArguments>? arguments = null)
+    {
+        target = Require(target);
+        if (callback is null)
+            throw new ArgumentNullException(nameof(callback));
+        return target.Replace(callback.Resolve(target.Method.Module), arguments);
+    }
+
+    public static RewritePlan Replace<TDelegate>(this ConditionTarget target, TDelegate callback,
+        Action<CallArguments>? arguments = null)
+        where TDelegate : Delegate
+    {
+        target = Require(target);
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        RequireBooleanReturn(call.ReturnType, "Condition.Replace");
+        RequireConditionRewrite(target, "replace");
+        var callArguments = CallArguments.ConfigAndValidateCall(target.Method, call, arguments,
+            implicitValueType: null, implicitValueIsNull: false, "Condition.Replace");
+        callArguments.ValidateForConditionReplacement(target, "Condition.Replace");
+        return new RewritePlan(target.Method, () =>
         {
-            processor.InsertBefore(Anchor, instruction);
-            firstInserted = instruction;
-            current = instruction;
-            return;
-        }
-
-        processor.InsertAfter(current, instruction);
-        current = instruction;
-    }
-}
-
-
-internal interface IArgumenPlan
-{
-    public void EmitLoad(EmissionSite site, ILProcessor il,
-        ref Instruction start, ref Instruction? firstInserted);
-
-    public void EmitStore(ILProcessor il, InsertPosition position);
-
-    public TypeReference ArgType { get;}
-
-    public bool IsNull { get; }
-
-    public IReadOnlyList<Instruction> CreateLoad(ModuleDefinition module);
-
-    public void ResetStore();
-}
-
-internal class NullArgumenPlan : IArgumenPlan
-{
-    public void EmitLoad(EmissionSite site, ILProcessor il,
-        ref Instruction start, ref Instruction? firstInserted)
-    {
-        site.Insert(il, Instruction.Create(OpCodes.Ldnull), ref start, ref firstInserted);
+            callArguments.ValidateForConditionReplacement(target, "Condition.Replace");
+            callArguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
+            ApplyConditionReplacement(target,
+                module => callArguments.CreateLoadInstructions(module)
+                    .Concat(call.CreateInstructions()), call.ExtraStackSlots);
+        }, call.PrepareForApply, callArguments);
     }
 
-    public void EmitStore(ILProcessor il, InsertPosition position) { }
+    public static RewritePlan Replace(this ConditionTarget target, Func<bool> callback)
+        => Require(target).Replace<Func<bool>>(callback);
 
-    public TypeReference ArgType => null!;
+    // ---------------------------- API construction helpers ----------------------------
 
-    public bool IsNull => true;
-
-    public IReadOnlyList<Instruction> CreateLoad(ModuleDefinition module)
-        => new[] { Instruction.Create(OpCodes.Ldnull) };
-
-    public void ResetStore() { }
-}
-
-internal class ArgumenPlan : IArgumenPlan
-{
-    private readonly Func<ModuleDefinition, IReadOnlyList<Instruction>> _emitter;
-
-    public ArgumenPlan(TypeReference valueType, bool isNull,
-        Func<ModuleDefinition, IReadOnlyList<Instruction>> emitter)
-    {
-        ArgType = valueType ?? throw new ArgumentNullException(nameof(valueType));
-        IsNull = isNull;
-        _emitter = emitter ?? throw new ArgumentNullException(nameof(emitter));
-    }
-
-    public TypeReference ArgType { get; }
-    public bool IsNull { get; }
-    public virtual void EmitLoad(EmissionSite site, ILProcessor il,
-        ref Instruction start, ref Instruction? firstInserted)
-    {
-        foreach (var inst in _emitter(il.Body.Method.Module))
-            site.Insert(il, inst, ref start, ref firstInserted);
-    }
-
-    public void EmitStore(ILProcessor il, InsertPosition position) { }
-
-    public IReadOnlyList<Instruction> CreateLoad(ModuleDefinition module) => _emitter(module);
-
-    public void ResetStore() { }
-}
-
-internal class CapturedArgumentPlan : IArgumenPlan
-{
-    public CapturedArgumentPlan(MatchedValue captureValue)
-    {
-        Value = captureValue ?? throw new ArgumentNullException(nameof(captureValue));
-        if (Value.ValueType is null)
-             throw new ArgumentNullException(nameof(captureValue));
-        ArgType = Value.ValueType;
-    }
-
-    public MatchedValue Value { get; }
-
-    public TypeReference ArgType { get; }
-
-    public bool IsNull => false;
-
-    private VariableDefinition? _variable;
-
-    public void EmitLoad(EmissionSite site, ILProcessor il,
-        ref Instruction start, ref Instruction? firstInserted)
-    {
-        if (_variable == null)
-            throw new NullReferenceException(nameof(_variable));
-
-        if (il.Body.Variables[_variable.Index] != _variable)
-            throw new ArgumentOutOfRangeException(nameof(_variable));
-
-        site.Insert(il, Instruction.Create(OpCodes.Ldloc, _variable), ref start, ref firstInserted);
-    }
-
-    public void EmitStore(ILProcessor il, InsertPosition position)
-    {
-        if (_variable is not null && Value.Method.Body.Variables.Contains(_variable))
-            return;
-
-        _variable = new VariableDefinition(Value.ValueType);
-        Value.Method.Body.Variables.Add(_variable);
-        var dup = Instruction.Create(OpCodes.Dup);
-        var store = Instruction.Create(OpCodes.Stloc, _variable);
-        il.InsertAfter(Value.AfterUseInstruction, dup);
-        il.InsertAfter(dup, store);
-
-    }
-
-    public IReadOnlyList<Instruction> CreateLoad(ModuleDefinition module)
-    {
-        if (_variable == null)
-            throw new NullReferenceException(nameof(_variable));
-        return new[] { Instruction.Create(OpCodes.Ldloc, _variable) };
-    }
-
-    public void ResetStore()
-        => _variable = null;
-}
-
-
-internal static class BranchModifier
-{
-    public static void RetargetIncoming(MethodBody body,
-        Instruction oldTarget, Instruction newTarget)
-    {
-        foreach (var instruction in body.Instructions)
-        {
-            if (ReferenceEquals(instruction, newTarget))
-                continue;
-
-            if (ReferenceEquals(instruction.Operand, oldTarget))
-            {
-                instruction.Operand = newTarget;
-            }
-            else if (instruction.Operand is Instruction[] targets)
-            {
-                for (var i = 0; i < targets.Length; i++)
-                {
-                    if (ReferenceEquals(targets[i], oldTarget))
-                        targets[i] = newTarget;
-                }
-            }
-        }
-
-        foreach (var handler in body.ExceptionHandlers)
-        {
-            if (ReferenceEquals(handler.TryStart, oldTarget)) handler.TryStart = newTarget;
-            if (ReferenceEquals(handler.TryEnd, oldTarget)) handler.TryEnd = newTarget;
-            if (ReferenceEquals(handler.HandlerStart, oldTarget)) handler.HandlerStart = newTarget;
-            if (ReferenceEquals(handler.HandlerEnd, oldTarget)) handler.HandlerEnd = newTarget;
-            if (ReferenceEquals(handler.FilterStart, oldTarget)) handler.FilterStart = newTarget;
-        }
-    }
-
-    public static void ExpandShortBranches(MethodBody body)
-    {
-        if (body is null)
-            throw new ArgumentNullException(nameof(body));
-
-        foreach (var instruction in body.Instructions)
-        {
-            instruction.OpCode = instruction.OpCode.Code switch
-            {
-                Code.Br_S => OpCodes.Br,
-                Code.Brfalse_S => OpCodes.Brfalse,
-                Code.Brtrue_S => OpCodes.Brtrue,
-                Code.Beq_S => OpCodes.Beq,
-                Code.Bge_S => OpCodes.Bge,
-                Code.Bge_Un_S => OpCodes.Bge_Un,
-                Code.Bgt_S => OpCodes.Bgt,
-                Code.Bgt_Un_S => OpCodes.Bgt_Un,
-                Code.Ble_S => OpCodes.Ble,
-                Code.Ble_Un_S => OpCodes.Ble_Un,
-                Code.Blt_S => OpCodes.Blt,
-                Code.Blt_Un_S => OpCodes.Blt_Un,
-                Code.Bne_Un_S => OpCodes.Bne_Un,
-                Code.Leave_S => OpCodes.Leave,
-                _ => instruction.OpCode,
-            };
-        }
-    }
-}
-
-public static partial class PatternTransformExtensions
-{
-    internal static void RequireReturn(MethodReference callback, bool requireVoid, string operation)
+    private static RewritePlan CreateVoidCallBefore(MatchCapture target, Instruction anchor,
+        MethodReference callback, Action<CallArguments>? configure, string operation)
     {
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        RequireReturn(callback.ReturnType, requireVoid, operation);
+        RequireReturn(callback, requireVoid: true, operation);
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback, configure,
+            implicitValueType: null, implicitValueIsNull: false, operation);
+        var site = new EmissionSite(target.Method, anchor, InsertPosition.Before);
+        arguments.ValidateForSite(site, operation);
+        return new RewritePlan(site, arguments, callback.ReturnType,
+            CreateMethodCallEmitter(callback), extraStackSlots: 0);
     }
 
-    internal static void RequireReturn(TypeReference returnType, bool requireVoid, string operation)
+    private static RewritePlan CreateVoidDelegateCall<TDelegate>(MatchCapture target,
+        Instruction anchor, InsertPosition position, TDelegate callback,
+        Action<CallArguments>? configure, string operation)
+        where TDelegate : Delegate
     {
-        if (returnType is null)
-            throw new ArgumentNullException(nameof(returnType));
-        var isVoid = returnType.IsVoid();
-        if (requireVoid != isVoid)
-        {
-            var requirement = requireVoid ? "Void" : "a non-Void value";
-            throw new ArgumentException($"{operation} requires a callback returning {requirement}.");
-        }
+        var call = CecilDelegateEmission.Prepare(target.Method,
+            callback ?? throw new ArgumentNullException(nameof(callback)));
+        return CreateVoidDelegateCall(target.Method, anchor, position,
+            call, configure, operation);
     }
 
- 
-
-    internal static Func<ModuleDefinition, IReadOnlyList<Instruction>> CreateMethodCallEmitter(
-        MethodReference callback)
-        => module =>
-        {
-            var imported = ReferenceEquals(callback.Module, module)
-                ? callback
-                : module.ImportReference(callback);
-            return new[] { Instruction.Create(OpCodes.Call, imported) };
-        };
-
-    internal static void RequireAssignable(TypeReference actual, TypeReference expected,
-        bool actualIsNull, string actualName, string expectedName)
+    private static RewritePlan CreateVoidDelegateCall(MethodDefinition method, Instruction anchor,
+        InsertPosition position, CecilDelegateCall call,
+        Action<CallArguments>? configure, string operation)
     {
-        if (StackType.Create(actual).StackValueEqualsTo(StackType.Create(expected)))
-            return;
-
-        throw new ArgumentException(
-            $"{actualName} '{actual.FullName}' is not compatible with {expectedName} '{expected.FullName}'.");
+        RequireReturn(call.ReturnType, requireVoid: true, operation);
+        var arguments = CallArguments.ConfigAndValidateCall(method, call, configure,
+            implicitValueType: null, implicitValueIsNull: false, operation);
+        var site = new EmissionSite(method, anchor, position);
+        arguments.ValidateForSite(site, operation);
+        return new RewritePlan(site, arguments, call.ReturnType,
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            beforeApply: call.PrepareForApply);
     }
 
-
-    private static void ApplyConditionTransform(MatchedCondition condition, MethodDefinition method,
-        CallArguments arguments, Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
-        int extraStackSlots)
+    private static RewritePlan CreateValueTransform(ValueTarget target, CecilDelegateCall call,
+        Action<CallArguments>? configure, string operation)
     {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        if (method is null)
-            throw new ArgumentNullException(nameof(method));
-        if (!ReferenceEquals(condition.Method, method))
-            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
-        if (!condition.CanRewrite)
-            throw new InvalidOperationException(condition.RewriteFailureReason
-                ?? "The captured condition cannot be safely rewritten.");
-
-        var fragment = condition.Fragment;
-        var trueTarget = fragment.TrueContinuation.Leader;
-        var falseTarget = fragment.FalseContinuation.Leader;
-        var exits = fragment.TrueExits.Select(static edge => (Edge: edge, Value: true))
-            .Concat(fragment.FalseExits.Select(static edge => (Edge: edge, Value: false)))
-            .ToArray();
-
-        if (exits.Length == 0)
-            throw new InvalidOperationException("The captured condition has no exit edges.");
-
-        var groups = exits.GroupBy(static exit => exit.Edge.From).ToArray();
-        foreach (var group in groups)
-        {
-            var fallExits = group.Where(static exit => exit.Edge.IsFallThrough).ToArray();
-            var branchExits = group.Where(static exit => !exit.Edge.IsFallThrough).ToArray();
-            if (fallExits.Length > 1 || branchExits.Length > 1)
-            {
-                throw new NotSupportedException(
-                    $"Condition block IL_{group.Key.Leader.Offset:X4} has an unsupported exit shape.");
-            }
-
-            EnsureAnchor(method, group.Key.Terminator);
-            EnsureSameExceptionRegion(method.Body, group.Key.Terminator, trueTarget);
-            EnsureSameExceptionRegion(method.Body, group.Key.Terminator, falseTarget);
-        }
-
-        method.Body.MaxStackSize = checked(method.Body.MaxStackSize + 1
-            + arguments.ArgPlans.Count + extraStackSlots);
-        BranchModifier.ExpandShortBranches(method.Body);
-        var processor = method.Body.GetILProcessor();
-        foreach (var argument in arguments.ArgPlans)
-            argument.EmitStore(processor, InsertPosition.After);
-
-        foreach (var group in groups)
-        {
-            var fallExits = group.Where(static exit => exit.Edge.IsFallThrough).ToArray();
-            var branchExits = group.Where(static exit => !exit.Edge.IsFallThrough).ToArray();
-            var emitted = new List<Instruction>();
-
-            if (fallExits.Length == 0 && branchExits.Length != 0)
-            {
-                var allFallThrough = group.Key.Successors.SingleOrDefault(static edge => edge.IsFallThrough)
-                                     ?? throw new InvalidOperationException("The source condition has no fall-through edge.");
-                EnsureSameExceptionRegion(method.Body, group.Key.Terminator, allFallThrough.To.Leader);
-                emitted.Add(Instruction.Create(OpCodes.Br, allFallThrough.To.Leader));
-            }
-
-            if (fallExits.Length != 0)
-                emitted.AddRange(CreateConditionBridge(method, arguments, callbackEmitter,
-                    fallExits[0].Value, trueTarget, falseTarget));
-
-            Instruction? branchBridge = null;
-            if (branchExits.Length != 0)
-            {
-                var bridge = CreateConditionBridge(method, arguments, callbackEmitter,
-                    branchExits[0].Value, trueTarget, falseTarget);
-                branchBridge = bridge[0];
-                emitted.AddRange(bridge);
-            }
-
-            InsertAfter(processor, group.Key.Terminator, emitted);
-            if (branchBridge is not null)
-                RetargetTakenBranch(group.Key.Terminator, branchBridge);
-        }
+        RequireReturn(call.ReturnType, requireVoid: false, operation);
+        RequireAssignable(call.ReturnType, target.ValueType, actualIsNull: false,
+            "transform return value", "matched value type");
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, call, configure,
+            target.ValueType, implicitValueIsNull: false, operation);
+        var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
+        arguments.ValidateForSite(site, operation);
+        return new RewritePlan(site, arguments, call.ReturnType,
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            beforeApply: call.PrepareForApply);
     }
 
-    private static IReadOnlyList<Instruction> CreateConditionBridge(MethodDefinition method,
-        CallArguments arguments, Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
-        bool originalValue, Instruction trueTarget, Instruction falseTarget)
+    private static RewritePlan CreateValueObserve(ValueTarget target, CecilDelegateCall call,
+        Action<CallArguments>? configure, string operation)
     {
-        var result = new List<Instruction>
+        RequireReturn(call.ReturnType, requireVoid: true, operation);
+        var arguments = CallArguments.ConfigAndValidateCall(target.Method, call, configure,
+            target.ValueType, implicitValueIsNull: false, operation);
+        var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
+        arguments.ValidateForSite(site, operation);
+        return new RewritePlan(site, arguments, call.ReturnType,
+            _ => call.CreateInstructions(), call.ExtraStackSlots,
+            emitDupBeforeArguments: true, beforeApply: call.PrepareForApply);
+    }
+
+    private static RewritePlan CreateCallbackReplacement(MethodDefinition method,
+        Instruction first, Instruction last, CallArguments arguments,
+        Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
+        int extraStackSlots, int expectedFinalDepth, string operation,
+        Action? beforeApply = null)
+    {
+        return new RewritePlan(method, () =>
         {
-            Instruction.Create(OpCodes.Ldc_I4, originalValue ? 1 : 0),
-        };
-        result.AddRange(arguments.CreateLoadInstructions(method.Module));
-        result.AddRange(callbackEmitter(method.Module));
-        result.Add(Instruction.Create(OpCodes.Brtrue, trueTarget));
-        result.Add(Instruction.Create(OpCodes.Br, falseTarget));
+            arguments.ValidateForReplacement(first, last, operation);
+            arguments.MaterializeCapturedValues(method.Body.GetILProcessor());
+            ApplyLinearReplacement(method, first, last,
+                module => arguments.CreateLoadInstructions(module).Concat(callbackEmitter(module)),
+                expectedFinalDepth, extraStackSlots, operation);
+        }, beforeApply, arguments);
+    }
+
+    private static IReadOnlyList<Instruction> JoinReplacement(Instruction first,
+        IReadOnlyList<Instruction>? remaining)
+    {
+        if (first is null)
+            throw new ArgumentNullException(nameof(first));
+        if (remaining is null)
+            throw new ArgumentNullException(nameof(remaining));
+
+        var result = new Instruction[remaining.Count + 1];
+        result[0] = first;
+        for (var i = 0; i < remaining.Count; i++)
+            result[i + 1] = remaining[i];
         return result;
     }
 
-    private static void ApplyConditionObserve(MatchedCondition condition, MethodDefinition method,
-        CallArguments arguments, Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
-        int extraStackSlots, CallResultPlan plan)
-    {
-        if (condition is null)
-            throw new ArgumentNullException(nameof(condition));
-        if (method is null)
-            throw new ArgumentNullException(nameof(method));
-        if (arguments is null)
-            throw new ArgumentNullException(nameof(arguments));
-        if (callbackEmitter is null)
-            throw new ArgumentNullException(nameof(callbackEmitter));
-        if (plan is null)
-            throw new ArgumentNullException(nameof(plan));
-        if (!ReferenceEquals(condition.Method, method))
-            throw new ArgumentException("The captured condition does not belong to the target method.", nameof(condition));
-        if (!condition.CanRewrite)
-            throw new InvalidOperationException(condition.RewriteFailureReason
-                ?? "The captured condition cannot be safely observed.");
-
-        var fragment = condition.Fragment;
-        var trueTarget = fragment.TrueContinuation.Leader;
-        var falseTarget = fragment.FalseContinuation.Leader;
-        var exits = fragment.TrueExits.Select(static edge => (Edge: edge, Value: true))
-            .Concat(fragment.FalseExits.Select(static edge => (Edge: edge, Value: false)))
-            .ToArray();
-
-        if (exits.Length == 0)
-            throw new InvalidOperationException("The captured condition has no exit edges.");
-
-        var groups = exits.GroupBy(static exit => exit.Edge.From).ToArray();
-        foreach (var group in groups)
-        {
-            var fallExits = group.Where(static exit => exit.Edge.IsFallThrough).ToArray();
-            var branchExits = group.Where(static exit => !exit.Edge.IsFallThrough).ToArray();
-            if (fallExits.Length > 1 || branchExits.Length > 1)
-            {
-                throw new NotSupportedException(
-                    $"Condition block IL_{group.Key.Leader.Offset:X4} has an unsupported exit shape.");
-            }
-
-            EnsureAnchor(method, group.Key.Terminator);
-            EnsureSameExceptionRegion(method.Body, group.Key.Terminator, trueTarget);
-            EnsureSameExceptionRegion(method.Body, group.Key.Terminator, falseTarget);
-        }
-
-        var requiredStack = 1 + arguments.ArgPlans.Count + extraStackSlots;
-        if (plan.ReturnType is { } returnType && !returnType.IsVoid())
-            requiredStack = Math.Max(requiredStack, 1);
-        method.Body.MaxStackSize = checked(method.Body.MaxStackSize + requiredStack);
-        BranchModifier.ExpandShortBranches(method.Body);
-        var processor = method.Body.GetILProcessor();
-        foreach (var argument in arguments.ArgPlans)
-            argument.EmitStore(processor, InsertPosition.After);
-
-        foreach (var group in groups)
-        {
-            var fallExits = group.Where(static exit => exit.Edge.IsFallThrough).ToArray();
-            var branchExits = group.Where(static exit => !exit.Edge.IsFallThrough).ToArray();
-            var emitted = new List<Instruction>();
-
-            if (fallExits.Length == 0 && branchExits.Length != 0)
-            {
-                var allFallThrough = group.Key.Successors.SingleOrDefault(static edge => edge.IsFallThrough)
-                                     ?? throw new InvalidOperationException("The source condition has no fall-through edge.");
-                EnsureSameExceptionRegion(method.Body, group.Key.Terminator, allFallThrough.To.Leader);
-                emitted.Add(Instruction.Create(OpCodes.Br, allFallThrough.To.Leader));
-            }
-
-            if (fallExits.Length != 0)
-                emitted.AddRange(CreateConditionObserveBridge(method, arguments, callbackEmitter,
-                    fallExits[0].Value, fallExits[0].Value ? trueTarget : falseTarget, plan));
-
-            Instruction? branchBridge = null;
-            if (branchExits.Length != 0)
-            {
-                var bridge = CreateConditionObserveBridge(method, arguments, callbackEmitter,
-                    branchExits[0].Value, branchExits[0].Value ? trueTarget : falseTarget, plan);
-                branchBridge = bridge[0];
-                emitted.AddRange(bridge);
-            }
-
-            InsertAfter(processor, group.Key.Terminator, emitted);
-            if (branchBridge is not null)
-                RetargetTakenBranch(group.Key.Terminator, branchBridge);
-        }
-    }
-
-    private static IReadOnlyList<Instruction> CreateConditionObserveBridge(MethodDefinition method,
-        CallArguments arguments, Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
-        bool originalValue, Instruction originalTarget, CallResultPlan plan)
-    {
-        var result = new List<Instruction>
-        {
-            Instruction.Create(OpCodes.Ldc_I4, originalValue ? 1 : 0),
-        };
-        result.AddRange(arguments.CreateLoadInstructions(method.Module));
-        result.AddRange(callbackEmitter(method.Module));
-        result.AddRange(plan.CreateDestinationInstructions());
-        result.Add(Instruction.Create(OpCodes.Br, originalTarget));
-        return result;
-    }
-
-    private static void InsertAfter(ILProcessor processor, Instruction anchor,
-        IReadOnlyList<Instruction> instructions)
-    {
-        var current = anchor;
-        foreach (var instruction in instructions)
-        {
-            processor.InsertAfter(current, instruction);
-            current = instruction;
-        }
-    }
-
-    private static MatchedValue RequireValue(CilMatch match, string? captureName)
-    {
-        if (match is null)
-            throw new ArgumentNullException(nameof(match));
-        return captureName is null ? match.Value() : match.Value(captureName);
-    }
-
-
-
-    private static void RetargetTakenBranch(Instruction terminator, Instruction newTarget)
-    {
-        if (terminator.Operand is Instruction)
-        {
-            terminator.Operand = newTarget;
-            return;
-        }
-
-        throw new NotSupportedException(
-            $"Branch operand type '{terminator.Operand?.GetType()}' is not supported for condition rewriting.");
-    }
-
-    private static void EnsureAnchor(MethodDefinition method, Instruction instruction)
-    {
-        if (!method.HasBody || !method.Body.Instructions.Contains(instruction))
-            throw new InvalidOperationException("The condition match is stale. Re-run the matcher after modifying IL.");
-    }
-
-    private static void EnsureSameExceptionRegion(MethodBody body,
-        Instruction source, Instruction target)
-    {
-        if (GetRegionSignature(body, source) == GetRegionSignature(body, target))
-            return;
-
-        throw new NotSupportedException(
-            $"Condition rewriting would branch from IL_{source.Offset:X4} to IL_{target.Offset:X4} across an exception-region boundary.");
-    }
-
-    private static string GetRegionSignature(MethodBody body, Instruction instruction)
-    {
-        var index = body.Instructions.IndexOf(instruction);
-        var parts = new List<string>();
-        for (var i = 0; i < body.ExceptionHandlers.Count; i++)
-        {
-            var handler = body.ExceptionHandlers[i];
-            Add("T", handler.TryStart, handler.TryEnd);
-            Add("F", handler.FilterStart, handler.HandlerStart);
-            Add("H", handler.HandlerStart, handler.HandlerEnd);
-
-            void Add(string kind, Instruction? start, Instruction? end)
-            {
-                if (start is null)
-                    return;
-                var startIndex = body.Instructions.IndexOf(start);
-                var endIndex = end is null ? body.Instructions.Count : body.Instructions.IndexOf(end);
-                if (index >= startIndex && index < endIndex)
-                    parts.Add(i + ":" + kind);
-            }
-        }
-        return string.Join("|", parts);
-    }
-
+    private static TTarget Require<TTarget>(TTarget? target) where TTarget : class
+        => target ?? throw new ArgumentNullException(nameof(target));
 }

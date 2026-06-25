@@ -9,6 +9,7 @@ using System.Security.Policy;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using MonoWeaver.Cecil;
 
 namespace MonoWeaver.PatternTests;
 
@@ -268,7 +269,7 @@ internal static class PatternTestModules
         AddSearchDirectoryIfExists(resolver, PatternTestAssetBuilder.AssembliesDirectory);
         AddSearchDirectoryIfExists(resolver, AppContext.BaseDirectory);
         AddSearchDirectoryIfExists(resolver,
-            Path.GetDirectoryName(typeof(ArgumenPlan).Assembly.Location));
+            Path.GetDirectoryName(typeof(CallArguments).Assembly.Location));
         AddSearchDirectoryIfExists(resolver, Path.GetDirectoryName(typeof(object).Assembly.Location));
 
         return Mono.Cecil.ModuleDefinition.ReadModule(PatternTestAssetBuilder.GetAssemblyPath(assemblyName),

@@ -152,12 +152,12 @@ public sealed class BinaryPatternTests
             () => P.Arg(0, CilType.Int32).Mark("left") != P.Arg(1, CilType.Int32));
 
         var match = method.Match(pattern).Single();
-        var left = match.Value("left");
+        var left = match.Captures.Value("left");
 
         Assert.NotNull(left.ConsumerInstruction);
         var consumer = left.ConsumerInstruction!;
         Assert.Equal(Code.Ceq, consumer.OpCode.Code);
-        Assert.NotSame(match.Value().ProducerInstruction, consumer);
+        Assert.NotSame(match.DefinitionInstruction, consumer);
     }
 
     [Theory]
@@ -260,6 +260,6 @@ public sealed class BinaryPatternTests
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, methodName);
         return method.Match(DualPattern.Value(dsl, expression, cilExpr))
-            .Single().Value().ProducerInstruction.OpCode.Code;
+            .Single().DefinitionInstruction.OpCode.Code;
     }
 }

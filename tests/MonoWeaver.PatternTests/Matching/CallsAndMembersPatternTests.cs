@@ -23,9 +23,9 @@ public sealed class CallsAndMembersPatternTests
             () => P.Mark("hook", P.Arg<A>(0).B()).C(),
             () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callC));
 
-        var hook = method.Match(pattern).Single().Value("hook");
+        var hook = method.Match(pattern).Single().Captures.Value("hook");
 
-        PatternTestSupport.AssertCallTo(hook.ProducerInstruction, nameof(A.B));
+        PatternTestSupport.AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         PatternTestSupport.AssertCallTo(hook.ConsumerInstruction, nameof(B.C));
     }
 
@@ -43,12 +43,12 @@ public sealed class CallsAndMembersPatternTests
             () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callC));
 
         var match = Assert.Single(method.Match(pattern).Where(candidate =>
-            ReferenceEquals(candidate.Value().ProducerInstruction, candidate.Value().AfterUseInstruction)));
-        var hook = match.Value("hook");
+            ReferenceEquals(candidate.DefinitionInstruction, candidate.ResultInstruction)));
+        var hook = match.Captures.Value("hook");
 
-        PatternTestSupport.AssertCallTo(hook.ProducerInstruction, nameof(A.B));
-        Assert.True(hook.AfterUseInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0,
-            "AfterUse must target the concrete ldloc consumed by C().");
+        PatternTestSupport.AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
+        Assert.True(hook.ResultInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0,
+            "ResultInstruction must target the concrete ldloc consumed by C().");
     }
 
     [Theory]
@@ -66,7 +66,7 @@ public sealed class CallsAndMembersPatternTests
         var matches = method.Match(pattern).ToArray();
 
         Assert.Single(matches);
-        Assert.DoesNotContain(matches, match => match.Value().AfterUseInstruction.OpCode.Code
+        Assert.DoesNotContain(matches, match => match.ResultInstruction.OpCode.Code
             is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0);
 
         var noTemporaryExpansion = DualPattern.Value(dsl,
@@ -90,8 +90,8 @@ public sealed class CallsAndMembersPatternTests
 
         var match = method.Match(pattern).Single();
 
-        Assert.Equal(Code.Call, match.Value().ProducerInstruction.OpCode.Code);
-        PatternTestSupport.AssertCallTo(match.Value().ProducerInstruction, nameof(Ops.Add));
+        Assert.Equal(Code.Call, match.DefinitionInstruction.OpCode.Code);
+        PatternTestSupport.AssertCallTo(match.DefinitionInstruction, nameof(Ops.Add));
     }
 
     [Theory]
@@ -139,9 +139,9 @@ public sealed class CallsAndMembersPatternTests
             () => new MemberHost(P.Arg<int>(0)),
             () => P.New(constructor, P.Arg(0, CilType.Int32)));
 
-        var value = method.Match(pattern).Single().Value();
+        var value = method.Match(pattern).Single();
 
-        Assert.Equal(Code.Newobj, value.ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Newobj, value.DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -156,9 +156,9 @@ public sealed class CallsAndMembersPatternTests
             () => P.Arg<MemberHost>(0).Add(P.Arg<int>(1)),
             () => P.Arg(0, hostType).Call(add, P.Arg(1, CilType.Int32)));
 
-        var value = method.Match(pattern).Single().Value();
+        var value = method.Match(pattern).Single();
 
-        PatternTestSupport.AssertCallTo(value.ProducerInstruction, nameof(MemberHost.Add));
+        PatternTestSupport.AssertCallTo(value.DefinitionInstruction, nameof(MemberHost.Add));
     }
 
     [Theory]
@@ -173,7 +173,7 @@ public sealed class CallsAndMembersPatternTests
             () => P.Arg<B>(0).Select("selected"),
             () => P.Arg(0, bType).Call(selectString, P.Constant("selected")));
 
-        var operand = Assert.IsType<MethodReference>(method.Match(pattern).Single().Value().ProducerInstruction.Operand);
+        var operand = Assert.IsType<MethodReference>(method.Match(pattern).Single().DefinitionInstruction.Operand);
 
         Assert.Equal(MetadataType.String, operand.Parameters.Single().ParameterType.MetadataType);
     }
@@ -190,7 +190,7 @@ public sealed class CallsAndMembersPatternTests
             () => P.Arg<MemberHost>(0).InstanceField,
             () => P.Arg(0, hostType).Field(field));
 
-        Assert.Equal(Code.Ldfld, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldfld, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -204,7 +204,7 @@ public sealed class CallsAndMembersPatternTests
             () => MemberHost.StaticField,
             () => P.Field(field));
 
-        Assert.Equal(Code.Ldsfld, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldsfld, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -219,7 +219,7 @@ public sealed class CallsAndMembersPatternTests
             () => P.Arg<MemberHost>(0).Property,
             () => P.Arg(0, hostType).Call(getter));
 
-        PatternTestSupport.AssertCallTo(method.Match(pattern).Single().Value().ProducerInstruction,
+        PatternTestSupport.AssertCallTo(method.Match(pattern).Single().DefinitionInstruction,
             "get_" + nameof(MemberHost.Property));
     }
 
@@ -236,7 +236,7 @@ public sealed class CallsAndMembersPatternTests
             () => P.Call(identity, P.Arg(0, CilType.Int32)));
 
         var operand = Assert.IsAssignableFrom<GenericInstanceMethod>(
-            method.Match(pattern).Single().Value().ProducerInstruction.Operand);
+            method.Match(pattern).Single().DefinitionInstruction.Operand);
 
         Assert.Equal(MetadataType.Int32, operand.GenericArguments.Single().MetadataType);
     }
@@ -253,9 +253,9 @@ public sealed class CallsAndMembersPatternTests
             () => P.Arg<ICompute>(0).Compute(7),
             () => P.Arg(0, interfaceType).Call(compute, P.Constant(7)));
 
-        var value = method.Match(pattern).Single().Value();
+        var value = method.Match(pattern).Single();
 
-        Assert.Equal(Code.Callvirt, value.ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Callvirt, value.DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -269,9 +269,9 @@ public sealed class CallsAndMembersPatternTests
             () => Ops.AcceptObject(default(object)),
             () => P.Call(accept, P.Null(CilType.Object)));
 
-        var value = method.Match(pattern).Single().Value();
+        var value = method.Match(pattern).Single();
 
-        PatternTestSupport.AssertCallTo(value.ProducerInstruction, nameof(Ops.AcceptObject));
+        PatternTestSupport.AssertCallTo(value.DefinitionInstruction, nameof(Ops.AcceptObject));
     }
 
     [Theory]

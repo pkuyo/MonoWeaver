@@ -24,30 +24,53 @@ public sealed class PatternMatcher
 
     public MethodDefinition Method => _model.Method;
 
-    public static PatternMatcher For(MethodDefinition method) => new(method);
+    public static PatternMatcher For(MethodDefinition method)
+    {
+        if (method is null)
+            throw new ArgumentNullException(nameof(method));
+        return new PatternMatcher(method);
+    }
 
-    /// <summary>
-    /// 查找所有精确匹配点。插入 IL 前请使用 <see cref="CilMatchSet.Single"/>。
-    /// </summary>
-    public CilMatchSet Find(ExpressionPattern pattern)
+    public CilMatchSet<ValueMatch> Find(ValuePattern pattern)
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
-
-        var matches = pattern.Kind switch
-        {
-            PatternKind.Value => FindValues(pattern),
-            PatternKind.Effect => FindEffects(pattern),
-            PatternKind.Condition => FindConditions(pattern),
-            _ => throw new ArgumentOutOfRangeException()
-        };
-
-        return new CilMatchSet(Method, pattern, matches);
+        var matches = FindValues<ValueMatch>(pattern,
+            (matched, captures) => CreateValueMatch(pattern, matched, captures));
+        return new CilMatchSet<ValueMatch>(Method, pattern, matches,
+            static match => match.FirstInstruction);
     }
 
-    private IReadOnlyList<CilMatch> FindValues(ExpressionPattern pattern)
+    public CilMatchSet<ValueMatch<T>> Find<T>(ValuePattern<T> pattern)
     {
-        var result = new List<CilMatch>();
+        if (pattern is null)
+            throw new ArgumentNullException(nameof(pattern));
+        var matches = FindValues<ValueMatch<T>>(pattern,
+            (matched, captures) => CreateValueMatch<T>(pattern, matched, captures));
+        return new CilMatchSet<ValueMatch<T>>(Method, pattern, matches,
+            static match => match.FirstInstruction);
+    }
+
+    public CilMatchSet<EffectMatch> Find(EffectPattern pattern)
+    {
+        if (pattern is null)
+            throw new ArgumentNullException(nameof(pattern));
+        var matches = FindEffects(pattern);
+        return new CilMatchSet<EffectMatch>(Method, pattern, matches, static match => match.FirstInstruction);
+    }
+
+    public CilMatchSet<ConditionMatch> Find(ConditionPattern pattern)
+    {
+        if (pattern is null)
+            throw new ArgumentNullException(nameof(pattern));
+        var matches = FindConditions(pattern);
+        return new CilMatchSet<ConditionMatch>(Method, pattern, matches, static match => match.FirstInstruction);
+    }
+
+    private IReadOnlyList<TMatch> FindValues<TMatch>(ValuePattern pattern,
+        Func<TargetOccurrence, IReadOnlyDictionary<string, MatchCapture>, TMatch> create)
+    {
+        var result = new List<TMatch>();
         var seen = new HashSet<(Instruction producer, Instruction use)>();
         var matcher = new ExpressionNodeMatcher(_model, pattern.Options);
 
@@ -62,15 +85,15 @@ public sealed class PatternMatcher
             if (!seen.Add((matched.Node.ProducerInstruction, matched.UseAnchor)))
                 continue;
 
-            result.Add(CreateValueMatch(pattern, matched, context, matched.Node.ProducerInstruction));
+            result.Add(create(matched, MaterializeCaptures(context)));
         }
 
         return result;
     }
 
-    private IReadOnlyList<CilMatch> FindEffects(ExpressionPattern pattern)
+    private IReadOnlyList<EffectMatch> FindEffects(EffectPattern pattern)
     {
-        var result = new List<CilMatch>();
+        var result = new List<EffectMatch>();
         var seen = new HashSet<Instruction>();
         var matcher = new ExpressionNodeMatcher(_model, pattern.Options);
 
@@ -85,15 +108,17 @@ public sealed class PatternMatcher
             if (!seen.Add(candidate.TerminalInstruction))
                 continue;
 
-            result.Add(CreateValueMatch(pattern, matched, context, candidate.TerminalInstruction));
+            result.Add(new EffectMatch(Method, pattern, matched.Node.FirstInstruction,
+                candidate.TerminalInstruction,
+                MaterializeCaptures(context)));
         }
 
         return result;
     }
 
-    private IReadOnlyList<CilMatch> FindConditions(ExpressionPattern pattern)
+    private IReadOnlyList<ConditionMatch> FindConditions(ConditionPattern pattern)
     {
-        var result = new List<CilMatch>();
+        var result = new List<ConditionMatch>();
         var conditionMatcher = new ConditionPatternMatcher(_model, pattern.Options);
         var seen = new HashSet<(int entry, int trueTarget, int falseTarget)>();
 
@@ -113,38 +138,41 @@ public sealed class PatternMatcher
             if (!seen.Add(key))
                 continue;
 
-            var root = new ConditionInternalCapture(null, fragment);
-            var captures = MaterializeCaptures(context, _model.Method.Module.TypeSystem.Boolean);
-            var first = fragment.Entry.Leader;
-            var last = fragment.Blocks
-                .Select(static b => b.Terminator)
-                .OrderBy(_model.IndexOf)
-                .Last();
-            result.Add(new CilMatch(Method, pattern, first, last,
-                root.ToPublic(_model.Method, _model.Method.Module.TypeSystem.Boolean), captures));
+            result.Add(new ConditionMatch(Method, pattern, fragment,
+                MaterializeCaptures(context)));
         }
 
         return result;
     }
 
-    private CilMatch CreateValueMatch(ExpressionPattern pattern, TargetOccurrence matched,
-        MatchContext context, Instruction lastInstruction)
+    private ValueMatch CreateValueMatch(ValuePattern pattern, TargetOccurrence matched,
+        IReadOnlyDictionary<string, MatchCapture> captures)
     {
-        var rootInternal = new ValueInternalCapture(null, matched);
-        var captures = MaterializeCaptures(context, Method.Module.TypeSystem.Boolean);
-        return new CilMatch(Method, pattern, matched.Node.FirstInstruction, lastInstruction,
-            rootInternal.ToPublic(Method, Method.Module.TypeSystem.Boolean), captures);
+        var valueType = matched.Node.ResultType
+                        ?? throw new InvalidOperationException("A value match produced no value type.");
+        return new ValueMatch(Method, pattern, valueType, matched.Node.FirstInstruction,
+            matched.Node.ProducerInstruction, matched.UseAnchor, matched.Consumer, captures);
     }
 
-    private IReadOnlyDictionary<string, MatchCapture> MaterializeCaptures(MatchContext context, TypeReference booleanType)
+    private ValueMatch<T> CreateValueMatch<T>(ValuePattern<T> pattern, TargetOccurrence matched,
+        IReadOnlyDictionary<string, MatchCapture> captures)
+    {
+        var valueType = matched.Node.ResultType
+                        ?? throw new InvalidOperationException("A value match produced no value type.");
+        return new ValueMatch<T>(Method, pattern, valueType, matched.Node.FirstInstruction,
+            matched.Node.ProducerInstruction, matched.UseAnchor, matched.Consumer, captures);
+    }
+
+    private IReadOnlyDictionary<string, MatchCapture> MaterializeCaptures(MatchContext context)
     {
         var result = new Dictionary<string, MatchCapture>(StringComparer.Ordinal);
         foreach (var pair in context.Captures)
-            result[pair.Key] = pair.Value.ToPublic(Method, booleanType);
+            result[pair.Key] = pair.Value.ToPublic(Method);
         return result;
     }
 
-    private bool ApplyLocalConstraints(ExpressionPattern pattern, MatchContext context, ExpressionNodeMatcher matcher)
+    private bool ApplyLocalConstraints(ExpressionPattern pattern, MatchContext context,
+        ExpressionNodeMatcher matcher)
     {
         foreach (var constraint in pattern.LocalDefinitionConstraints)
         {
@@ -200,7 +228,7 @@ internal abstract class InternalCapture
 {
     protected InternalCapture(string? name) => Name = name;
     public string? Name { get; }
-    public abstract MatchCapture ToPublic(MethodDefinition method, TypeReference booleanType);
+    public abstract MatchCapture ToPublic(MethodDefinition method);
 }
 
 internal sealed class ValueInternalCapture : InternalCapture
@@ -210,23 +238,31 @@ internal sealed class ValueInternalCapture : InternalCapture
 
     public TargetOccurrence Occurrence { get; }
 
-    public override MatchCapture ToPublic(MethodDefinition method, TypeReference booleanType)
+    public override MatchCapture ToPublic(MethodDefinition method)
     {
+        var name = Name ?? throw new InvalidOperationException("Only named captures can be materialized.");
         var node = Occurrence.Node;
+
+        if (node.ResultType is null || node.ResultType.MetadataType == MetadataType.Void)
+        {
+            return new EffectCapture(method, name, node.FirstInstruction,
+                Occurrence.Consumer ?? Occurrence.UseAnchor);
+        }
+
         if (node is TargetArgumentNode argument)
         {
-            return new MatchedArgument(method, Name, node.ResultType!, node.FirstInstruction,
+            return new ArgumentCapture(method, name, node.ResultType, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer,
                 argument.IsThis, argument.ParameterIndex, argument.Parameter);
         }
 
         if (node is TargetLocalReadNode local)
         {
-            return new MatchedLocal(method, Name, local.Variable, node.FirstInstruction,
+            return new LocalCapture(method, name, local.Variable, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer);
         }
 
-        return new MatchedValue(method, Name, node.ResultType, node.FirstInstruction,
+        return new ValueCapture(method, name, node.ResultType, node.FirstInstruction,
             node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer);
     }
 }
@@ -238,8 +274,11 @@ internal sealed class ConditionInternalCapture : InternalCapture
 
     public ConditionFragment Fragment { get; }
 
-    public override MatchCapture ToPublic(MethodDefinition method, TypeReference booleanType)
-        => new MatchedCondition(method, Name, Fragment, booleanType);
+    public override MatchCapture ToPublic(MethodDefinition method)
+    {
+        var name = Name ?? throw new InvalidOperationException("Only named captures can be materialized.");
+        return new ConditionCapture(method, name, Fragment);
+    }
 }
 
 internal sealed class MatchContext
@@ -753,10 +792,10 @@ internal sealed class ConditionPatternMatcher
             return true;
         }
 
-        if (pattern is BinaryPatternNode { Operation: ExpressionType.AndAlso } and)
+        if (pattern is BinaryPatternNode { Operation: ExpressionType.AndAlso } andPattern)
         {
             var shortCircuitContext = context.Clone();
-            if (TryMatchAnd(and, entry, shortCircuitContext, out fragment))
+            if (TryMatchAnd(andPattern, entry, shortCircuitContext, out fragment))
             {
                 context.CopyFrom(shortCircuitContext);
                 return true;
@@ -764,22 +803,22 @@ internal sealed class ConditionPatternMatcher
 
             //对于无副作用的 Boolean 操作数，Roslyn 可能把 && lowering 成物化的 bitwise and，
             //再接一个 brfalse。这里将这种 lowering 当成同一个条件处理，但仍优先匹配真实短路 CFG 结构。
-            var materialized = new BinaryPatternNode(ExpressionType.And, and.Left, and.Right,
-                and.Method, and.ResultType);
+            var materialized = new BinaryPatternNode(ExpressionType.And, andPattern.Left, andPattern.Right,
+                andPattern.Method, andPattern.ResultType);
             return TryMatchLeaf(materialized, entry, context, out fragment);
         }
 
-        if (pattern is BinaryPatternNode { Operation: ExpressionType.OrElse } or)
+        if (pattern is BinaryPatternNode { Operation: ExpressionType.OrElse } orPattern)
         {
             var shortCircuitContext = context.Clone();
-            if (TryMatchOr(or, entry, shortCircuitContext, out fragment))
+            if (TryMatchOr(orPattern, entry, shortCircuitContext, out fragment))
             {
                 context.CopyFrom(shortCircuitContext);
                 return true;
             }
 
-            var materialized = new BinaryPatternNode(ExpressionType.Or, or.Left, or.Right,
-                or.Method, or.ResultType);
+            var materialized = new BinaryPatternNode(ExpressionType.Or, orPattern.Left, orPattern.Right,
+                orPattern.Method, orPattern.ResultType);
             return TryMatchLeaf(materialized, entry, context, out fragment);
         }
 

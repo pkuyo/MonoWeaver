@@ -26,7 +26,7 @@ public sealed class CecilMetadataPatternTests
         var match = target.Match(Cil.Value(
             P.Arg(0, player).Call(getState).Mark("state"))).Single();
 
-        match.Value("state").AfterUse().Transform(transform).Apply();
+        match.Captures.Value("state").Transform(transform).Apply();
 
         var imported = (MethodReference)target.Body.Instructions
             .Where(i => i.OpCode.Code == Code.Call)
@@ -58,7 +58,7 @@ public sealed class CecilMetadataPatternTests
         var instructionCount = target.Body.Instructions.Count;
         var referenceCount = game.AssemblyReferences.Count;
 
-        Assert.Throws<ArgumentException>(() => match.Value().AfterUse().Transform(invalid));
+        Assert.Throws<ArgumentException>(() => match.Transform(invalid));
         Assert.Equal(instructionCount, target.Body.Instructions.Count);
         Assert.Equal(referenceCount, game.AssemblyReferences.Count);
     }
@@ -129,7 +129,7 @@ public sealed class CecilMetadataPatternTests
         var getState = CilMethodSpec.From((MethodReference)target.Body.Instructions
             .Single(instruction => instruction.Operand is MethodReference { Name: "GetState" }).Operand);
         target.Match(Cil.Value(P.Arg(0, player).Call(getState))).Single()
-            .Value().AfterUse().Transform(transform).Apply();
+            .Transform(transform).Apply();
 
         var verifier = new ILMethodVerifier(target,
             VerifyOptions.Instructions | VerifyOptions.StackTypes);

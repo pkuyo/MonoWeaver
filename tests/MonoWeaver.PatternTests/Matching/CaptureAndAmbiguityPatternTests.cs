@@ -37,9 +37,9 @@ public sealed class CaptureAndAmbiguityPatternTests
             () => P.Mark("hook", P.Arg<A>(0).B()).D(),
             () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callD));
 
-        var hook = method.Match(pattern).Single().Value("hook");
+        var hook = method.Match(pattern).Single().Captures.Value("hook");
 
-        PatternTestSupport.AssertCallTo(hook.ProducerInstruction, nameof(A.B));
+        PatternTestSupport.AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         PatternTestSupport.AssertCallTo(hook.ConsumerInstruction, nameof(B.D));
     }
 
@@ -98,14 +98,14 @@ public sealed class CaptureAndAmbiguityPatternTests
             () => P.Arg(0, CilType.Int32, "argument"));
         var match = method.Match(pattern).Single();
 
-        Assert.IsType<MatchedArgument>(match.Argument("argument"));
-        Assert.Throws<System.InvalidOperationException>(() => match.Local("argument"));
-        Assert.Throws<System.Collections.Generic.KeyNotFoundException>(() => match.Value("missing"));
+        Assert.IsType<ArgumentCapture>(match.Captures.Argument("argument"));
+        Assert.Throws<System.InvalidOperationException>(() => match.Captures.Local("argument"));
+        Assert.Throws<System.Collections.Generic.KeyNotFoundException>(() => match.Captures.Value("missing"));
     }
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void RootAccessorRejectsWrongPatternKind(PatternDsl dsl)
+    public void RootMatchIsStronglyTypedByPatternKind(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "BoolCondition");
@@ -114,7 +114,6 @@ public sealed class CaptureAndAmbiguityPatternTests
             () => P.Arg(0, CilType.Boolean));
         var match = method.Match(pattern).Single();
 
-        Assert.Throws<System.InvalidOperationException>(() => match.Value());
-        Assert.NotNull(match.Condition());
+        Assert.IsType<ConditionMatch>(match);
     }
 }

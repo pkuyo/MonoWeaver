@@ -19,12 +19,12 @@ public sealed class ArgumentsAndLocalsPatternTests
             () => P.This<InstancePatternTarget>("self"),
             () => P.This(type, "self"));
 
-        var self = method.Match(pattern).Single().Argument("self");
+        var self = method.Match(pattern).Single().Captures.Argument("self");
 
         Assert.True(self.IsThis);
         Assert.Null(self.Parameter);
         Assert.Equal(-1, self.ParameterIndex);
-        Assert.Equal(Code.Ldarg_0, self.ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldarg_0, self.DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -37,7 +37,7 @@ public sealed class ArgumentsAndLocalsPatternTests
             () => P.Arg<string>(1, "text"),
             () => P.Arg(1, CilType.String.Assignable(), "text"));
 
-        var argument = method.Match(pattern).Single().Argument("text");
+        var argument = method.Match(pattern).Single().Captures.Argument("text");
 
         Assert.False(argument.IsThis);
         Assert.Equal(1, argument.ParameterIndex);
@@ -54,7 +54,7 @@ public sealed class ArgumentsAndLocalsPatternTests
             () => P.Arg<string>("text"),
             () => P.Arg(CilType.String.Assignable(), "text"));
 
-        var argument = method.Match(pattern).Single().Argument("text");
+        var argument = method.Match(pattern).Single().Captures.Argument("text");
 
         Assert.Equal(1, argument.ParameterIndex);
     }
@@ -69,10 +69,10 @@ public sealed class ArgumentsAndLocalsPatternTests
             () => P.Local<int>(0, "local"),
             () => P.Local(0, CilType.Int32, "local"));
 
-        var local = method.Match(pattern).Single().Local("local");
+        var local = method.Match(pattern).Single().Captures.Local("local");
 
         Assert.Equal(0, local.Variable.Index);
-        Assert.True(local.ProducerInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0);
+        Assert.True(local.DefinitionInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0);
     }
 
     [Theory]
@@ -87,8 +87,8 @@ public sealed class ArgumentsAndLocalsPatternTests
 
         var matches = method.Match(pattern);
         var directOccurrence = Assert.Single(matches.Where(match =>
-            ReferenceEquals(match.Value().ProducerInstruction, match.Value().AfterUseInstruction)));
-        var local = directOccurrence.Local("temporary");
+            ReferenceEquals(match.DefinitionInstruction, match.ResultInstruction)));
+        var local = directOccurrence.Captures.Local("temporary");
 
         Assert.Equal(0, local.Variable.Index);
     }
@@ -103,9 +103,9 @@ public sealed class ArgumentsAndLocalsPatternTests
             () => P.Any<int>("left") + P.Arg<int>(1),
             () => P.Any(CilType.Int32, "left") + P.Arg(1, CilType.Int32));
 
-        var left = method.Match(pattern).Single().Value("left");
+        var left = method.Match(pattern).Single().Captures.Value("left");
 
-        Assert.True(left.ProducerInstruction.OpCode.Code is Code.Ldarg or Code.Ldarg_S or Code.Ldarg_0);
+        Assert.True(left.DefinitionInstruction.OpCode.Code is Code.Ldarg or Code.Ldarg_S or Code.Ldarg_0);
     }
 
     [Theory]
@@ -120,11 +120,11 @@ public sealed class ArgumentsAndLocalsPatternTests
 
         var matches = method.Match(pattern);
         var directOccurrence = Assert.Single(matches.Where(match =>
-            ReferenceEquals(match.Value().ProducerInstruction, match.Value().AfterUseInstruction)));
-        var sum = directOccurrence.Value("sum");
+            ReferenceEquals(match.DefinitionInstruction, match.ResultInstruction)));
+        var sum = directOccurrence.Captures.Value("sum");
 
-        Assert.Equal(Code.Add, sum.ProducerInstruction.OpCode.Code);
-        Assert.True(sum.AfterUseInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0,
+        Assert.Equal(Code.Add, sum.DefinitionInstruction.OpCode.Code);
+        Assert.True(sum.ResultInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0,
             "The capture must retain the concrete ldloc occurrence consumed by multiplication.");
     }
 
@@ -157,7 +157,7 @@ public sealed class ArgumentsAndLocalsPatternTests
                 () => Ops.XXX(),
                 () => P.Call(callXxx)));
 
-        var local = method.Match(pattern).Single().Local("ret");
+        var local = method.Match(pattern).Single().Captures.Local("ret");
 
         Assert.True(local.Variable.Index >= 0);
     }
@@ -202,7 +202,7 @@ public sealed class ArgumentsAndLocalsPatternTests
             () => P.Arg<object>(0, "value"),
             () => P.Arg(0, CilType.Object.Assignable(), "value"));
 
-        var value = method.Match(pattern).Single().Argument("value");
+        var value = method.Match(pattern).Single().Captures.Argument("value");
 
         Assert.Equal(0, value.ParameterIndex);
     }

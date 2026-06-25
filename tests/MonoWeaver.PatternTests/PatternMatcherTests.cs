@@ -24,10 +24,10 @@ public sealed class PatternMatcherTests
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
         var match = PatternMatcher.For(method).Find(pattern).Single();
-        var hook = match.Value("hook");
+        var hook = match.Captures.Value("hook");
 
-        AssertCallTo(hook.ProducerInstruction, nameof(A.B));
-        Assert.Same(hook.ProducerInstruction, hook.AfterUseInstruction);
+        AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
+        Assert.Same(hook.DefinitionInstruction, hook.ResultInstruction);
     }
 
     [Fact]
@@ -37,11 +37,11 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Temporary");
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-        var hook = PatternMatcher.For(method).Find(pattern).Single().Value("hook");
+        var hook = PatternMatcher.For(method).Find(pattern).Single().Captures.Value("hook");
 
-        AssertCallTo(hook.ProducerInstruction, nameof(A.B));
-        Assert.True(hook.AfterUseInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S,
-            "AfterUse must target the concrete ldloc consumed by C().");
+        AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
+        Assert.True(hook.ResultInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S,
+            "ResultInstruction must target the concrete ldloc consumed by C().");
     }
 
     [Fact]
@@ -55,9 +55,9 @@ public sealed class PatternMatcherTests
             && (Ops.CallC() || Ops.CallD()));
 
         var match = PatternMatcher.For(method).Find(pattern).Single();
-        var ab = match.Condition("ab");
-        Assert.True(ab.TrueExits.Count == 1, "A && B has one true exit into the remaining condition.");
-        Assert.True(ab.FalseExits.Count == 2, "A && B has two short-circuit false exits.");
+        var ab = match.Captures.Condition("ab");
+        Assert.True(ab.Fragment.TrueExits.Count == 1, "A && B has one true exit into the remaining condition.");
+        Assert.True(ab.Fragment.FalseExits.Count == 2, "A && B has two short-circuit false exits.");
         Assert.True(ab.CanRewrite, ab.RewriteFailureReason ?? "The captured condition should be rewritable.");
     }
 
@@ -71,7 +71,7 @@ public sealed class PatternMatcherTests
             .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
 
         var match = PatternMatcher.For(method).Find(pattern).Single();
-        Assert.True(match.Local("ret").Variable.Index >= 0,
+        Assert.True(match.Captures.Local("ret").Variable.Index >= 0,
             "The unique XXX() definition should identify a concrete local.");
     }
 
@@ -93,10 +93,10 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Context");
 
         var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).D());
-        var hook = PatternMatcher.For(method).Find(pattern).Single().Value("hook");
+        var hook = PatternMatcher.For(method).Find(pattern).Single().Captures.Value("hook");
 
-        AssertCallTo(hook.ProducerInstruction, nameof(A.B));
-        AssertCallTo(hook.AfterUseInstruction.Next, nameof(B.D));
+        AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
+        AssertCallTo(hook.ResultInstruction.Next, nameof(B.D));
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public sealed class PatternMatcherTests
             .Find(Cil.Value(() => P.Arg<B>(0).Select("selected")))
             .Single();
 
-        var operand = Assert.IsType<MethodReference>(match.Value().ProducerInstruction.Operand);
+        var operand = Assert.IsType<MethodReference>(match.DefinitionInstruction.Operand);
         Assert.Equal(nameof(B.Select), operand.Name);
         Assert.True(operand.Parameters.Single().ParameterType.MetadataType == MetadataType.String,
             "Method matching must include the exact overload signature and literal argument.");
@@ -124,10 +124,10 @@ public sealed class PatternMatcherTests
         var match = PatternMatcher.For(method)
             .Find(Cil.Value(() => P.Arg<object>(0, "value")))
             .Single();
-        var value = match.Argument("value");
+        var value = match.Captures.Argument("value");
 
         Assert.True(value.ParameterIndex == 0, "ParameterDefinition operands must keep explicit parameter indexes.");
-        Assert.True(value.ProducerInstruction.OpCode.Code is Code.Ldarg or Code.Ldarg_S or Code.Ldarg_0,
+        Assert.True(value.DefinitionInstruction.OpCode.Code is Code.Ldarg or Code.Ldarg_S or Code.Ldarg_0,
             "A reference-assignable argument should match through StackType compatibility.");
     }
 
@@ -138,7 +138,7 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Constants");
 
         var match = PatternMatcher.For(method).Find(Cil.Value(() => 1.0)).Single();
-        Assert.Equal(Code.Ldc_R8, match.Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldc_R8, match.DefinitionInstruction.OpCode.Code);
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public sealed class PatternMatcherTests
             .Find(Cil.Value(() => new int[P.Arg<int>(0)]))
             .Single();
 
-        Assert.Equal(Code.Newarr, match.Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Newarr, match.DefinitionInstruction.OpCode.Code);
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public sealed class PatternMatcherTests
             .Find(Cil.Value(() => P.Arg<int[]>(0)[1]))
             .Single();
 
-        Assert.True(match.Value().ProducerInstruction.OpCode.Code is Code.Ldelem_I4 or Code.Ldelem_Any,
+        Assert.True(match.DefinitionInstruction.OpCode.Code is Code.Ldelem_I4 or Code.Ldelem_Any,
             "ldelem should be modeled as a matchable array element read.");
     }
 
@@ -227,7 +227,7 @@ public sealed class PatternMatcherTests
             .Find(Cil.Value(() => P.Arg<int[]>(0).Length))
             .Single();
 
-        Assert.Equal(Code.Ldlen, match.Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldlen, match.DefinitionInstruction.OpCode.Code);
     }
 
     [Fact]
@@ -245,18 +245,14 @@ public sealed class PatternMatcherTests
     }
 
     [Fact]
-    public void MonoModTransformLeavesReplacementOnStack()
+    public void TransformLeavesReplacementOnStack()
     {
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "ChainTransform");
 
-        using var context = new ILContext(method);
-        context.Invoke(il =>
-        {
-            var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-            var hook = il.Match(pattern).Single().Value("hook");
-            hook.AfterUse(il).Transform((Func<B, B>)Ops.IdentityB).LeaveOnStack();
-        });
+        var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
+        var hook = method.Match(pattern).Single().Captures.Value("hook");
+        hook.Transform((Func<B, B>)Ops.IdentityB).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
@@ -267,18 +263,14 @@ public sealed class PatternMatcherTests
     }
 
     [Fact]
-    public void MonoModObservePreservesOriginalValue()
+    public void ObservePreservesOriginalValue()
     {
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Observe");
 
-        using var context = new ILContext(method);
-        context.Invoke(il =>
-        {
-            var hook = il.Match(Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C()))
-                .Single().Value("hook");
-            hook.AfterUse(il).Observe((Action<B>)Ops.ObserveB);
-        });
+        var hook = method.Match(Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C()))
+            .Single().Captures.Value("hook");
+        hook.Observe((Action<B>)Ops.ObserveB).Apply();
 
         var duplicate = method.Body.Instructions.Single(instruction => instruction.OpCode.Code == Code.Dup);
         AssertCallTo(duplicate.Previous, nameof(A.B));
@@ -294,12 +286,8 @@ public sealed class PatternMatcherTests
         var temp = method.Body.Variables.FirstOrDefault()
             ?? throw new InvalidOperationException("The fixture method should contain a compiler-generated local.");
 
-        using var context = new ILContext(method);
-        context.Invoke(il =>
-        {
-            var match = il.Match(Cil.Value(() => P.Arg<int>(0))).Single();
-            match.Before(il).Call((Func<int>)Ops.FortyTwo).StoreLocal(temp);
-        });
+        var match = method.Match(Cil.Value(() => P.Arg<int>(0))).Single();
+        match.Replace((Func<int>)Ops.FortyTwo).Apply();
 
         Assert.Equal(Code.Call, method.Body.Instructions[0].OpCode.Code);
         Assert.True(method.Body.Instructions[1].OpCode.Code is Code.Stloc or Code.Stloc_S,
@@ -308,24 +296,20 @@ public sealed class PatternMatcherTests
     }
 
     [Fact]
-    public void MonoModConditionTransformProducesValidIL()
+    public void ConditionTransformProducesValidIL()
     {
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "ConditionTransform");
 
-        using var context = new ILContext(method);
-        context.Invoke(il =>
-        {
-            var pattern = Cil.Condition(() =>
-                P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB()) && (Ops.CallC() || Ops.CallD()));
-            var condition = il.Match(pattern).Single().Condition("ab");
-            condition.Transform(il, (Func<bool, bool>)Ops.IdentityBool);
-        });
+        var pattern = Cil.Condition(() =>
+            P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB()) && (Ops.CallC() || Ops.CallD()));
+        var condition = method.Match(pattern).Single().Captures.Condition("ab");
+        condition.Transform((Func<bool, bool>)Ops.IdentityBool).Apply();
 
         var callbackCalls = method.Body.Instructions.Count(static instruction =>
             instruction.OpCode.Code == Code.Call
             && instruction.Operand is MethodReference { Name: nameof(Ops.IdentityBool) });
-        Assert.Equal(1, callbackCalls);
+        Assert.Equal(condition.Fragment.TrueExits.Count + condition.Fragment.FalseExits.Count, callbackCalls);
         Assert.True(!HasVerificationErrors(method), "The rewritten short-circuit condition must remain valid IL.");
     }
 
@@ -336,12 +320,12 @@ public sealed class PatternMatcherTests
         var method = FixtureMethod(module, "Select");
         var touch = FixtureMethod(module, "Touch");
         var match = method.Match(Cil.Value(() => P.Arg<int>(1))).Single();
-        var anchor = match.Value().FirstInstruction;
+        var anchor = match.FirstInstruction;
         var branch = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code is Code.Brfalse or Code.Brfalse_S);
         var originalBranchTarget = Assert.IsType<Instruction>(branch.Operand);
 
-        match.BeforeEvaluation().CallVoid(touch);
+        match.Before(touch).Apply();
 
         Assert.Equal(Code.Brfalse, branch.OpCode.Code);
         Assert.Same(originalBranchTarget, branch.Operand);

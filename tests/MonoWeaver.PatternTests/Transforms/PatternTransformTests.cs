@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using MonoWeaver.CFG;
 using MonoWeaver.Cecil;
 using MonoWeaver.Patterns;
 using MonoWeaver.Utils;
@@ -16,14 +17,14 @@ public sealed class PatternTransformTests
 {
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void TransformAfterUseLeavesReplacementForConsumer(PatternDsl dsl)
+    public void TransformCaptureLeavesReplacementForConsumer(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "ChainTransform");
         var pattern = ChainPattern(dsl);
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.IdentityB))!);
 
-        method.Match(pattern).Single().Value("hook").AfterUse().Transform(callback).Apply();
+        method.Match(pattern).Single().Captures.Value("hook").Transform(callback).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
@@ -35,19 +36,60 @@ public sealed class PatternTransformTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void DelegateTransformAfterUseLeavesReplacementForConsumer(PatternDsl dsl)
+    public void DelegateTransformCaptureLeavesReplacementForConsumer(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "ChainTransform");
 
-        method.Match(ChainPattern(dsl)).Single().Value("hook").AfterUse()
-            .Transform((Func<B, B>)Ops.IdentityB).Apply();
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook").Transform((Func<B, B>)Ops.IdentityB).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
             && instruction.Operand is MethodReference { Name: nameof(Ops.IdentityB) });
         PatternTestSupport.AssertCallTo(callbackCall.Previous, nameof(A.B));
         PatternTestSupport.AssertCallTo(callbackCall.Next, nameof(B.C));
+        PatternTestSupport.AssertNoVerificationErrors(method);
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void ReplaceCaptureProducerReplacesCapturedIlRange(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "ChainTransform");
+
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook")
+            .Replace(m => new[] { CreateNewB(m) })
+            .Apply(VerifyOptions.Full);
+
+        Assert.DoesNotContain(method.Body.Instructions, instruction =>
+            (instruction.OpCode.Code is Code.Call or Code.Callvirt)
+            && instruction.Operand is MethodReference { Name: nameof(A.B) });
+        var newB = method.Body.Instructions.Single(instruction =>
+            instruction.OpCode.Code == Code.Newobj
+            && instruction.Operand is MethodReference { DeclaringType.Name: nameof(B) });
+        PatternTestSupport.AssertCallTo(newB.Next, nameof(B.C));
+        PatternTestSupport.AssertNoVerificationErrors(method);
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void ReplaceReplacesConcreteTemporaryLoadOnly(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "Temporary");
+
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook")
+            .Replace(m => new[] { CreateNewB(m) })
+            .Apply(VerifyOptions.Full);
+
+        Assert.Contains(method.Body.Instructions, instruction =>
+            (instruction.OpCode.Code is Code.Call or Code.Callvirt)
+            && instruction.Operand is MethodReference { Name: nameof(A.B) });
+        var newB = method.Body.Instructions.Single(instruction =>
+            instruction.OpCode.Code == Code.Newobj
+            && instruction.Operand is MethodReference { DeclaringType.Name: nameof(B) });
+        PatternTestSupport.AssertCallTo(newB.Next, nameof(B.C));
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
@@ -60,8 +102,7 @@ public sealed class PatternTransformTests
         var captured = new B();
         Func<B, B> callback = value => ReferenceEquals(captured, value) ? captured : value;
 
-        method.Match(ChainPattern(dsl)).Single().Value("hook").AfterUse()
-            .Transform(callback).Apply();
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook").Transform(callback).Apply();
 
         Assert.Equal(1, RuntimeInvokeCallCount(method));
         PatternTestSupport.AssertNoVerificationErrors(method);
@@ -75,7 +116,7 @@ public sealed class PatternTransformTests
         var method = PatternTestSupport.FixtureMethod(module, "Observe");
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.ObserveB))!);
 
-        method.Match(ChainPattern(dsl)).Single().Value("hook").AfterUse().Observe(callback).Apply();
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook").Observe(callback).Apply();
 
         var duplicate = method.Body.Instructions.Single(instruction => instruction.OpCode.Code == Code.Dup);
         PatternTestSupport.AssertCallTo(duplicate.Previous, nameof(A.B));
@@ -90,8 +131,7 @@ public sealed class PatternTransformTests
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "Observe");
 
-        method.Match(ChainPattern(dsl)).Single().Value("hook").AfterUse()
-            .Observe((Action<B>)Ops.ObserveB).Apply();
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook").Observe((Action<B>)Ops.ObserveB).Apply();
 
         var duplicate = method.Body.Instructions.Single(instruction => instruction.OpCode.Code == Code.Dup);
         PatternTestSupport.AssertCallTo(duplicate.Previous, nameof(A.B));
@@ -107,8 +147,7 @@ public sealed class PatternTransformTests
         var method = PatternTestSupport.FixtureMethod(module, "Observe");
         var receiver = new RuntimeDelegateReceiver();
 
-        method.Match(ChainPattern(dsl)).Single().Value("hook").AfterUse()
-            .Observe((Action<B>)receiver.ObserveB).Apply();
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook").Observe((Action<B>)receiver.ObserveB).Apply();
 
         Assert.Equal(1, RuntimeInvokeCallCount(method));
         PatternTestSupport.AssertNoVerificationErrors(method);
@@ -123,8 +162,7 @@ public sealed class PatternTransformTests
         Action<B> callback = Ops.ObserveB;
         callback += Ops.ObserveB;
 
-        method.Match(ChainPattern(dsl)).Single().Value("hook").AfterUse()
-            .Observe(callback).Apply();
+        method.Match(ChainPattern(dsl)).Single().Captures.Value("hook").Observe(callback).Apply();
 
         Assert.Equal(1, RuntimeInvokeCallCount(method));
         Assert.DoesNotContain(method.Body.Instructions, instruction =>
@@ -163,12 +201,10 @@ public sealed class PatternTransformTests
         try
         {
             var transform = transformMethod.Match(ChainPattern(PatternDsl.CilExpr)).Single()
-                .Value("hook")
-                .AfterUse()
+                .Captures.Value("hook")
                 .Transform((Func<B, B>)(value => ReferenceEquals(value, captured) ? captured : value));
             var observe = observeMethod.Match(ChainPattern(PatternDsl.CilExpr)).Single()
-                .Value("hook")
-                .AfterUse()
+                .Captures.Value("hook")
                 .Observe((Action<B>)receiver.ObserveB);
 
             Assert.Empty(loadedAssemblies);
@@ -203,19 +239,18 @@ public sealed class PatternTransformTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void InsertionCallCanStoreResultInExistingLocal(PatternDsl dsl)
+    public void ReplaceValueCanFeedExistingLocalStore(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "BeforeExpression");
-        var temp = method.Body.Variables[0];
         var pattern = DualPattern.Value(dsl,
             () => P.Arg<int>(0),
             () => P.Arg(0, CilType.Int32));
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.FortyTwo))!);
 
         var match = Assert.Single(method.Match(pattern).Where(candidate =>
-            ReferenceEquals(candidate.Value().ProducerInstruction, candidate.Value().AfterUseInstruction)));
-        match.BeforeEvaluation().CallValue(callback).StoreLocal(temp).Apply();
+            ReferenceEquals(candidate.DefinitionInstruction, candidate.ResultInstruction)));
+        match.Replace(callback).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
@@ -227,18 +262,17 @@ public sealed class PatternTransformTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void DelegateInsertionCallCanStoreResultInExistingLocal(PatternDsl dsl)
+    public void DelegateReplaceValueCanFeedExistingLocalStore(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "BeforeExpression");
-        var temp = method.Body.Variables[0];
         var pattern = DualPattern.Value(dsl,
             () => P.Arg<int>(0),
             () => P.Arg(0, CilType.Int32));
 
         var match = Assert.Single(method.Match(pattern).Where(candidate =>
-            ReferenceEquals(candidate.Value().ProducerInstruction, candidate.Value().AfterUseInstruction)));
-        match.BeforeEvaluation().CallValue((Func<int>)Ops.FortyTwo).StoreLocal(temp).Apply();
+            ReferenceEquals(candidate.DefinitionInstruction, candidate.ResultInstruction)));
+        match.Replace((Func<int>)Ops.FortyTwo).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
@@ -250,7 +284,7 @@ public sealed class PatternTransformTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void InsertionCallCanStoreResultInCapturedLocal(PatternDsl dsl)
+    public void ReplaceCapturedLocalLoadWithCallback(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "BeforeExpression");
@@ -260,8 +294,8 @@ public sealed class PatternTransformTests
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.FortyTwo))!);
 
         var match = method.Match(pattern).Single();
-        MatchedValue target = match.Value("target");
-        match.BeforeEvaluation("target").CallValue(callback).Store(target).Apply();
+        ValueCapture target = match.Captures.Value("target");
+        target.Replace(callback).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
@@ -273,7 +307,7 @@ public sealed class PatternTransformTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void InsertionCallCanStoreResultInCapturedArgument(PatternDsl dsl)
+    public void ReplaceCapturedArgumentLoadWithCallback(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "Select");
@@ -283,13 +317,13 @@ public sealed class PatternTransformTests
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.FortyTwo))!);
 
         var match = method.Match(pattern).Single();
-        MatchedValue target = match.Value("target");
-        match.BeforeEvaluation("target").CallValue(callback).Store(target).Apply();
+        ValueCapture target = match.Captures.Value("target");
+        target.Replace(callback).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code == Code.Call
             && instruction.Operand is MethodReference { Name: nameof(Ops.FortyTwo) });
-        Assert.True(callbackCall.Next?.OpCode.Code is Code.Starg or Code.Starg_S);
+        Assert.Equal(Code.Ret, callbackCall.Next?.OpCode.Code);
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
@@ -302,10 +336,10 @@ public sealed class PatternTransformTests
         var pattern = ComplexConditionPattern(dsl);
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.IdentityBool))!);
 
-        var condition = method.Match(pattern).Single().Condition("ab");
+        var condition = method.Match(pattern).Single().Captures.Condition("ab");
         // The pure Cecil backend creates one bridge per outgoing condition edge.
         // A source block can therefore contribute both a taken and a fall-through call site.
-        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
+        var expectedCallSites = condition.Fragment.TrueExits.Count + condition.Fragment.FalseExits.Count;
 
         condition.Transform(callback).Apply();
 
@@ -321,8 +355,8 @@ public sealed class PatternTransformTests
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "ConditionTransform");
-        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Condition("ab");
-        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
+        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Captures.Condition("ab");
+        var expectedCallSites = condition.Fragment.TrueExits.Count + condition.Fragment.FalseExits.Count;
 
         condition.Transform((Func<bool, bool>)Ops.IdentityBool).Apply();
 
@@ -338,8 +372,8 @@ public sealed class PatternTransformTests
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "ConditionTransform");
-        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Condition("ab");
-        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
+        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Captures.Condition("ab");
+        var expectedCallSites = condition.Fragment.TrueExits.Count + condition.Fragment.FalseExits.Count;
         var invert = false;
 
         condition.Transform((Func<bool, bool>)(value => invert ? !value : value)).Apply();
@@ -354,8 +388,8 @@ public sealed class PatternTransformTests
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "ConditionTransform");
-        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Condition("ab");
-        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
+        var condition = method.Match(ComplexConditionPattern(dsl)).Single().Captures.Condition("ab");
+        var expectedCallSites = condition.Fragment.TrueExits.Count + condition.Fragment.FalseExits.Count;
         var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.ObserveBool))!);
 
         condition.Observe(callback).Apply();
@@ -368,26 +402,21 @@ public sealed class PatternTransformTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void ConditionObserveCanStoreCallbackResultInCapturedTarget(PatternDsl dsl)
+    public void ConditionObserveCanReadExplicitArgument(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "ConditionObserve");
         var match = method.Match(ObserveConditionPattern(dsl)).Single();
-        var condition = match.Condition("gate");
-        var target = match.Value("target");
-        var expectedCallSites = condition.TrueExits.Count + condition.FalseExits.Count;
-        var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.ObserveConditionB))!);
+        var condition = match.Captures.Condition("gate");
+        var expectedCallSites = condition.Fragment.TrueExits.Count + condition.Fragment.FalseExits.Count;
+        var callback = CilMethodSpec.From(typeof(Ops).GetMethod(nameof(Ops.ObserveConditionTarget))!);
 
-        condition.Observe(callback, args => args.Capture(target))
-            .Store(target)
-            .Apply();
+        condition.Observe(callback, args => args.Arg(0)).Apply();
 
         var callbackCalls = method.Body.Instructions.Where(instruction =>
             instruction.OpCode.Code == Code.Call
-            && instruction.Operand is MethodReference { Name: nameof(Ops.ObserveConditionB) }).ToArray();
+            && instruction.Operand is MethodReference { Name: nameof(Ops.ObserveConditionTarget) }).ToArray();
         Assert.Equal(expectedCallSites, callbackCalls.Length);
-        Assert.All(callbackCalls, instruction =>
-            Assert.True(instruction.Next?.OpCode.Code is Code.Starg or Code.Starg_S));
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
@@ -402,12 +431,12 @@ public sealed class PatternTransformTests
             () => P.Arg<int>(1),
             () => P.Arg(1, CilType.Int32));
         var match = method.Match(pattern).Single();
-        var anchor = match.Value().FirstInstruction;
+        var anchor = match.FirstInstruction;
         var branch = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code is Code.Brfalse or Code.Brfalse_S);
         var originalBranchTarget = Assert.IsType<Instruction>(branch.Operand);
 
-        match.BeforeEvaluation().CallVoid(touch).Apply();
+        match.Before(touch).Apply();
 
         Assert.Same(originalBranchTarget, branch.Operand);
         Assert.Equal(Code.Call, anchor.Previous?.OpCode.Code);
@@ -425,12 +454,12 @@ public sealed class PatternTransformTests
             () => P.Arg<int>(1),
             () => P.Arg(1, CilType.Int32));
         var match = method.Match(pattern).Single();
-        var anchor = match.Value().FirstInstruction;
+        var anchor = match.FirstInstruction;
         var branch = method.Body.Instructions.Single(instruction =>
             instruction.OpCode.Code is Code.Brfalse or Code.Brfalse_S);
         var originalBranchTarget = Assert.IsType<Instruction>(branch.Operand);
 
-        match.BeforeEvaluation().CallVoid((Action)Ops.ConsumeNothing).Apply();
+        match.Before((Action)Ops.ConsumeNothing).Apply();
 
         Assert.Same(originalBranchTarget, branch.Operand);
         Assert.Equal(Code.Call, anchor.Previous?.OpCode.Code);
@@ -438,7 +467,7 @@ public sealed class PatternTransformTests
         PatternTestSupport.AssertNoVerificationErrors(method);
     }
 
-    private static ExpressionPattern ChainPattern(PatternDsl dsl)
+    private static ValuePattern<C> ChainPattern(PatternDsl dsl)
     {
         var aType = RuntimeSymbols.Type<A>(assignable: true);
         var callB = RuntimeSymbols.Method<A>(nameof(A.B));
@@ -448,7 +477,7 @@ public sealed class PatternTransformTests
             () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callC));
     }
 
-    private static ExpressionPattern ComplexConditionPattern(PatternDsl dsl)
+    private static ConditionPattern ComplexConditionPattern(PatternDsl dsl)
     {
         var bType = RuntimeSymbols.Type<B>(assignable: true);
         var callA = RuntimeSymbols.Method<Ops>(nameof(Ops.CallA));
@@ -462,7 +491,7 @@ public sealed class PatternTransformTests
                 .AndAlso(P.Call(callC).OrElse(P.Call(callD))));
     }
 
-    private static ExpressionPattern ObserveConditionPattern(PatternDsl dsl)
+    private static ConditionPattern ObserveConditionPattern(PatternDsl dsl)
     {
         var bType = RuntimeSymbols.Type<B>(assignable: true);
         var callA = RuntimeSymbols.Method<Ops>(nameof(Ops.CallA));
@@ -488,6 +517,13 @@ public sealed class PatternTransformTests
 
     private static string AssemblyScopeName(MethodReference reference)
         => Assert.IsType<AssemblyNameReference>(reference.DeclaringType.Scope).Name;
+
+    private static Instruction CreateNewB(ModuleDefinition module)
+    {
+        var constructor = typeof(B).GetConstructor(Type.EmptyTypes)
+                          ?? throw new MissingMethodException(typeof(B).FullName, ".ctor");
+        return Instruction.Create(OpCodes.Newobj, module.ImportReference(constructor));
+    }
 
     private sealed class RuntimeDelegateReceiver
     {

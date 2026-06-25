@@ -77,7 +77,7 @@ module.Write("Game.Patched.dll");
 
 - `Transform` 消费原值，并把回调返回值留给原逻辑。
 - `Observe` 复制原值后调用 `void` 回调，原值继续参与原逻辑。
-- `CallVoid` / `CallValue` 插入独立调用；非 `void` 结果可留栈、丢弃或写入 local/argument。
+- `Call` 插入独立调用；非 `void` 结果可留栈、丢弃或写入 local/argument。
 - transform 接口会先返回 `CallResultPlan`；必须调用 `Apply()` 或 `ApplyWithVerify(...)` 才会真正修改 IL。
 
 ## 两套 Pattern DSL
@@ -149,4 +149,4 @@ dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
 dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
 ```
 
-核心项目引用 Mono.Cecil `[0.11.2,)`；如果需要 0.10.x版本的 Mono.Cecil支持请切换cecil-0.10-compat分支
+当前分支面向 Mono.Cecil `[0.10.0, 0.10.4]`；测试项目使用 Mono.Cecil `0.10.4` 和 MonoMod `19.9.1.6`。

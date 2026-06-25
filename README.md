@@ -78,7 +78,7 @@ At a matched value site:
 
 - `Transform` consumes the original value and leaves the callback result for the original consumer.
 - `Observe` duplicates the original value, calls a `void` callback, and preserves the original value.
-- `CallVoid` and `CallValue` insert an independent call; non-void results can be left on the stack, discarded, or stored.
+- `Call` inserts an independent call; non-void results can be left on the stack, discarded, or stored.
 - Transform APIs return a `CallResultPlan`; call `Apply()` or `ApplyWithVerify(...)` to commit the IL change.
 
 ## Two pattern DSLs
@@ -150,4 +150,4 @@ dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
 dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
 ```
 
-The core project references Mono.Cecil `[0.11.2,)`. Use the `cecil-0.10-compat` branch if you need Mono.Cecil 0.10.x support.
+This branch targets Mono.Cecil `[0.10.0, 0.10.4]`; tests use Mono.Cecil `0.10.4` and MonoMod `19.9.1.6`.

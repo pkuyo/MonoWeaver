@@ -16,7 +16,7 @@ public sealed class ArrayPatternTests
             () => new int[P.Arg<int>(0)],
             () => P.NewArray(CilType.Int32, P.Arg(0, CilType.Int32)));
 
-        Assert.Equal(Code.Newarr, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Newarr, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -29,7 +29,7 @@ public sealed class ArrayPatternTests
             () => new string[P.Arg<int>(0)],
             () => P.NewArray(CilType.String, P.Arg(0, CilType.Int32)));
 
-        Assert.Equal(Code.Newarr, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Newarr, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]
@@ -43,7 +43,7 @@ public sealed class ArrayPatternTests
             () => P.Arg<int[]>(0)[1],
             () => P.Arg(0, arrayType).ElementAt(1, CilType.Int32));
 
-        var code = method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code;
+        var code = method.Match(pattern).Single().DefinitionInstruction.OpCode.Code;
         Assert.True(code is Code.Ldelem_I4 or Code.Ldelem_Any);
     }
 
@@ -58,7 +58,7 @@ public sealed class ArrayPatternTests
             () => P.Arg<string[]>(0)[1],
             () => P.Arg(0, arrayType).ElementAt(1, CilType.String));
 
-        var code = method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code;
+        var code = method.Match(pattern).Single().DefinitionInstruction.OpCode.Code;
         Assert.True(code is Code.Ldelem_Ref or Code.Ldelem_Any);
     }
 
@@ -72,7 +72,7 @@ public sealed class ArrayPatternTests
             () => P.Arg<int[]>(0).Length,
             () => P.Arg(0, CilType.Int32.MakeArrayType()).Length());
 
-        Assert.Equal(Code.Ldlen, method.Match(pattern).Single().Value().ProducerInstruction.OpCode.Code);
+        Assert.Equal(Code.Ldlen, method.Match(pattern).Single().DefinitionInstruction.OpCode.Code);
     }
 
     [Theory]

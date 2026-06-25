@@ -5,50 +5,23 @@ using System.Linq.Expressions;
 namespace MonoWeaver.Patterns;
 
 /// <summary>
-/// 描述匹配表达式在目标方法中的使用方式。
-/// </summary>
-public enum PatternKind
-{
-    Value, //匹配表达式返回一个值
-    Effect, //匹配表达式不返回值
-    Condition, //匹配表达式返回 bool 并影响分支
-}
-
-/// <summary>
 /// 控制 matcher 在匹配时是否把 compiler-generated local 视为 transparent。
 /// matcher 会保持保守：有歧义的 local 永远不会成为 match。
 /// </summary>
 public enum TemporaryNormalization
 {
-    /// <summary>
-    /// 永不从 local read 追踪到它的 definition。
-    /// </summary>
+    /// <summary>永不从 local read 追踪到它的 definition。</summary>
     None,
 
-    /// <summary>
-    /// 只有在恰好一个 store 能到达该 load，且 local 没有被取地址时，才追踪该 local。
-    /// </summary>
+    /// <summary>只有在恰好一个 store 能到达该 load，且 local 没有被取地址时，才追踪该 local。</summary>
     UniqueDefinitions
 }
 
-/// <summary>
-/// 将 pattern 匹配到方法时使用的选项。
-/// </summary>
+/// <summary>将 pattern 匹配到方法时使用的选项。</summary>
 public sealed class PatternOptions
 {
-    //匹配临时变量 local 的策略
     public TemporaryNormalization TemporaryNormalization { get; set; } = TemporaryNormalization.UniqueDefinitions;
-
-    //忽略 call/callvirt 差异（C# 编译 non-virtual 调用时也可能生成 callvirt）
     public bool IgnoreCallOpcodeDifference { get; set; } = true;
-
-    //透明跳转展开，例如：
-    //brtrue.s IL_0010
-    //IL_0010:
-    //nop
-    //br.s IL_0020
-    //IL_0020:
-    //....
     public bool IgnoreTransparentControlFlow { get; set; } = true;
 }
 
@@ -57,161 +30,161 @@ public sealed class PatternOptions
 /// </summary>
 public sealed class LocalDefinitionConstraint
 {
-    internal LocalDefinitionConstraint(string captureName, ExpressionPattern definition)
+    internal LocalDefinitionConstraint(string captureName, ValuePattern definition)
     {
         CaptureName = captureName;
         Definition = definition;
     }
 
-    /// <summary>
-    /// 传给 <see cref="P.Local{T}(string)"/> 的名称。
-    /// </summary>
     public string CaptureName { get; }
-
-    /// <summary>
-    /// unique reaching definition 必须存储的 expression。
-    /// </summary>
-    public ExpressionPattern Definition { get; }
+    public ValuePattern Definition { get; }
 }
 
-/// <summary>
-/// 从 lambda 表达式构建的可复用 pattern。
-/// lambda 只会被检查，永远不会被编译或执行。
-/// </summary>
-public sealed class ExpressionPattern
+/// <summary>expression-pattern 的公共基类。具体 pattern kind 由派生类型在编译期表达。</summary>
+public abstract class ExpressionPattern
 {
     private readonly List<LocalDefinitionConstraint> _localDefinitionConstraints = new();
 
-    internal ExpressionPattern(PatternKind kind, PatternNode root, PatternOptions? options)
+    private protected ExpressionPattern(PatternNode root, PatternOptions? options)
     {
-        Kind = kind;
+        Root = root ?? throw new ArgumentNullException(nameof(root));
         root.IsRoot = true;
-        Root = root;
         Options = options ?? new PatternOptions();
     }
 
-    /// <summary>
-    /// 此 pattern 的使用方式。
-    /// </summary>
-    public PatternKind Kind { get; }
-
-    /// <summary>
-    /// 解析后的模式树。
-    /// </summary>
     public PatternNode Root { get; }
-
-    /// <summary>
-    /// matcher 应用的选项。
-    /// </summary>
     public PatternOptions Options { get; }
-
-    /// <summary>
-    /// 捕获的 local 的附加约束。
-    /// </summary>
     public IReadOnlyList<LocalDefinitionConstraint> LocalDefinitionConstraints => _localDefinitionConstraints;
 
-    /// <summary>
-    /// 要求由 <paramref name="captureName"/> 捕获的 local 恰好有一个 stloc 来源，
-    /// 并要求其 stloc 来源匹配 <paramref name="definition"/>。
-    /// </summary>
-    public ExpressionPattern LocalDefinedBy(string captureName, ExpressionPattern definition)
+    private protected void AddLocalDefinitionConstraint(string captureName, ValuePattern definition)
     {
         if (string.IsNullOrWhiteSpace(captureName))
             throw new ArgumentException("A capture name is required.", nameof(captureName));
         if (definition is null)
             throw new ArgumentNullException(nameof(definition));
-        if (definition.Kind != PatternKind.Value)
-            throw new ArgumentException("A local definition constraint must use a value pattern.", nameof(definition));
-
         _localDefinitionConstraints.Add(new LocalDefinitionConstraint(captureName, definition));
-        return this;
     }
-
 }
 
-/// <summary>
-/// expression-pattern DSL 的入口。
-/// </summary>
+/// <summary>匹配一个会在当前 occurrence 产生值的表达式。</summary>
+public class ValuePattern : ExpressionPattern
+{
+    internal ValuePattern(PatternNode root, PatternOptions? options)
+        : base(root, options) { }
+
+    public ValuePattern LocalDefinedBy(string captureName, ValuePattern definition)
+    {
+        AddLocalDefinitionConstraint(captureName, definition);
+        return this;
+    }
+}
+
+/// <summary>由强类型 lambda 构造的 value pattern。</summary>
+public sealed class ValuePattern<T> : ValuePattern
+{
+    internal ValuePattern(PatternNode root, PatternOptions? options)
+        : base(root, options) { }
+
+    public new ValuePattern<T> LocalDefinedBy(string captureName, ValuePattern definition)
+    {
+        AddLocalDefinitionConstraint(captureName, definition);
+        return this;
+    }
+}
+
+/// <summary>匹配一个完整的无结果 effect，包括 void expression 或被 pop 的 value expression。</summary>
+public sealed class EffectPattern : ExpressionPattern
+{
+    internal EffectPattern(PatternNode root, PatternOptions? options)
+        : base(root, options) { }
+
+    public EffectPattern LocalDefinedBy(string captureName, ValuePattern definition)
+    {
+        AddLocalDefinitionConstraint(captureName, definition);
+        return this;
+    }
+}
+
+/// <summary>匹配一个会决定 true/false 控制流的 Boolean condition。</summary>
+public sealed class ConditionPattern : ExpressionPattern
+{
+    internal ConditionPattern(PatternNode root, PatternOptions? options)
+        : base(root, options) { }
+
+    public ConditionPattern LocalDefinedBy(string captureName, ValuePattern definition)
+    {
+        AddLocalDefinitionConstraint(captureName, definition);
+        return this;
+    }
+}
+
+/// <summary>expression-pattern DSL 的入口。</summary>
 public static class Cil
 {
-    /// <summary>
-    /// 为会返回一个值的表达式创建 pattern。
-    /// 不需要实际保存到 local 或 arg，只要表达式返回值即可。
-    /// </summary>
-    public static ExpressionPattern Value<T>(Expression<Func<T>> expression, PatternOptions? options = null)
-        => Build(PatternKind.Value, expression, options);
+    public static ValuePattern<T> Value<T>(Expression<Func<T>> expression, PatternOptions? options = null)
+        => new(Parse(expression), options);
 
-    /// <summary>
-    /// 为无返回值的表达式创建 pattern。
-    /// </summary>
-    public static ExpressionPattern Effect(Expression<Action> expression, PatternOptions? options = null)
-        => Build(PatternKind.Effect, expression, options);
+    public static EffectPattern Effect(Expression<Action> expression, PatternOptions? options = null)
+        => new(Parse(expression), options);
 
-    /// <summary>
-    /// 为会返回 bool 并可能进行分支的表达式创建 pattern。
-    /// 会按照短路结构匹配。
-    /// </summary>
-    public static ExpressionPattern Condition(Expression<Func<bool>> expression, PatternOptions? options = null)
-        => Build(PatternKind.Condition, expression, options);
+    public static ConditionPattern Condition(Expression<Func<bool>> expression, PatternOptions? options = null)
+        => new(Parse(expression), options);
 
-    /// <summary>
-    /// 从 metadata-native expression 创建 value pattern；不会加载目标程序集。
-    /// </summary>
-    public static ExpressionPattern Value(CilExpr expression, PatternOptions? options = null)
-        => Build(PatternKind.Value, expression, options);
-
-    /// <summary>
-    /// 从 metadata-native expression 创建 effect pattern；result type 必须为 void。
-    /// </summary>
-    public static ExpressionPattern Effect(CilExpr expression, PatternOptions? options = null)
-    {
-        if (expression is null)
-            throw new ArgumentNullException(nameof(expression));
-        if (!expression.ResultType.IsVoid)
-            throw new ArgumentException("An effect pattern must have Void result type. Use Cil.Discard for a non-void expression whose result is popped.", nameof(expression));
-        return Build(PatternKind.Effect, expression, options);
-    }
-
-    /// <summary>
-    /// 从 metadata-native value expression 创建其结果被 pop 丢弃的 effect pattern。
-    /// </summary>
-    public static ExpressionPattern Discard(CilExpr expression, PatternOptions? options = null)
+    public static ValuePattern Value(CilExpr expression, PatternOptions? options = null)
     {
         if (expression is null)
             throw new ArgumentNullException(nameof(expression));
         if (expression.ResultType.IsVoid)
-            throw new ArgumentException("Cil.Discard requires a non-void expression. Use Cil.Effect for a void operation.", nameof(expression));
-        return Build(PatternKind.Effect, expression, options);
+            throw new ArgumentException("A value pattern must have a non-Void result type.", nameof(expression));
+        return new ValuePattern(expression.Node, options);
     }
 
-    /// <summary>
-    /// 从 metadata-native expression 创建短路条件 pattern。
-    /// </summary>
-    public static ExpressionPattern Condition(CilExpr expression, PatternOptions? options = null)
+    public static EffectPattern Effect(CilExpr expression, PatternOptions? options = null)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        if (!expression.ResultType.IsVoid)
+        {
+            throw new ArgumentException(
+                "An effect pattern must have Void result type. Use Cil.Discard for a value whose result is popped.",
+                nameof(expression));
+        }
+        return new EffectPattern(expression.Node, options);
+    }
+
+    public static EffectPattern Discard(CilExpr expression, PatternOptions? options = null)
+    {
+        if (expression is null)
+            throw new ArgumentNullException(nameof(expression));
+        if (expression.ResultType.IsVoid)
+        {
+            throw new ArgumentException(
+                "Cil.Discard requires a non-Void expression. Use Cil.Effect for a Void operation.",
+                nameof(expression));
+        }
+        return new EffectPattern(expression.Node, options);
+    }
+
+    public static ConditionPattern Condition(CilExpr expression, PatternOptions? options = null)
     {
         if (expression is null)
             throw new ArgumentNullException(nameof(expression));
         if (!expression.ResultType.IsBoolean)
             throw new ArgumentException("A condition pattern must have Boolean result type.", nameof(expression));
-        return Build(PatternKind.Condition, expression, options);
+        return new ConditionPattern(expression.Node, options);
     }
 
-    private static ExpressionPattern Build(PatternKind kind, CilExpr expression, PatternOptions? options)
-    {
-        if (expression is null)
-            throw new ArgumentNullException(nameof(expression));
-        return new ExpressionPattern(kind, expression.Node, options);
-    }
-
-    private static ExpressionPattern Build(PatternKind kind, LambdaExpression expression, PatternOptions? options)
+    private static PatternNode Parse(LambdaExpression expression)
     {
         if (expression is null)
             throw new ArgumentNullException(nameof(expression));
         if (expression.Parameters.Count != 0)
-            throw new ArgumentException("CIL patterns currently require a parameterless lambda. Use P.Arg/P.Local/P.Any inside the lambda.", nameof(expression));
-
-        var root = PatternExpressionParser.Parse(expression.Body);
-        return new ExpressionPattern(kind, root, options);
+        {
+            throw new ArgumentException(
+                "CIL patterns require a parameterless lambda. Use P.Arg/P.Local/P.Any inside the lambda.",
+                nameof(expression));
+        }
+        return PatternExpressionParser.Parse(expression.Body);
     }
 }
 
