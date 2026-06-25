@@ -85,6 +85,7 @@ public sealed class ExpressionPattern
     internal ExpressionPattern(PatternKind kind, PatternNode root, PatternOptions? options)
     {
         Kind = kind;
+        root.IsRoot = true;
         Root = root;
         Options = options ?? new PatternOptions();
     }

@@ -15,6 +15,11 @@ public abstract class PatternNode
     /// 此 node 产生的 metadata type 约束。
     /// </summary>
     public CilTypeSpec ResultType { get; }
+
+    /// <summary>
+    /// 是否为根节点
+    /// </summary>
+    public bool IsRoot { get; set; }
 }
 
 /// <summary>

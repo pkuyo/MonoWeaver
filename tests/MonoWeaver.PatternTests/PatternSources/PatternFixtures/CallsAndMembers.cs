@@ -13,6 +13,12 @@ public static partial class Target
         return temp.C();
     }
 
+    public static bool TemporaryValueUsedAfterStore(A value)
+    {
+        var temp = value.B();
+        return temp != null;
+    }
+
     public static B Ambiguous(A value)
     {
         _ = value.B();

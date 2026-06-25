@@ -304,11 +304,15 @@ internal sealed class ExpressionNodeMatcher
             return context.TryAdd(mark.CaptureName, new ValueInternalCapture(mark.CaptureName, matched));
         }
 
-        //IL 有 ldloc 时尝试追踪前继 stloc。
+        // IL 有 ldloc 时且目标匹配表达式不是根节点尝试追踪前继 stloc。
+        // 避免类似于
+        // var temp = a.B();
+        // return temp != null; 匹配  a.B();
+        // 同时匹配到原始位置和 ldloc位置
         if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead
             && _options.TemporaryNormalization == TemporaryNormalization.UniqueDefinitions
             && _model.LocalDefinitions.TryGetUniqueDefinition(localRead,
-                out var store, out var storedValue, out _))
+                out var store, out var storedValue, out _) && !pattern.IsRoot)
         {
             var key = (localRead.ProducerInstruction, store);
             if (_activeLocalExpansion.Add(key))

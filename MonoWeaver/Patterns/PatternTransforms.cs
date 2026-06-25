@@ -95,8 +95,7 @@ public static partial class PatternTransformExtensions
     }
 
     /// <summary>
-    /// Observe condition exits without changing the original branch decision. The callback first parameter
-    /// receives the original Boolean exit value. Non-void callback results may be discarded or stored.
+    /// 获取分支结果但不修改，可存其他值到栈上（不可把返回值直接留栈）
     /// </summary>
     public static CallResultPlan Observe(this MatchedCondition condition, MethodReference callback,
         Action<CallArguments>? additionalArguments = null)
@@ -566,36 +565,53 @@ public sealed class CallResultPlan
     {
         if (_applied)
             throw new InvalidOperationException("This call plan was already applied.");
+        var label = _method.Body.Instructions.FirstOrDefault(i => 
+            i.OpCode.FlowControl is FlowControl.Cond_Branch or FlowControl.Branch && 
+            CecilHelper.IsMonoModILLabel(i.Operand.GetType()));
 
-        if (_customApply is not null)
+        try
         {
+            if (label != null)
+            {
+                CecilHelper.BranchLabelsToTarget(CecilHelper.GetContext(label));
+            }
+            if (_customApply is not null)
+            {
+                _beforeApply?.Invoke();
+                _customApply();
+                _applied = true;
+                return this;
+            }
+
+            if (_customApplyWithPlan is not null)
+            {
+                _beforeApply?.Invoke();
+                _customApplyWithPlan(this);
+                _applied = true;
+                return this;
+            }
+
+            //防止越界
             _beforeApply?.Invoke();
-            _customApply();
+
+            _method.Body.MaxStackSize = checked(_method.Body.MaxStackSize + AdditionalStackSlots);
+            BranchModifier.ExpandShortBranches(_method.Body);
+            var processor = _method.Body.GetILProcessor();
+
+            var current = _site!.Anchor;
+            Instruction? firstInserted = null;
+            Emit(processor, ref current, ref firstInserted);
+
             _applied = true;
             return this;
         }
-
-        if (_customApplyWithPlan is not null)
+        finally
         {
-            _beforeApply?.Invoke();
-            _customApplyWithPlan(this);
-            _applied = true;
-            return this;
+            if (label != null)
+            {
+                CecilHelper.BranchTargetsToLabels(CecilHelper.GetContext(label));
+            }
         }
-
-        //防止越界
-        _beforeApply?.Invoke();
-
-        _method.Body.MaxStackSize = checked(_method.Body.MaxStackSize + AdditionalStackSlots);
-        BranchModifier.ExpandShortBranches(_method.Body);
-        var processor = _method.Body.GetILProcessor();
-
-        var current = _site!.Anchor;
-        Instruction? firstInserted = null;
-        Emit(processor, ref current, ref firstInserted);
-
-        _applied = true;
-        return this;
     }
 
     public CallResultPlan ApplyWithVerify(VerifyOptions options)

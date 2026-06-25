@@ -53,6 +53,32 @@ public sealed class CallsAndMembersPatternTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void TransparentTemporaryDonnotProduceSameRangeForDefinitionAndLoadUseAtRoot(PatternDsl dsl)
+    {
+        using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "TemporaryValueUsedAfterStore");
+        var aType = RuntimeSymbols.Type<A>(assignable: true);
+        var callB = RuntimeSymbols.Method<A>(nameof(A.B));
+        var pattern = DualPattern.Value(dsl,
+            () => P.Arg<A>(0).B(),
+            () => P.Arg(0, aType).Call(callB));
+
+        var matches = method.Match(pattern).ToArray();
+
+        Assert.Single(matches);
+        Assert.DoesNotContain(matches, match => match.Value().AfterUseInstruction.OpCode.Code
+            is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0);
+
+        var noTemporaryExpansion = DualPattern.Value(dsl,
+            () => P.Arg<A>(0).B(),
+            () => P.Arg(0, aType).Call(callB),
+            new PatternOptions { TemporaryNormalization = TemporaryNormalization.None });
+
+        Assert.Single(method.Match(noTemporaryExpansion));
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
     public void MatchesStaticCallWithArguments(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
