@@ -20,6 +20,19 @@ verifier.ThrowIfHasErrors();
 
 `ThrowIfHasErrors()` 只会因为 `Error` 或 `Fatal` 抛出；`Warning` 会保留在 `Diagnostics` 中供调用方决定是否阻止输出。
 
+## 与 transform plan 配合
+
+`Transform`、`Observe`、`CallVoid` 和 `CallValue` 返回的 `CallResultPlan` 可以直接使用 `ApplyWithVerify`：
+
+```csharp
+match.Value("sum")
+     .AfterUse()
+     .Transform(callback)
+     .ApplyWithVerify(VerifyOptions.Full);
+```
+
+`ApplyWithVerify` 会先对 method body、locals、exception handlers 和 `MaxStackSize` 做快照，应用修改后运行 verifier；如果应用或验证失败，会恢复修改前的方法体并重新允许该 plan 再次提交。
+
 ## 验证模式
 
 | 模式 | 内容 |
@@ -48,4 +61,3 @@ verifier.ThrowIfHasErrors();
 - `Context`：相关指令、类型、基本块或异常区域。
 
 直接调用 `ToString()` 会尽量带上 `IL_xxxx` 偏移及上下文，适合日志输出。
-

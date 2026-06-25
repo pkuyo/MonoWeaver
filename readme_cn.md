@@ -10,7 +10,7 @@ MonoWeaver 是一个基于 Mono.Cecil 的 **语义化 CIL 匹配、插入/重写
 
 - 以表达式匹配参数、local、常量、调用、字段、运算、数组以及短路条件。
 - 支持表达式求值前、值产生后以及条件出口上的插入与重写。
-- 纯 Cecil 后端适合离线改写；可选 MonoMod 适配器可直接配合 `ILContext` 和 delegate。
+- 同一套 API 同时支持离线改写、运行时 delegate 回调 (兼容MonoMod Runtimer Detour)。
 - 改写后可检查栈平衡/类型、跳转、异常区域、local 初始化、访问规则和指令操作数。
 
 ## 项目结构
@@ -18,8 +18,7 @@ MonoWeaver 是一个基于 Mono.Cecil 的 **语义化 CIL 匹配、插入/重写
 | 项目 | 作用 |
 | --- | --- |
 | `MonoWeaver` | 匹配器、纯 Cecil 重写、类型扩展、CFG 与验证器。 |
-| `MonoWeaver.MonoMod` | 可选的 `ILContext`/delegate 适配。 |
-| `tests/MonoWeaver.PatternTests` | 表达式匹配与重写测试。 |
+| `tests/MonoWeaver.PatternTests` | 表达式匹配、重写、运行时 delegate 与 MonoMod `ILContext` 兼容测试。 |
 | `tests/MonoWeaver.ILTests` | IL 验证语料与测试。 |
 | `MonoWeaver.Fuzz` | Fuzz程序，测试可赋值判别是否和CLR一致。 |
 | `benchmarks/MonoWeaver.HookBenchmarks` | Hook benchmark。（没什么用，本身项目也以效率为主要目的的） |
@@ -55,9 +54,10 @@ var callback = CilMethodSpec.From(
     typeof(HookCallbacks).GetMethod(nameof(HookCallbacks.ClampDamage))!);
 
 var damage = method.Match(damagePattern).Single().Value("damage");
-damage.AfterUse().Transform(callback);
+damage.AfterUse()
+    .Transform(callback)
+    .ApplyWithVerify(VerifyOptions.Full);
 
-method.Verify(VerifyOptions.Full).ThrowIfHasErrors();
 module.Write("Game.Patched.dll");
 ```
 
@@ -78,6 +78,7 @@ module.Write("Game.Patched.dll");
 - `Transform` 消费原值，并把回调返回值留给原逻辑。
 - `Observe` 复制原值后调用 `void` 回调，原值继续参与原逻辑。
 - `CallVoid` / `CallValue` 插入独立调用；非 `void` 结果可留栈、丢弃或写入 local/argument。
+- transform 接口会先返回 `CallResultPlan`；必须调用 `Apply()` 或 `ApplyWithVerify(...)` 才会真正修改 IL。
 
 ## 两套 Pattern DSL
 
@@ -103,30 +104,41 @@ var scorePattern = Cil.Value(
 
 两种 DSL 最终都会生成同一个 `ExpressionPattern`，后续匹配和重写接口完全一致。
 
-## 纯 Cecil 与 MonoMod
+## 回调与 ILContext
 
-`MonoWeaver` 核心项目不创建 delegate、动态方法，也不要求加载目标程序集，适合离线修改。纯 Cecil 回调使用 static `MethodReference` 或 `CilMethodSpec`，并在真正修改目标模块前检查参数与返回值。
-
-`MonoWeaver.MonoMod` 将相同匹配结果接到 `ILContext` 和 delegate：
+metadata-native `CilMethodSpec` 和强类型 delegate：
 
 ```csharp
-using MonoMod.Cil;
-using MonoWeaver.MonoMod.Patterns;
-
-using var context = new ILContext(method);
-context.Invoke(il =>
-{
-    var value = il.Match(damagePattern).Single().Value("damage");
-    value.AfterUse(il)
-         .Transform((Func<int, int>)HookCallbacks.ClampDamage)
-         .LeaveOnStack();
-});
+damage.AfterUse()
+    .Transform((Func<int, int>)HookCallbacks.ClampDamage)
+    .ApplyWithVerify(VerifyOptions.Full);
 ```
+
+静态 delegate 会被生成为直接调用；实例方法、闭包和 multicast delegate 会存入运行时引用表，并通过 Cecil 生成的 helper invoker 调用。
+
+MonoMod 的 `ILContext` 也可以直接使用同一套 API：
+
+```csharp
+using System;
+using MonoMod.Cil;
+using MonoWeaver.Cecil;
+using MonoWeaver.CFG;
+
+public static void Patch(ILContext il)
+{
+    var value = il.Method.Match(damagePattern).Single().Value("damage");
+    value.AfterUse()
+         .Transform((Func<int, int>)HookCallbacks.ClampDamage)
+         .ApplyWithVerify(VerifyOptions.Full);
+}
+```
+
+如果 `ILContext` 中使用了 MonoMod `ILLabel` branch operand，MonoWeaver 在 `Apply()` 期间会把检测到的 label 解析成 Cecil `Instruction` target，并在提交后恢复回 label operand。需保证ILLabel在Apply时均有有效指向目标。
 
 ## 详细文档
 
 - [Cecil 类型扩展](docs/cecil-extensions.md)：`IsSameWith`、可赋值判断、泛型约束与访问检查。
-- [匹配、插入与重写](docs/matching-and-rewriting.md)：capture、插入点、value/condition transform。
+- [匹配、插入与重写](docs/matching-and-rewriting.md)：语义匹配、修改。
 - [IL 验证](docs/il-verification.md)：验证模式、诊断结果。
 
 ## 构建与测试
@@ -137,3 +149,4 @@ dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
 dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
 ```
 
+核心项目引用 Mono.Cecil `[0.11.2,)`；如果需要 0.10.x版本的 Mono.Cecil支持请切换cecil-0.10-compat分支
