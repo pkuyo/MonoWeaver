@@ -9,12 +9,24 @@ using MonoWeaver.Utils;
 
 namespace MonoWeaver.Cecil;
 
-/// <summary>一次待提交的 CIL 改写。构造 plan 时不会修改目标方法；每个 plan 只能提交一次。</summary>
+/// <summary>
+/// 一次待提交的 CIL 改写。构造 plan 时不会修改目标方法；每个 plan 只能提交一次。
+/// callback 的输入由 <see cref="CallArguments"/> 配置，非 Void 返回值的去向也统一在本 plan 上配置。
+/// </summary>
 public sealed class RewritePlan
 {
     private sealed record MethodBodySnapshot(Instruction[] Instructions, OpCode[] OpCodes,
         object?[] Operands, VariableDefinition[] Variables,
         ExceptionHandler[] Handlers, int MaxStack);
+
+    private enum ResultDestination
+    {
+        None,
+        LeaveOnStack,
+        Discard,
+        StoreLocal,
+        StoreArgument,
+    }
 
     private readonly MethodDefinition _method;
     private readonly EmissionSite? _site;
@@ -22,14 +34,21 @@ public sealed class RewritePlan
     private readonly TypeReference? _returnType;
     private readonly Func<ModuleDefinition, IReadOnlyList<Instruction>>? _callbackEmitter;
     private readonly Action? _customApply;
+    private readonly Action<RewritePlan>? _customApplyWithPlan;
     private readonly Action? _beforeApply;
     private readonly int _extraStackSlots;
     private readonly bool _emitDupBeforeArguments;
+    private readonly bool _allowLeaveOnStack;
+
+    private ResultDestination _destination;
+    private VariableDefinition? _destinationLocal;
+    private ParameterDefinition? _destinationArgument;
     private bool _applied;
 
     internal RewritePlan(EmissionSite site, CallArguments arguments, TypeReference returnType,
         Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter, int extraStackSlots,
-        bool emitDupBeforeArguments = false, Action? beforeApply = null)
+        bool emitDupBeforeArguments = false, bool allowLeaveOnStack = true,
+        Action? beforeApply = null)
     {
         _site = site ?? throw new ArgumentNullException(nameof(site));
         _method = site.Method;
@@ -40,9 +59,12 @@ public sealed class RewritePlan
             throw new ArgumentOutOfRangeException(nameof(extraStackSlots));
         _extraStackSlots = extraStackSlots;
         _emitDupBeforeArguments = emitDupBeforeArguments;
+        _allowLeaveOnStack = allowLeaveOnStack;
         _beforeApply = beforeApply;
+        _destination = DefaultDestination(returnType, allowLeaveOnStack);
     }
 
+    /// <summary>创建不暴露单一 callback stack result 的自定义 rewrite。</summary>
     internal RewritePlan(MethodDefinition method, Action customApply, Action? beforeApply = null,
         CallArguments? arguments = null)
     {
@@ -50,17 +72,164 @@ public sealed class RewritePlan
         _customApply = customApply ?? throw new ArgumentNullException(nameof(customApply));
         _beforeApply = beforeApply;
         _arguments = arguments;
+        _allowLeaveOnStack = false;
+        _destination = ResultDestination.None;
+    }
+
+    /// <summary>创建需要在多个控制流出口应用同一 callback result destination 的 rewrite。</summary>
+    internal RewritePlan(MethodDefinition method, CallArguments arguments, TypeReference returnType,
+        Action<RewritePlan> customApply, bool allowLeaveOnStack,
+        Action? beforeApply = null)
+    {
+        _method = method ?? throw new ArgumentNullException(nameof(method));
+        _arguments = arguments ?? throw new ArgumentNullException(nameof(arguments));
+        _returnType = returnType ?? throw new ArgumentNullException(nameof(returnType));
+        _customApplyWithPlan = customApply ?? throw new ArgumentNullException(nameof(customApply));
+        _allowLeaveOnStack = allowLeaveOnStack;
+        _beforeApply = beforeApply;
+        _destination = DefaultDestination(returnType, allowLeaveOnStack);
+    }
+
+    /// <summary>callback 的返回类型；纯 IL replacement 或内部消费结果的 rewrite 返回 null。</summary>
+    public TypeReference? ReturnType => _returnType;
+
+    /// <summary>callback 是否产生一个可配置去向的 stack result。</summary>
+    public bool HasResult => _returnType is not null && !_returnType.IsVoid();
+
+    /// <summary>保留 callback 返回值在 evaluation stack 上。</summary>
+    public RewritePlan LeaveOnStack()
+    {
+        RequireMutableResult();
+        if (!_allowLeaveOnStack)
+        {
+            throw new InvalidOperationException(
+                "This rewrite cannot leave its callback result on the stack at this semantic site.");
+        }
+
+        SetDestination(ResultDestination.LeaveOnStack);
+        return this;
+    }
+
+    /// <summary>用 pop 丢弃 callback 返回值。</summary>
+    public RewritePlan Discard()
+    {
+        RequireMutableResult();
+        SetDestination(ResultDestination.Discard);
+        return this;
+    }
+
+    public RewritePlan StoreLocal(int variableIndex)
+    {
+        EnsureNotApplied();
+        if (variableIndex < 0 || variableIndex >= _method.Body.Variables.Count)
+            throw new ArgumentOutOfRangeException(nameof(variableIndex));
+        return StoreLocal(_method.Body.Variables[variableIndex]);
+    }
+
+    public RewritePlan StoreLocal(VariableDefinition variable)
+    {
+        if (variable is null)
+            throw new ArgumentNullException(nameof(variable));
+        RequireMutableResult();
+        if (!_method.Body.Variables.Contains(variable))
+        {
+            throw new ArgumentException(
+                "The local does not belong to the target method body.", nameof(variable));
+        }
+
+        PatternTransformExtensions.RequireAssignable(_returnType!, variable.VariableType,
+            actualIsNull: false, "callback return value", "local type");
+        _destination = ResultDestination.StoreLocal;
+        _destinationLocal = variable;
+        _destinationArgument = null;
+        return this;
+    }
+
+    /// <summary>把 callback 返回值存入 pattern 捕获到的 local。</summary>
+    public RewritePlan StoreLocal(LocalCapture local)
+    {
+        if (local is null)
+            throw new ArgumentNullException(nameof(local));
+        if (!ReferenceEquals(local.Method, _method))
+        {
+            throw new ArgumentException(
+                "The captured local belongs to a different method.", nameof(local));
+        }
+        return StoreLocal(local.Variable);
+    }
+
+    public RewritePlan StoreArgument(int parameterIndex)
+    {
+        EnsureNotApplied();
+        if (parameterIndex < 0 || parameterIndex >= _method.Parameters.Count)
+            throw new ArgumentOutOfRangeException(nameof(parameterIndex));
+        return StoreArgument(_method.Parameters[parameterIndex]);
+    }
+
+    public RewritePlan StoreArgument(ParameterDefinition parameter)
+    {
+        if (parameter is null)
+            throw new ArgumentNullException(nameof(parameter));
+        RequireMutableResult();
+        if (!_method.Parameters.Contains(parameter))
+        {
+            throw new ArgumentException(
+                "The parameter does not belong to the target method.", nameof(parameter));
+        }
+
+        PatternTransformExtensions.RequireAssignable(_returnType!, parameter.ParameterType,
+            actualIsNull: false, "callback return value", "argument type");
+        _destination = ResultDestination.StoreArgument;
+        _destinationLocal = null;
+        _destinationArgument = parameter;
+        return this;
+    }
+
+    /// <summary>把 callback 返回值存入 pattern 捕获到的显式 argument；this 不可写。</summary>
+    public RewritePlan StoreArgument(ArgumentCapture argument)
+    {
+        if (argument is null)
+            throw new ArgumentNullException(nameof(argument));
+        if (!ReferenceEquals(argument.Method, _method))
+        {
+            throw new ArgumentException(
+                "The captured argument belongs to a different method.", nameof(argument));
+        }
+        if (argument.IsThis)
+            throw new InvalidOperationException("Cannot store into the captured this argument.");
+
+        return StoreArgument(argument.Parameter
+            ?? throw new InvalidOperationException("The captured argument has no ParameterDefinition."));
+    }
+
+    /// <summary>按 capture 的实际类型存入 local 或 argument。</summary>
+    public RewritePlan Store(ValueTarget capture)
+    {
+        if (capture is null)
+            throw new ArgumentNullException(nameof(capture));
+        if (!ReferenceEquals(capture.Method, _method))
+        {
+            throw new ArgumentException(
+                "The captured value belongs to a different method.", nameof(capture));
+        }
+
+        return capture switch
+        {
+            LocalCapture local => StoreLocal(local),
+            ArgumentCapture argument => StoreArgument(argument),
+            _ => throw new InvalidOperationException(
+                "The captured value is not a writable local or argument."),
+        };
     }
 
     public RewritePlan Apply()
     {
-        if (_applied)
-            throw new InvalidOperationException("This rewrite plan was already applied.");
+        EnsureNotApplied();
 
         var label = _method.Body.Instructions.FirstOrDefault(instruction =>
             instruction.OpCode.FlowControl is FlowControl.Cond_Branch or FlowControl.Branch
             && instruction.Operand is { } operand
-            && CecilHelper.IsMonoModILLabel(operand.GetType()));
+            && CecilHelper.IsMonoModILLabel(operand.GetType()))?.Operand;
 
         try
         {
@@ -72,6 +241,13 @@ public sealed class RewritePlan
             if (_customApply is not null)
             {
                 _customApply();
+                _applied = true;
+                return this;
+            }
+
+            if (_customApplyWithPlan is not null)
+            {
+                _customApplyWithPlan(this);
                 _applied = true;
                 return this;
             }
@@ -96,6 +272,9 @@ public sealed class RewritePlan
                 argument.EmitLoad(_site, processor, ref current, ref firstInserted);
 
             foreach (var instruction in _callbackEmitter(_site.Method.Module))
+                _site.Insert(processor, instruction, ref current, ref firstInserted);
+
+            foreach (var instruction in CreateDestinationInstructions())
                 _site.Insert(processor, instruction, ref current, ref firstInserted);
 
             if (_site.Position == InsertPosition.Before && firstInserted is not null)
@@ -129,20 +308,70 @@ public sealed class RewritePlan
         }
     }
 
-    private int AdditionalStackSlots
+    internal IReadOnlyList<Instruction> CreateDestinationInstructions()
+    {
+        if (!HasResult)
+            return Array.Empty<Instruction>();
+
+        return _destination switch
+        {
+            ResultDestination.LeaveOnStack => Array.Empty<Instruction>(),
+            ResultDestination.Discard => new[] { Instruction.Create(OpCodes.Pop) },
+            ResultDestination.StoreLocal => new[]
+            {
+                Instruction.Create(OpCodes.Stloc, _destinationLocal
+                    ?? throw new InvalidOperationException("The destination local is missing.")),
+            },
+            ResultDestination.StoreArgument => new[]
+            {
+                Instruction.Create(OpCodes.Starg, _destinationArgument
+                    ?? throw new InvalidOperationException("The destination argument is missing.")),
+            },
+            _ => throw new InvalidOperationException("Unknown callback result destination."),
+        };
+    }
+
+    internal int AdditionalStackSlots
     {
         get
         {
             var slots = _extraStackSlots + (_arguments?.ArgPlans.Count ?? 0);
             if (_emitDupBeforeArguments)
                 slots++;
-            if (_site is not null && _returnType is not null && !_returnType.IsVoid()
-                && !_emitDupBeforeArguments)
-            {
+            if (_site is not null && HasResult && !_emitDupBeforeArguments)
                 slots = Math.Max(slots, 1);
-            }
             return slots;
         }
+    }
+
+    private static ResultDestination DefaultDestination(TypeReference returnType,
+        bool allowLeaveOnStack)
+    {
+        if (returnType.IsVoid())
+            return ResultDestination.None;
+        return allowLeaveOnStack
+            ? ResultDestination.LeaveOnStack
+            : ResultDestination.Discard;
+    }
+
+    private void SetDestination(ResultDestination destination)
+    {
+        _destination = destination;
+        _destinationLocal = null;
+        _destinationArgument = null;
+    }
+
+    private void RequireMutableResult()
+    {
+        EnsureNotApplied();
+        if (!HasResult)
+            throw new InvalidOperationException("This rewrite does not expose a non-Void callback result.");
+    }
+
+    private void EnsureNotApplied()
+    {
+        if (_applied)
+            throw new InvalidOperationException("This rewrite plan was already applied.");
     }
 
     private static MethodBodySnapshot CaptureBody(MethodBody body)

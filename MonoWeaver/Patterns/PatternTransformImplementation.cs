@@ -93,14 +93,16 @@ public static partial class PatternTransformExtensions
     private static void ApplyConditionObserve(ConditionTarget condition,
         CallArguments arguments,
         Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
-        int extraStackSlots)
+        int extraStackSlots, RewritePlan plan)
         => ApplyConditionExitRewrite(condition, arguments, callbackEmitter,
-            extraStackSlots, ConditionExitRewriteKind.Observe);
+            extraStackSlots, ConditionExitRewriteKind.Observe,
+            plan ?? throw new ArgumentNullException(nameof(plan)));
 
     private static void ApplyConditionExitRewrite(ConditionTarget condition,
         CallArguments arguments,
         Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
-        int extraStackSlots, ConditionExitRewriteKind kind)
+        int extraStackSlots, ConditionExitRewriteKind kind,
+        RewritePlan? resultPlan = null)
     {
         if (arguments is null)
             throw new ArgumentNullException(nameof(arguments));
@@ -153,14 +155,16 @@ public static partial class PatternTransformExtensions
             if (hasFallExit)
             {
                 emitted.AddRange(CreateConditionExitBridge(method, arguments,
-                    callbackEmitter, kind, fallExit.Value, trueTarget, falseTarget));
+                    callbackEmitter, kind, fallExit.Value, trueTarget, falseTarget,
+                    resultPlan));
             }
 
             Instruction? branchBridge = null;
             if (hasBranchExit)
             {
                 var bridge = CreateConditionExitBridge(method, arguments,
-                    callbackEmitter, kind, branchExit.Value, trueTarget, falseTarget);
+                    callbackEmitter, kind, branchExit.Value, trueTarget, falseTarget,
+                    resultPlan);
                 branchBridge = bridge[0];
                 emitted.AddRange(bridge);
             }
@@ -175,7 +179,8 @@ public static partial class PatternTransformExtensions
         MethodDefinition method, CallArguments arguments,
         Func<ModuleDefinition, IReadOnlyList<Instruction>> callbackEmitter,
         ConditionExitRewriteKind kind, bool originalValue,
-        Instruction trueTarget, Instruction falseTarget)
+        Instruction trueTarget, Instruction falseTarget,
+        RewritePlan? resultPlan)
     {
         var result = new List<Instruction>
         {
@@ -191,6 +196,9 @@ public static partial class PatternTransformExtensions
         }
         else
         {
+            if (resultPlan is null)
+                throw new InvalidOperationException("Condition.Observe result plan is missing.");
+            result.AddRange(resultPlan.CreateDestinationInstructions());
             result.Add(Instruction.Create(OpCodes.Br,
                 originalValue ? trueTarget : falseTarget));
         }

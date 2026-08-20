@@ -2,31 +2,51 @@
 
 [简体中文](readme_cn.md)
 
-MonoWeaver is a Mono.Cecil-based toolkit for **semantic CIL matching, safe insertion/rewrite, Cecil type queries, and post-rewrite IL verification**.
+MonoWeaver helps C# mod developers find a piece of compiled game logic and safely change it. You describe the expression you are looking for—such as a damage calculation, a method call, or an `if` condition—and then choose what should happen before, after, or instead of it.
 
-Instead of binding a hook to a fragile opcode sequence, MonoWeaver lets you describe the expression you want, capture the exact value or condition, select an insertion site, and verify the modified method before writing it back.
+You normally do not need to search for a fixed list of IL instructions. That makes a hook easier to read and less likely to break when the compiler adds a temporary local or uses a different branch layout.
 
-## Highlights
+Typical uses include:
 
-- Match values, effects, calls, fields, operators, arrays, locals, arguments, and short-circuit conditions as expressions.
-- Normalize compiler-generated temporary locals when their reaching definition is unambiguous.
-- Insert before an expression, after a specific value use, after its producer, or across every exit of a branch-based condition.
-- Use one API for offline rewriting and runtime delegate callbacks, compatible with MonoMod RuntimeDetour.
-- Validate stack balance/types, branches, exception regions, locals, access rules, and instruction operands after rewriting.
+- changing a calculated value such as damage, price, or cooldown;
+- logging a value without changing the game result;
+- replacing or removing a game action;
+- changing a short-circuit `if` condition;
+- applying the same matching API to a Cecil `MethodDefinition` or a MonoMod `ILContext`;
+- checking the edited method before it is written or executed.
 
-## Projects
+MonoWeaver works with managed .NET/Mono assemblies that Mono.Cecil can read. It is not an IL2CPP or native-code patcher.
 
-| Project | Purpose |
-| --- | --- |
-| `MonoWeaver` | Matcher, pure Cecil transforms, type-system helpers, CFG and verifier. Targets `netstandard2.0`. |
-| `tests/MonoWeaver.PatternTests` | Pattern matching, transform, runtime delegate, and MonoMod `ILContext` compatibility tests. |
-| `tests/MonoWeaver.ILTests` | IL verifier corpus and tests. |
-| `MonoWeaver.Fuzz` | Fuzz program. |
-| `benchmarks/MonoWeaver.HookBenchmarks` | Hooking benchmarks. |
+## Compatibility
 
-## Quick start: pure Cecil rewrite
+- MonoWeaver targets .NET Framework 4.8.
+- It references Mono.Cecil `[0.10.0, 0.10.4]`.
+- Runtime integration is tested with MonoMod `19.9.1.6` and Mono.Cecil `0.10.4`.
+- No package feed or publish workflow is configured in this repository. Add the project to your solution, or build and reference `MonoWeaver.dll`.
 
-The example below finds `arg0 + arg1`, captures its result, and inserts a callback that replaces the value before the original consumer sees it.
+If your mod loader already ships Mono.Cecil, make sure it uses a compatible version. Cecil version conflicts are a common cause of load-time failures in mod projects.
+
+## Add it to a mod project
+
+Either add a project reference and adjust the path for your repository layout:
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\MonoWeaver\MonoWeaver\MonoWeaver.csproj" />
+</ItemGroup>
+```
+
+Or build a release DLL:
+
+```bash
+dotnet build MonoWeaver/MonoWeaver.csproj -c Release
+```
+
+The output is under `MonoWeaver/bin/Release/net48/`.
+
+## Quick start
+
+This example finds `arg0 + arg1` in `Game.Player.ComputeDamage`, sends the original result through a mod callback, checks the edited method, and writes a patched assembly.
 
 ```csharp
 using System;
@@ -35,62 +55,94 @@ using Mono.Cecil;
 using MonoWeaver.Cecil;
 using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
-using MonoWeaver.Utils;
 
-public static class HookCallbacks
+public static class ModHooks
 {
-    public static int ClampDamage(int value) => Math.Max(0, value);
+    public static int ClampDamage(int value)
+        => Math.Min(Math.Max(value, 0), 999);
 }
 
 using var module = ModuleDefinition.ReadModule("Game.dll");
 
 var method = module.Types
-    .Single(t => t.FullName == "Game.Player")
-    .Methods.Single(m => m.Name == "ComputeDamage");
+    .Single(type => type.FullName == "Game.Player")
+    .Methods.Single(candidate => candidate.Name == "ComputeDamage");
 
 var damagePattern = Cil.Value(() =>
-    P.Mark("damage", P.Arg<int>(0) + P.Arg<int>(1)));
+    P.Arg<int>(0) + P.Arg<int>(1));
 
-var callback = CilMethodSpec.From(
-    typeof(HookCallbacks).GetMethod(nameof(HookCallbacks.ClampDamage))!);
+var damage = method.Match(damagePattern).Single();
 
-var damage = method.Match(damagePattern).Single().Value("damage");
-damage.AfterUse()
-    .Transform(callback)
-    .ApplyWithVerify(VerifyOptions.Full);
+damage.Transform((Func<int, int>)ModHooks.ClampDamage)
+      .Apply(VerifyOptions.Full);
 
 module.Write("Game.Patched.dll");
 ```
 
-`Single()` intentionally rejects both no-match and ambiguous-match cases. A hook should become more specific rather than silently selecting the first candidate.
+`Single()` is deliberate: it fails when there is no match or when more than one place matches. For a mod hook, making the pattern more specific is safer than silently patching the first candidate.
 
-## Insertion model
+For an offline patch, deploy the assembly that contains `ModHooks` with the patched game assembly. Instance delegates and closures only make sense for a runtime patch because they refer to objects in the current process.
 
-| Site | Use it for |
+## Choose the operation by intent
+
+| What the mod should do | API |
 | --- | --- |
-| `match.Before()` / `match.After()` | Insert around the complete matched value/effect. A branch-based condition has no single `After` site. |
-| `value.BeforeEvaluation()` | Run code before the captured expression starts evaluating. |
-| `value.AfterUse()` | Rewrite or observe this exact value occurrence. This is usually the safest value hook. |
-| `value.AfterProducer()` | Rewrite the original producer. If the value is stored in a temporary, all later uses may observe the change. |
-| `condition.Transform(...)` | Transform a logical result even when the compiler emitted several short-circuit branches instead of one Boolean value. |
+| Run a callback before the matched code | `Before(...)` |
+| Run a callback after a value or action | `After(...)` |
+| Read the old value and return a new one | `Transform(...)` |
+| Read or log the old value without changing it | `Observe(...)` |
+| Skip the old code and provide a replacement | `Replace(...)` |
+| Remove a matched no-result action | `Remove()` |
 
-At a matched value site:
+Every operation creates a `RewritePlan`. Nothing changes until you call `Apply()`. For mod code, prefer `Apply(VerifyOptions.Full)`: if the check fails, MonoWeaver restores the method and throws instead of leaving a half-applied edit.
 
-- `Transform` consumes the original value and leaves the callback result for the original consumer.
-- `Observe` duplicates the original value, calls a `void` callback, and preserves the original value.
-- `Call` inserts an independent call; non-void results can be left on the stack, discarded, or stored.
-- Transform APIs return a `CallResultPlan`; call `Apply()` or `ApplyWithVerify(...)` to commit the IL change.
+Values, actions, and conditions have slightly different valid operations. In particular, a branch-based condition has no single `After(...)` point; use `Transform`, `Observe`, `Replace`, or `Before` instead.
 
-## Two pattern DSLs
+## Capturing one part of a larger match
 
-Use the lambda DSL when the referenced runtime types are available:
+The root match can be edited directly. Use `P.Mark` only when the hook should target an inner value:
 
 ```csharp
-var sumPattern = Cil.Value(() =>
-    P.Mark("sum", P.Arg<int>(0) + P.Arg<int>(1)));
+var pattern = Cil.Value(() =>
+    P.Mark("baseDamage", P.Arg<int>(0)) + P.Arg<int>(1));
+
+var match = method.Match(pattern).Single();
+var baseDamage = match.Captures.Value("baseDamage");
+
+baseDamage.Transform((Func<int, int>)ModHooks.ClampDamage)
+          .Apply(VerifyOptions.Full);
 ```
 
-Use the metadata-native DSL when the target assembly should not be loaded into the CLR:
+The matcher follows an unambiguous compiler-generated temporary by default. If several assignments could reach the same local read, it refuses to guess.
+
+## Runtime use with MonoMod
+
+The same API can be used inside an `ILContext` hook:
+
+```csharp
+using System;
+using MonoMod.Cil;
+using MonoWeaver.Cecil;
+using MonoWeaver.CFG;
+using MonoWeaver.Patterns;
+
+public static void Patch(ILContext il)
+{
+    var pattern = Cil.Value(() =>
+        P.Arg<int>(0) + P.Arg<int>(1));
+
+    il.Method.Match(pattern)
+      .Single()
+      .Transform((Func<int, int>)ModHooks.ClampDamage)
+      .Apply(VerifyOptions.Full);
+}
+```
+
+MonoWeaver handles MonoMod branch labels while a plan is being applied. All labels must already point to valid targets at that time.
+
+## When game types are not referenced
+
+If the mod project references the game assembly, the lambda form above is usually the easiest. If you cannot or do not want to load those types, describe them by assembly and type name:
 
 ```csharp
 var game = CilSymbols.In("GameAssembly");
@@ -98,51 +150,21 @@ var player = game.Type("Game.Player");
 var getScore = player.InstanceMethod("GetScore", CilType.Int32);
 
 var scorePattern = Cil.Value(
-    P.Arg(0, player.Assignable(), "player")
-     .Call(getScore)
-     .Mark("score"));
+    P.Arg(0, player.Assignable())
+     .Call(getScore));
 ```
 
-Both DSLs produce the same `ExpressionPattern` and use the same matcher and transform APIs.
+Both forms produce the same kind of match result and use the same rewrite operations.
 
-## Callbacks and ILContext
+## Guides
 
-The transform API supports metadata-native `CilMethodSpec` and strongly typed delegates:
+- [Matching and rewriting](docs/matching-and-rewriting.md) — start here for patterns, captures, callbacks, and common hook recipes.
+- [Checking an edited method](docs/il-verification.md) — recommended checks and plain-language troubleshooting.
+- [Working with Cecil types](docs/cecil-extensions.md) — practical type comparisons for game classes, callbacks, and member access.
 
-```csharp
-damage.AfterUse()
-    .Transform((Func<int, int>)HookCallbacks.ClampDamage)
-    .ApplyWithVerify(VerifyOptions.Full);
-```
+The focused guides are currently written in Simplified Chinese.
 
-Static delegates are emitted as direct calls. Instance, closure, and multicast delegates are stored in a runtime reference bag and invoked through generated Cecil helper methods.
-
-MonoMod `ILContext` can use the same API directly:
-
-```csharp
-using System;
-using MonoMod.Cil;
-using MonoWeaver.Cecil;
-using MonoWeaver.CFG;
-
-public static void Patch(ILContext il)
-{
-    var value = il.Method.Match(damagePattern).Single().Value("damage");
-    value.AfterUse()
-         .Transform((Func<int, int>)HookCallbacks.ClampDamage)
-         .ApplyWithVerify(VerifyOptions.Full);
-}
-```
-
-When an `ILContext` uses MonoMod `ILLabel` branch operands, MonoWeaver resolves detected labels to Cecil `Instruction` targets while applying the plan and restores label operands afterwards. Make sure all `ILLabel` operands have valid targets when `Apply()` runs.
-
-## Focused guides
-
-- [Cecil type extensions](docs/cecil-extensions.md): `IsSameWith`, assignability, stack assignability, constraints, and access checks.
-- [Matching, insertion, and rewriting](docs/matching-and-rewriting.md): semantic matching and modification.
-- [IL verification](docs/il-verification.md): verification modes, diagnostics, and post-rewrite checks.
-
-## Build and test
+## Build and test the repository
 
 ```bash
 dotnet build MonoWeaver.slnx
@@ -150,4 +172,12 @@ dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
 dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
 ```
 
-This branch targets Mono.Cecil `[0.10.0, 0.10.4]`; tests use Mono.Cecil `0.10.4` and MonoMod `19.9.1.6`.
+The main projects in this repository are:
+
+| Project | Purpose |
+| --- | --- |
+| `MonoWeaver` | The library used by mods. |
+| `tests/MonoWeaver.PatternTests` | Matching, rewriting, delegate, and MonoMod compatibility tests. |
+| `tests/MonoWeaver.ILTests` | Edited-method checker tests. |
+| `MonoWeaver.Fuzz` | Automated stress tests. |
+| `benchmarks/MonoWeaver.HookBenchmarks` | Hooking benchmarks. |

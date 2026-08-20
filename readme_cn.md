@@ -2,30 +2,51 @@
 
 [English](README.md)
 
-MonoWeaver 是一个基于 Mono.Cecil 的 **语义化 CIL 匹配、插入/重写、Cecil 类型判断与 IL 验证工具集**。
+MonoWeaver 是给 C# Mod 开发者用的代码匹配与改写工具。你只需要描述想找的游戏逻辑，例如“两个参数相加”“读取某个字段”“调用某个方法”或“一段 `if` 条件”，然后选择在它前后追加代码、读取结果，或直接替换它。
 
-使用本项目，你可以直接描述想找的表达式，再拿到精确的值或条件捕获，选择合适的插入点进行改写而不需要手动查看IL序列。
+大多数时候不需要自己数 IL 指令。编译器即使多生成了一个临时变量，或换了一种条件跳转写法，匹配仍有机会保持稳定。
 
-## 主要特点
+常见用途：
 
-- 以表达式匹配参数、local、常量、调用、字段、运算、数组以及短路条件。
-- 支持表达式求值前、值产生后以及条件出口上的插入与重写。
-- 同一套 API 同时支持离线改写、运行时 delegate 回调 (兼容MonoMod Runtimer Detour)。
-- 改写后可检查栈平衡/类型、跳转、异常区域、local 初始化、访问规则和指令操作数。
+- 修改伤害、价格、冷却时间等计算结果；
+- 记录某个值，但不改变游戏原逻辑；
+- 替换或删除一次游戏行为；
+- 改写带 `&&`、`||` 的判断条件；
+- 在离线修改 DLL 和 MonoMod `ILContext` 中使用同一套写法；
+- 在保存或执行前检查修改后的方法。
 
-## 项目结构
+MonoWeaver 只适用于 Mono.Cecil 能读取的 .NET/Mono 托管程序集，不用于 IL2CPP 或原生代码。
 
-| 项目 | 作用 |
-| --- | --- |
-| `MonoWeaver` | 匹配器、纯 Cecil 重写、类型扩展、CFG 与验证器。 |
-| `tests/MonoWeaver.PatternTests` | 表达式匹配、重写、运行时 delegate 与 MonoMod `ILContext` 兼容测试。 |
-| `tests/MonoWeaver.ILTests` | IL 验证语料与测试。 |
-| `MonoWeaver.Fuzz` | Fuzz程序，测试可赋值判别是否和CLR一致。 |
-| `benchmarks/MonoWeaver.HookBenchmarks` | Hook benchmark。（没什么用，本身项目也以效率为主要目的的） |
+## 兼容范围
 
-## 快速开始：纯 Cecil 重写
+- MonoWeaver 的目标框架是 .NET Framework 4.8。
+- Mono.Cecil 版本范围为 `[0.10.0, 0.10.4]`。
+- 运行时接入已用 MonoMod `19.9.1.6` 和 Mono.Cecil `0.10.4` 测试。
+- 当前仓库没有配置包源或发布流程。可以把项目加入 Mod 解决方案，或编译后引用 `MonoWeaver.dll`。
 
-下面匹配 `arg0 + arg1`，捕获结果，并在原 consumer 使用该值之前插入一个替换回调。
+如果 Mod Loader 已经自带 Mono.Cecil，请先确认版本兼容。Mod 中同时出现多份不兼容的 Cecil，是常见的加载失败原因。
+
+## 接入 Mod 项目
+
+可以添加项目引用，并按自己的目录调整路径：
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\MonoWeaver\MonoWeaver\MonoWeaver.csproj" />
+</ItemGroup>
+```
+
+也可以先编译 Release DLL：
+
+```bash
+dotnet build MonoWeaver/MonoWeaver.csproj -c Release
+```
+
+输出位于 `MonoWeaver/bin/Release/net48/`。
+
+## 快速开始
+
+下面的例子在 `Game.Player.ComputeDamage` 中查找 `arg0 + arg1`，把原结果交给 Mod 回调处理，检查修改是否安全，然后写出新的程序集。
 
 ```csharp
 using System;
@@ -34,62 +55,94 @@ using Mono.Cecil;
 using MonoWeaver.Cecil;
 using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
-using MonoWeaver.Utils;
 
-public static class HookCallbacks
+public static class ModHooks
 {
-    public static int ClampDamage(int value) => Math.Max(0, value);
+    public static int ClampDamage(int value)
+        => Math.Min(Math.Max(value, 0), 999);
 }
 
 using var module = ModuleDefinition.ReadModule("Game.dll");
 
 var method = module.Types
-    .Single(t => t.FullName == "Game.Player")
-    .Methods.Single(m => m.Name == "ComputeDamage");
+    .Single(type => type.FullName == "Game.Player")
+    .Methods.Single(candidate => candidate.Name == "ComputeDamage");
 
 var damagePattern = Cil.Value(() =>
-    P.Mark("damage", P.Arg<int>(0) + P.Arg<int>(1)));
+    P.Arg<int>(0) + P.Arg<int>(1));
 
-var callback = CilMethodSpec.From(
-    typeof(HookCallbacks).GetMethod(nameof(HookCallbacks.ClampDamage))!);
+var damage = method.Match(damagePattern).Single();
 
-var damage = method.Match(damagePattern).Single().Value("damage");
-damage.AfterUse()
-    .Transform(callback)
-    .ApplyWithVerify(VerifyOptions.Full);
+damage.Transform((Func<int, int>)ModHooks.ClampDamage)
+      .Apply(VerifyOptions.Full);
 
 module.Write("Game.Patched.dll");
 ```
 
-`Single()` 会主动拒绝“没有匹配”和“存在歧义”两种情况。Hook 应通过补充上下文或捕获变得更精确，而不是默认取第一个结果。
+`Single()` 会在“没有找到”或“找到多处”时直接报错。这是有意设计：Mod Hook 应该补充匹配条件，而不是悄悄修改第一个候选位置。
 
-## 插入模型
+离线写出 DLL 时，包含 `ModHooks` 的 Mod DLL 也要随成品一起部署。实例委托和闭包引用的是当前进程里的对象，只适合运行时 Hook。
 
-| 插入点 | 适合场景 |
+## 按目的选择操作
+
+| 想做什么 | 使用 |
 | --- | --- |
-| `match.Before()` / `match.After()` | 在完整匹配段前后插入；分支形式的 condition 没有唯一的 `After`。 |
-| `value.BeforeEvaluation()` | 在捕获表达式开始求值之前插入。 |
-| `value.AfterUse()` | 针对这一次具体值获取后，通常是最合适的hook方式。 |
-| `value.AfterProducer()` | 针对原始值产生位置；若结果先写入临时 local，后续多个使用都可能受影响。 |
-| `condition.Transform(...)` | 改写短路条件，即使编译器没有生成一个实际的 Boolean 值。 |
+| 在匹配代码执行前调用回调 | `Before(...)` |
+| 在一个值或行为执行后调用回调 | `After(...)` |
+| 读取旧值并返回新值 | `Transform(...)` |
+| 读取或记录旧值，但不改变它 | `Observe(...)` |
+| 跳过原代码，提供完整替代 | `Replace(...)` |
+| 删除一段不产生结果的行为 | `Remove()` |
 
-在匹配结果上：
+这些操作都会先返回一个 `RewritePlan`，调用 `Apply()` 后才真正修改。Mod 代码建议使用 `Apply(VerifyOptions.Full)`：如果检查失败，MonoWeaver 会恢复修改前的方法并抛出错误，避免留下改了一半的结果。
 
-- `Transform` 消费原值，并把回调返回值留给原逻辑。
-- `Observe` 复制原值后调用 `void` 回调，原值继续参与原逻辑。
-- `Call` 插入独立调用；非 `void` 结果可留栈、丢弃或写入 local/argument。
-- transform 接口会先返回 `CallResultPlan`；必须调用 `Apply()` 或 `ApplyWithVerify(...)` 才会真正修改 IL。
+值、行为和条件支持的操作略有不同。条件可能有多个出口，因此没有唯一的 `After(...)`；应使用 `Transform`、`Observe`、`Replace` 或 `Before`。
 
-## 两套 Pattern DSL
+## 只修改大表达式中的一部分
 
-目标类型已经加载时，可直接使用 lambda DSL：
+完整匹配结果可以直接修改。只有需要选中内部某一段时，才使用 `P.Mark`：
 
 ```csharp
-var sumPattern = Cil.Value(() =>
-    P.Mark("sum", P.Arg<int>(0) + P.Arg<int>(1)));
+var pattern = Cil.Value(() =>
+    P.Mark("baseDamage", P.Arg<int>(0)) + P.Arg<int>(1));
+
+var match = method.Match(pattern).Single();
+var baseDamage = match.Captures.Value("baseDamage");
+
+baseDamage.Transform((Func<int, int>)ModHooks.ClampDamage)
+          .Apply(VerifyOptions.Full);
 ```
 
-不希望把目标程序集加载进 CLR 时，使用 metadata-native DSL：
+MonoWeaver 默认会跟随来源唯一的编译器临时变量。如果同一个读取位置可能来自多次赋值，它会停止匹配，不会猜测。
+
+## 在 MonoMod 中运行时使用
+
+`ILContext` 中可以直接使用同一套 API：
+
+```csharp
+using System;
+using MonoMod.Cil;
+using MonoWeaver.Cecil;
+using MonoWeaver.CFG;
+using MonoWeaver.Patterns;
+
+public static void Patch(ILContext il)
+{
+    var pattern = Cil.Value(() =>
+        P.Arg<int>(0) + P.Arg<int>(1));
+
+    il.Method.Match(pattern)
+      .Single()
+      .Transform((Func<int, int>)ModHooks.ClampDamage)
+      .Apply(VerifyOptions.Full);
+}
+```
+
+提交修改时，MonoWeaver 会处理 MonoMod 的跳转标签。此时所有标签都必须已经指向有效位置。
+
+## Mod 项目没有引用游戏类型时
+
+如果项目已经引用游戏 DLL，前面的 lambda 写法最直观。如果不方便引用或加载游戏类型，可以用程序集名、类型名和方法签名来描述：
 
 ```csharp
 var game = CilSymbols.In("GameAssembly");
@@ -97,51 +150,27 @@ var player = game.Type("Game.Player");
 var getScore = player.InstanceMethod("GetScore", CilType.Int32);
 
 var scorePattern = Cil.Value(
-    P.Arg(0, player.Assignable(), "player")
-     .Call(getScore)
-     .Mark("score"));
+    P.Arg(0, player.Assignable())
+     .Call(getScore));
 ```
 
-两种 DSL 最终都会生成同一个 `ExpressionPattern`，后续匹配和重写接口完全一致。
+两种写法得到相同类型的匹配结果，后续修改方式完全一致。
 
-## 回调与 ILContext
+## 使用建议
 
-metadata-native `CilMethodSpec` 和强类型 delegate：
+- 发布前优先使用 `Apply(VerifyOptions.Full)`。
+- 一个计划提交后，如果还要修改同一个方法，重新匹配一次，避免继续使用过期位置。
+- 游戏更新后，即使 Hook 没有报错，也要重新测试实际玩法。
+- 离线补丁尽量使用静态回调；实例委托、闭包和多播委托仅用于当前运行时。
+- 多匹配时补充外层调用、常量、字段或 `P.Mark` 上下文，不要固定取第一个。
 
-```csharp
-damage.AfterUse()
-    .Transform((Func<int, int>)HookCallbacks.ClampDamage)
-    .ApplyWithVerify(VerifyOptions.Full);
-```
+## 详细指南
 
-静态 delegate 会被生成为直接调用；实例方法、闭包和 multicast delegate 会存入运行时引用表，并通过 Cecil 生成的 helper invoker 调用。
+- [匹配与改写](docs/matching-and-rewriting.md)：从目标游戏逻辑到 Pattern、捕获、回调和常用 Hook 写法。
+- [修改后检查](docs/il-verification.md)：推荐检查方式和常见报错处理。
+- [Cecil 类型判断](docs/cecil-extensions.md)：处理游戏类、回调参数和成员访问时常用的类型判断。
 
-MonoMod 的 `ILContext` 也可以直接使用同一套 API：
-
-```csharp
-using System;
-using MonoMod.Cil;
-using MonoWeaver.Cecil;
-using MonoWeaver.CFG;
-
-public static void Patch(ILContext il)
-{
-    var value = il.Method.Match(damagePattern).Single().Value("damage");
-    value.AfterUse()
-         .Transform((Func<int, int>)HookCallbacks.ClampDamage)
-         .ApplyWithVerify(VerifyOptions.Full);
-}
-```
-
-如果 `ILContext` 中使用了 MonoMod `ILLabel` branch operand，MonoWeaver 在 `Apply()` 期间会把检测到的 label 解析成 Cecil `Instruction` target，并在提交后恢复回 label operand。需保证ILLabel在Apply时均有有效指向目标。
-
-## 详细文档
-
-- [Cecil 类型扩展](docs/cecil-extensions.md)：`IsSameWith`、可赋值判断、泛型约束与访问检查。
-- [匹配、插入与重写](docs/matching-and-rewriting.md)：语义匹配、修改。
-- [IL 验证](docs/il-verification.md)：验证模式、诊断结果。
-
-## 构建与测试
+## 构建与测试仓库
 
 ```bash
 dotnet build MonoWeaver.slnx
@@ -149,4 +178,12 @@ dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
 dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
 ```
 
-当前分支面向 Mono.Cecil `[0.10.0, 0.10.4]`；测试项目使用 Mono.Cecil `0.10.4` 和 MonoMod `19.9.1.6`。
+仓库中的主要项目：
+
+| 项目 | 用途 |
+| --- | --- |
+| `MonoWeaver` | Mod 实际引用的库。 |
+| `tests/MonoWeaver.PatternTests` | 匹配、改写、委托和 MonoMod 兼容测试。 |
+| `tests/MonoWeaver.ILTests` | 修改后检查器的测试。 |
+| `MonoWeaver.Fuzz` | 自动生成大量情况做压力测试。 |
+| `benchmarks/MonoWeaver.HookBenchmarks` | Hook 性能测试。 |

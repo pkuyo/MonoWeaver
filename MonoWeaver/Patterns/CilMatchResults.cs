@@ -125,12 +125,12 @@ public abstract class ValueTarget : MatchCapture
     }
 
     public TypeReference ValueType { get; }
-    internal Instruction FirstInstruction { get; }
-    internal Instruction ResultInstruction { get; }
+    public Instruction FirstInstruction { get; }
+    public Instruction ResultInstruction { get; }
 
-    internal Instruction DefinitionFirstInstruction { get; }
-    internal Instruction DefinitionInstruction { get; }
-    internal Instruction? ConsumerInstruction { get; }
+    public Instruction DefinitionFirstInstruction { get; }
+    public Instruction DefinitionInstruction { get; }
+    public Instruction? ConsumerInstruction { get; }
 }
 
 /// <summary>value pattern 的根匹配；它本身就是唯一的根 value 改写入口。</summary>
@@ -220,8 +220,8 @@ public abstract class EffectTarget : MatchCapture
         LastInstruction = lastInstruction ?? throw new ArgumentNullException(nameof(lastInstruction));
     }
 
-    internal Instruction FirstInstruction { get; }
-    internal Instruction LastInstruction { get; }
+    public Instruction FirstInstruction { get; }
+    public Instruction LastInstruction { get; }
 }
 
 /// <summary>effect pattern 的根匹配。</summary>
@@ -266,8 +266,8 @@ public abstract class ConditionTarget : MatchCapture
     }
 
     internal ConditionFragment Fragment { get; }
-    internal Instruction FirstInstruction { get; }
-    internal Instruction LastInstruction { get; }
+    public Instruction FirstInstruction { get; }
+    public Instruction LastInstruction { get; }
     public bool CanRewrite { get; }
     public string? RewriteFailureReason { get; }
 }

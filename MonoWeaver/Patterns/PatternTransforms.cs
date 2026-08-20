@@ -16,7 +16,8 @@ internal enum InsertPosition
 }
 
 /// <summary>
-/// Pattern match 的统一改写 API
+/// Pattern match 的统一改写 API。根 match 已按 Value/Effect/Condition 强类型区分；
+/// 所有操作直接挂在对应语义目标上，不再暴露 producer/use/branch-exit 等实现点位。
 /// </summary>
 public static partial class PatternTransformExtensions
 {
@@ -57,10 +58,10 @@ public static partial class PatternTransformExtensions
 
     // ---------------------------- common before hooks ----------------------------
 
-    /// <summary>在 value occurrence 开始求值前调用一个 void callback。</summary>
+    /// <summary>在 value occurrence 开始求值前调用 callback；非 Void 返回值由 RewritePlan 决定去向。</summary>
     public static RewritePlan Before(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
-        => CreateVoidCallBefore(Require(target), target.FirstInstruction, callback, arguments,
+        => CreateCallBefore(Require(target), target.FirstInstruction, callback, arguments,
             "Value.Before");
 
     public static RewritePlan Before(this ValueTarget target, CilMethodSpec callback,
@@ -75,20 +76,19 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Before<TDelegate>(this ValueTarget target, TDelegate callback,
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
-        => CreateVoidDelegateCall(Require(target), target.FirstInstruction,
+        => CreateDelegateCall(Require(target), target.FirstInstruction,
             InsertPosition.Before, callback, arguments, "Value.Before");
 
     public static RewritePlan Before(this ValueTarget target, Action callback)
         => target.Before<Action>(callback);
 
-    /// <summary>在 value 求值完成后、原 consumer 使用它之前调用一个 void callback。</summary>
+    /// <summary>在 value 求值完成后、原 consumer 使用它之前调用 callback；非 Void 返回值由 RewritePlan 决定去向。</summary>
     public static RewritePlan After(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
     {
         target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        RequireReturn(callback, requireVoid: true, "Value.After");
         var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
             implicitValueType: null, implicitValueIsNull: false, "Value.After");
         var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
@@ -109,16 +109,16 @@ public static partial class PatternTransformExtensions
     public static RewritePlan After<TDelegate>(this ValueTarget target, TDelegate callback,
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
-        => CreateVoidDelegateCall(Require(target), target.ResultInstruction,
+        => CreateDelegateCall(Require(target), target.ResultInstruction,
             InsertPosition.After, callback, arguments, "Value.After");
 
     public static RewritePlan After(this ValueTarget target, Action callback)
         => target.After<Action>(callback);
 
-    /// <summary>在 effect 开始前调用一个 void callback。</summary>
+    /// <summary>在 effect 开始前调用 callback；非 Void 返回值由 RewritePlan 决定去向。</summary>
     public static RewritePlan Before(this EffectTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
-        => CreateVoidCallBefore(Require(target), target.FirstInstruction, callback, arguments,
+        => CreateCallBefore(Require(target), target.FirstInstruction, callback, arguments,
             "Effect.Before");
 
     public static RewritePlan Before(this EffectTarget target, CilMethodSpec callback,
@@ -133,16 +133,16 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Before<TDelegate>(this EffectTarget target, TDelegate callback,
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
-        => CreateVoidDelegateCall(Require(target), target.FirstInstruction,
+        => CreateDelegateCall(Require(target), target.FirstInstruction,
             InsertPosition.Before, callback, arguments, "Effect.Before");
 
     public static RewritePlan Before(this EffectTarget target, Action callback)
         => target.Before<Action>(callback);
 
-    /// <summary>在 condition 开始求值前调用一个 void callback。</summary>
+    /// <summary>在 condition 开始求值前调用 callback；非 Void 返回值由 RewritePlan 决定去向。</summary>
     public static RewritePlan Before(this ConditionTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
-        => CreateVoidCallBefore(Require(target), target.FirstInstruction, callback, arguments,
+        => CreateCallBefore(Require(target), target.FirstInstruction, callback, arguments,
             "Condition.Before");
 
     public static RewritePlan Before(this ConditionTarget target, CilMethodSpec callback,
@@ -157,7 +157,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Before<TDelegate>(this ConditionTarget target, TDelegate callback,
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
-        => CreateVoidDelegateCall(Require(target), target.FirstInstruction,
+        => CreateDelegateCall(Require(target), target.FirstInstruction,
             InsertPosition.Before, callback, arguments, "Condition.Before");
 
     public static RewritePlan Before(this ConditionTarget target, Action callback)
@@ -208,21 +208,20 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Transform<T>(this ValueMatch<T> target, Func<T, T> callback)
         => ((ValueTarget)Require(target)).Transform<Func<T, T>>(callback);
 
-    /// <summary>把原值复制给 void callback，原值继续交给原 consumer。</summary>
+    /// <summary>把原值复制给 callback，原值继续交给原 consumer；callback 返回值可 Discard 或 Store。</summary>
     public static RewritePlan Observe(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? additionalArguments = null)
     {
         target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        RequireReturn(callback, requireVoid: true, "Value.Observe");
-
         var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
             additionalArguments, target.ValueType, implicitValueIsNull: false, "Value.Observe");
         var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
         arguments.ValidateForSite(site, "Value.Observe");
         return new RewritePlan(site, arguments, callback.ReturnType,
-            CreateMethodCallEmitter(callback), extraStackSlots: 0, emitDupBeforeArguments: true);
+            CreateMethodCallEmitter(callback), extraStackSlots: 0,
+            emitDupBeforeArguments: true, allowLeaveOnStack: false);
     }
 
     public static RewritePlan Observe(this ValueTarget target, CilMethodSpec callback,
@@ -329,14 +328,13 @@ public static partial class PatternTransformExtensions
 
     // ---------------------------- effect ----------------------------
 
-    /// <summary>在完整 effect 执行完之后调用一个 void callback。</summary>
+    /// <summary>在完整 effect 执行完之后调用 callback；非 Void 返回值由 RewritePlan 决定去向。</summary>
     public static RewritePlan After(this EffectTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
     {
         target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        RequireReturn(callback, requireVoid: true, "Effect.After");
         var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
             implicitValueType: null, implicitValueIsNull: false, "Effect.After");
         var site = new EmissionSite(target.Method, target.LastInstruction, InsertPosition.After);
@@ -357,7 +355,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan After<TDelegate>(this EffectTarget target, TDelegate callback,
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
-        => CreateVoidDelegateCall(Require(target), target.LastInstruction,
+        => CreateDelegateCall(Require(target), target.LastInstruction,
             InsertPosition.After, callback, arguments, "Effect.After");
 
     public static RewritePlan After(this EffectTarget target, Action callback)
@@ -508,27 +506,26 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Transform(this ConditionTarget target, Func<bool, bool> callback)
         => Require(target).Transform<Func<bool, bool>>(callback);
 
-    /// <summary>把原逻辑结果传给 void callback，不改变 true/false continuation。</summary>
+    /// <summary>把原逻辑结果传给 callback，不改变 true/false continuation；callback 返回值可 Discard 或 Store。</summary>
     public static RewritePlan Observe(this ConditionTarget target, MethodReference callback,
         Action<CallArguments>? additionalArguments = null)
     {
         target = Require(target);
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        RequireReturn(callback, requireVoid: true, "Condition.Observe");
         RequireConditionRewrite(target, "observe");
 
         var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
             additionalArguments, target.Method.Module.TypeSystem.Boolean,
             implicitValueIsNull: false, "Condition.Observe");
         arguments.ValidateForConditionExits(target, "Condition.Observe");
-        return new RewritePlan(target.Method, () =>
+        return new RewritePlan(target.Method, arguments, callback.ReturnType, plan =>
         {
             arguments.ValidateForConditionExits(target, "Condition.Observe");
             arguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
             ApplyConditionObserve(target, arguments,
-                CreateMethodCallEmitter(callback), extraStackSlots: 0);
-        }, arguments: arguments);
+                CreateMethodCallEmitter(callback), extraStackSlots: 0, plan);
+        }, allowLeaveOnStack: false);
     }
 
     public static RewritePlan Observe(this ConditionTarget target, CilMethodSpec callback,
@@ -547,20 +544,19 @@ public static partial class PatternTransformExtensions
         target = Require(target);
         var call = CecilDelegateEmission.Prepare(target.Method,
             callback ?? throw new ArgumentNullException(nameof(callback)));
-        RequireReturn(call.ReturnType, requireVoid: true, "Condition.Observe");
         RequireConditionRewrite(target, "observe");
         var arguments = CallArguments.ConfigAndValidateCall(target.Method, call,
             additionalArguments,
             target.Method.Module.TypeSystem.Boolean, implicitValueIsNull: false,
             "Condition.Observe");
         arguments.ValidateForConditionExits(target, "Condition.Observe");
-        return new RewritePlan(target.Method, () =>
+        return new RewritePlan(target.Method, arguments, call.ReturnType, plan =>
         {
             arguments.ValidateForConditionExits(target, "Condition.Observe");
             arguments.MaterializeCapturedValues(target.Method.Body.GetILProcessor());
             ApplyConditionObserve(target, arguments,
-                _ => call.CreateInstructions(), call.ExtraStackSlots);
-        }, call.PrepareForApply, arguments);
+                _ => call.CreateInstructions(), call.ExtraStackSlots, plan);
+        }, allowLeaveOnStack: false, beforeApply: call.PrepareForApply);
     }
 
     public static RewritePlan Observe(this ConditionTarget target, Action<bool> callback)
@@ -652,12 +648,11 @@ public static partial class PatternTransformExtensions
 
     // ---------------------------- API construction helpers ----------------------------
 
-    private static RewritePlan CreateVoidCallBefore(MatchCapture target, Instruction anchor,
+    private static RewritePlan CreateCallBefore(MatchCapture target, Instruction anchor,
         MethodReference callback, Action<CallArguments>? configure, string operation)
     {
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
-        RequireReturn(callback, requireVoid: true, operation);
         var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback, configure,
             implicitValueType: null, implicitValueIsNull: false, operation);
         var site = new EmissionSite(target.Method, anchor, InsertPosition.Before);
@@ -666,22 +661,21 @@ public static partial class PatternTransformExtensions
             CreateMethodCallEmitter(callback), extraStackSlots: 0);
     }
 
-    private static RewritePlan CreateVoidDelegateCall<TDelegate>(MatchCapture target,
+    private static RewritePlan CreateDelegateCall<TDelegate>(MatchCapture target,
         Instruction anchor, InsertPosition position, TDelegate callback,
         Action<CallArguments>? configure, string operation)
         where TDelegate : Delegate
     {
         var call = CecilDelegateEmission.Prepare(target.Method,
             callback ?? throw new ArgumentNullException(nameof(callback)));
-        return CreateVoidDelegateCall(target.Method, anchor, position,
+        return CreateDelegateCall(target.Method, anchor, position,
             call, configure, operation);
     }
 
-    private static RewritePlan CreateVoidDelegateCall(MethodDefinition method, Instruction anchor,
+    private static RewritePlan CreateDelegateCall(MethodDefinition method, Instruction anchor,
         InsertPosition position, CecilDelegateCall call,
         Action<CallArguments>? configure, string operation)
     {
-        RequireReturn(call.ReturnType, requireVoid: true, operation);
         var arguments = CallArguments.ConfigAndValidateCall(method, call, configure,
             implicitValueType: null, implicitValueIsNull: false, operation);
         var site = new EmissionSite(method, anchor, position);
@@ -709,14 +703,14 @@ public static partial class PatternTransformExtensions
     private static RewritePlan CreateValueObserve(ValueTarget target, CecilDelegateCall call,
         Action<CallArguments>? configure, string operation)
     {
-        RequireReturn(call.ReturnType, requireVoid: true, operation);
         var arguments = CallArguments.ConfigAndValidateCall(target.Method, call, configure,
             target.ValueType, implicitValueIsNull: false, operation);
         var site = new EmissionSite(target.Method, target.ResultInstruction, InsertPosition.After);
         arguments.ValidateForSite(site, operation);
         return new RewritePlan(site, arguments, call.ReturnType,
             _ => call.CreateInstructions(), call.ExtraStackSlots,
-            emitDupBeforeArguments: true, beforeApply: call.PrepareForApply);
+            emitDupBeforeArguments: true, allowLeaveOnStack: false,
+            beforeApply: call.PrepareForApply);
     }
 
     private static RewritePlan CreateCallbackReplacement(MethodDefinition method,
