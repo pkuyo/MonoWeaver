@@ -166,6 +166,7 @@ var scorePattern = Cil.Value(
 
 ## 详细指南
 
+- [Pattern 代表性示例](docs/pattern-examples.md)：常见目标函数、对应 Pattern 和实际命中位置。
 - [匹配与改写](docs/matching-and-rewriting.md)：从目标游戏逻辑到 Pattern、捕获、回调和常用 Hook 写法。
 - [修改后检查](docs/il-verification.md)：推荐检查方式和常见报错处理。
 - [Cecil 类型判断](docs/cecil-extensions.md)：处理游戏类、回调参数和成员访问时常用的类型判断。

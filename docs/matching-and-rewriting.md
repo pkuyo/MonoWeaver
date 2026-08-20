@@ -8,6 +8,8 @@
 
 本文示例中的 `Player`、`GameAudio` 和 `Hooks` 都代表你自己的游戏类型与 Mod 回调。
 
+如果想直接按游戏代码查写法，请先看 [Pattern 代表性示例](pattern-examples.md)。其中每个例子都同时给出目标函数、对应 Pattern 和命中说明；本文继续讲拿到结果后如何改写。
+
 ## 1. 准备目标方法
 
 MonoWeaver 的入口是 Mono.Cecil 的 `MethodDefinition`。

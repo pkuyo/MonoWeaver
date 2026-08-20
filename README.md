@@ -158,6 +158,7 @@ Both forms produce the same kind of match result and use the same rewrite operat
 
 ## Guides
 
+- [Representative Pattern examples](docs/pattern-examples.md) — common game functions shown beside the Pattern and the exact part it finds.
 - [Matching and rewriting](docs/matching-and-rewriting.md) — start here for patterns, captures, callbacks, and common hook recipes.
 - [Checking an edited method](docs/il-verification.md) — recommended checks and plain-language troubleshooting.
 - [Working with Cecil types](docs/cecil-extensions.md) — practical type comparisons for game classes, callbacks, and member access.
