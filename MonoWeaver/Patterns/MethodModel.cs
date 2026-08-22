@@ -227,11 +227,34 @@ internal sealed class MethodModel
             return;
         }
 
+        if (CecilInstructionHelpers.IsLoadArgumentAddress(code)
+            && CecilInstructionHelpers.TryGetArgument(Method, instruction, out var addressIsThis,
+                out var addressParameterIndex, out var addressParameter))
+        {
+            var type = addressIsThis
+                ? Method.DeclaringType
+                : addressParameter?.ParameterType ?? Method.Module.TypeSystem.Object;
+            //地址本身不能作为 value 候选被改写，只作为 struct 接收者 / ref 实参的载体
+            Push(new TargetAddressNode(new TargetArgumentNode(type, instruction, addressIsThis,
+                addressParameterIndex, addressParameter,
+                CreateArgumentStackType(type, addressIsThis, addressParameter)), instruction), candidate: false);
+            return;
+        }
+
         if (CecilInstructionHelpers.IsLoadLocal(instruction)
             && CecilInstructionHelpers.TryGetLocal(Method, instruction, out _, out var loadedLocal)
             && loadedLocal is not null)
         {
             Push(new TargetLocalReadNode(loadedLocal, instruction));
+            return;
+        }
+
+        if (CecilInstructionHelpers.IsLoadLocalAddress(instruction)
+            && CecilInstructionHelpers.TryGetLocal(Method, instruction, out _, out var addressedLocal)
+            && addressedLocal is not null)
+        {
+            Push(new TargetAddressNode(new TargetLocalReadNode(addressedLocal, instruction), instruction),
+                candidate: false);
             return;
         }
 
@@ -336,6 +359,15 @@ internal sealed class MethodModel
             {
                 var array = Pop();
                 Push(new TargetArrayLengthNode(array, Method.Module.TypeSystem.Int32, instruction));
+                return;
+            }
+
+            case Code.Ldelema:
+            {
+                var index = Pop();
+                var array = Pop();
+                Push(new TargetAddressNode(new TargetArrayElementNode(array, index,
+                    ResolveArrayElementType(array, instruction), instruction), instruction), candidate: false);
                 return;
             }
 
@@ -647,7 +679,9 @@ internal sealed class MethodModel
 
         TypeReference? resultType = instruction.OpCode.Code == Code.Newobj
             ? method.DeclaringType
-            : method.ReturnType.MetadataType == MetadataType.Void ? null : method.ReturnType;
+            : method.ReturnType.MetadataType == MetadataType.Void
+                ? null
+                : CecilHelper.InflateDeclaringGenerics(method.ReturnType, method.DeclaringType);
 
         var node = new TargetCallNode(method, instance, arguments, resultType, instruction);
         if (resultType is null)

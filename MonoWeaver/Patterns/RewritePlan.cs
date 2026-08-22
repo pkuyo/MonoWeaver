@@ -660,6 +660,13 @@ public sealed class CallArguments
             throw new ArgumentNullException(nameof(value));
         if (!ReferenceEquals(value.Method, _target))
             throw new ArgumentException("The captured value belongs to a different method.", nameof(value));
+        if (value.IsAddressBacked)
+        {
+            //该 occurrence 处栈上是 managed pointer；dup+stloc 会把指针存进按值类型的临时变量。
+            throw new NotSupportedException(
+                "args.Capture cannot reload a value captured through an address instruction (ldarga/ldloca/ldelema). " +
+                "Use args.Arg or args.Local to load the underlying variable instead.");
+        }
         _argPlans.Add(new CapturedArgumentPlan(value));
         return this;
     }

@@ -131,6 +131,12 @@ public abstract class ValueTarget : MatchCapture
     public Instruction DefinitionFirstInstruction { get; }
     public Instruction DefinitionInstruction { get; }
     public Instruction? ConsumerInstruction { get; }
+
+    /// <summary>
+    /// 该 occurrence 是否经由取地址指令（ldarga/ldloca/ldelema）到达。
+    /// 此时栈上是 managed pointer 而非值本身，占位改写（After/Transform/Observe/Replace）不安全。
+    /// </summary>
+    public bool IsAddressBacked { get; internal init; }
 }
 
 /// <summary>value pattern 的根匹配；它本身就是唯一的根 value 改写入口。</summary>

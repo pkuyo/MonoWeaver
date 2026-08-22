@@ -249,22 +249,37 @@ internal sealed class ValueInternalCapture : InternalCapture
                 Occurrence.Consumer ?? Occurrence.UseAnchor);
         }
 
+        //经由取地址指令匹配到的值：栈上实际是 managed pointer，占位改写不安全
+        var isAddressBacked = IsAddressInstruction(node.ProducerInstruction.OpCode.Code);
+
         if (node is TargetArgumentNode argument)
         {
             return new ArgumentCapture(method, name, node.ResultType, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer,
-                argument.IsThis, argument.ParameterIndex, argument.Parameter);
+                argument.IsThis, argument.ParameterIndex, argument.Parameter)
+            {
+                IsAddressBacked = isAddressBacked,
+            };
         }
 
         if (node is TargetLocalReadNode local)
         {
             return new LocalCapture(method, name, local.Variable, node.FirstInstruction,
-                node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer);
+                node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer)
+            {
+                IsAddressBacked = isAddressBacked,
+            };
         }
 
         return new ValueCapture(method, name, node.ResultType, node.FirstInstruction,
-            node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer);
+            node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer)
+        {
+            IsAddressBacked = isAddressBacked,
+        };
     }
+
+    private static bool IsAddressInstruction(Code code)
+        => code is Code.Ldarga or Code.Ldarga_S or Code.Ldloca or Code.Ldloca_S or Code.Ldelema;
 }
 
 internal sealed class ConditionInternalCapture : InternalCapture
@@ -342,6 +357,11 @@ internal sealed class ExpressionNodeMatcher
                 return false;
             return context.TryAdd(mark.CaptureName, new ValueInternalCapture(mark.CaptureName, matched));
         }
+
+        //地址节点（ldloca/ldarga/ldelema）对 C# 层不可见：struct 接收者与 ref/out 实参
+        //在 IL 中通过地址传递。匹配时直接按被取地址的值处理。
+        if (target.Node is TargetAddressNode addressTarget)
+            return TryMatchCore(pattern, target.WithNode(addressTarget.Target), context, out matched);
 
         // IL 有 ldloc 时且目标匹配表达式不是根节点尝试追踪前继 stloc。
         // 避免类似于

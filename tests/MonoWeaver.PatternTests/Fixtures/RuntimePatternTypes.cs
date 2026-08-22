@@ -47,6 +47,24 @@ public sealed class InstancePatternTarget
     public InstancePatternTarget IdentityThis() => this;
 }
 
+public struct GamePoint
+{
+    public int X;
+    public int Y;
+
+    public GamePoint(int x, int y)
+    {
+        X = x;
+        Y = y;
+    }
+
+    public int First => X;
+
+    public int Sum() => X + Y;
+
+    public int Scaled(int factor) => (X + Y) * factor;
+}
+
 public sealed class Ops
 {
     public static B IdentityB(B value) => value;
@@ -58,6 +76,7 @@ public sealed class Ops
     public static B ObserveConditionB(bool value, B target) => target;
     public static void ObserveConditionTarget(bool value, B target) { }
     public static void ObserveInt(int value) { }
+    public static void ObservePoint(GamePoint value) { }
     public static int FortyTwo() => 42;
     public static bool CallA() => throw new NotSupportedException();
     public static bool CallC() => throw new NotSupportedException();

@@ -86,7 +86,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan After(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.After");
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
         var callArguments = CallArguments.ConfigAndValidateCall(target.Method, callback, arguments,
@@ -109,7 +109,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan After<TDelegate>(this ValueTarget target, TDelegate callback,
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
-        => CreateDelegateCall(Require(target), target.ResultInstruction,
+        => CreateDelegateCall(RequireValueRewritable(target, "Value.After"), target.ResultInstruction,
             InsertPosition.After, callback, arguments, "Value.After");
 
     public static RewritePlan After(this ValueTarget target, Action callback)
@@ -171,7 +171,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Transform(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? additionalArguments = null)
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Transform");
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
         RequireReturn(callback, requireVoid: false, "Value.Transform");
@@ -199,7 +199,7 @@ public static partial class PatternTransformExtensions
         Action<CallArguments>? additionalArguments = null)
         where TDelegate : Delegate
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Transform");
         var call = CecilDelegateEmission.Prepare(target.Method,
             callback ?? throw new ArgumentNullException(nameof(callback)));
         return CreateValueTransform(target, call, additionalArguments, "Value.Transform");
@@ -212,7 +212,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Observe(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? additionalArguments = null)
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Observe");
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
         var arguments = CallArguments.ConfigAndValidateCall(target.Method, callback,
@@ -237,7 +237,7 @@ public static partial class PatternTransformExtensions
         Action<CallArguments>? additionalArguments = null)
         where TDelegate : Delegate
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Observe");
         var call = CecilDelegateEmission.Prepare(target.Method,
             callback ?? throw new ArgumentNullException(nameof(callback)));
         return CreateValueObserve(target, call, additionalArguments, "Value.Observe");
@@ -262,7 +262,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Replace(this ValueTarget target,
         Func<ModuleDefinition, IEnumerable<Instruction>> replacement, int extraStackSlots = 0)
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Replace");
         if (replacement is null)
             throw new ArgumentNullException(nameof(replacement));
         if (extraStackSlots < 0)
@@ -277,7 +277,7 @@ public static partial class PatternTransformExtensions
     public static RewritePlan Replace(this ValueTarget target, MethodReference callback,
         Action<CallArguments>? arguments = null)
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Replace");
         if (callback is null)
             throw new ArgumentNullException(nameof(callback));
         RequireReturn(callback, requireVoid: false, "Value.Replace");
@@ -307,7 +307,7 @@ public static partial class PatternTransformExtensions
         Action<CallArguments>? arguments = null)
         where TDelegate : Delegate
     {
-        target = Require(target);
+        target = RequireValueRewritable(target, "Value.Replace");
         var call = CecilDelegateEmission.Prepare(target.Method,
             callback ?? throw new ArgumentNullException(nameof(callback)));
         RequireReturn(call.ReturnType, requireVoid: false, "Value.Replace");
@@ -746,4 +746,19 @@ public static partial class PatternTransformExtensions
 
     private static TTarget Require<TTarget>(TTarget? target) where TTarget : class
         => target ?? throw new ArgumentNullException(nameof(target));
+
+    //取地址（ldarga/ldloca/ldelema）到达的 occurrence 栈上是 managed pointer，
+    //在该位置做占位改写会把指针当值处理，产生非法 IL。
+    private static ValueTarget RequireValueRewritable(ValueTarget? target, string operation)
+    {
+        var required = Require(target);
+        if (required.IsAddressBacked)
+        {
+            throw new NotSupportedException(
+                $"{operation} cannot rewrite a value captured through an address instruction (ldarga/ldloca/ldelema): " +
+                "the evaluation stack holds a managed pointer at this site, not the value. " +
+                "Rewrite the enclosing expression instead, or pass the value to the callback via args.Arg/args.Local.");
+        }
+        return required;
+    }
 }

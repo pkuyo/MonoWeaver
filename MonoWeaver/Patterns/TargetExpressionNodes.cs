@@ -77,6 +77,23 @@ internal sealed class TargetLocalReadNode : TargetExpressionNode
     public VariableDefinition Variable { get; }
 }
 
+/// <summary>
+/// 取地址（ldloca/ldarga/ldelema）。C# 里地址不可见：struct 接收者调用、ref/out 实参
+/// 都通过地址传递，匹配时按被取地址的值（Target）处理。
+/// </summary>
+internal sealed class TargetAddressNode : TargetExpressionNode
+{
+    public TargetAddressNode(TargetExpressionNode target, Instruction instruction)
+        : base(target.ResultType is null ? null : new ByReferenceType(target.ResultType),
+            target.FirstInstruction, instruction)
+    {
+        Target = target;
+    }
+
+    /// <summary>被取地址的值。</summary>
+    public TargetExpressionNode Target { get; }
+}
+
 internal sealed class TargetConstantNode : TargetExpressionNode
 {
     public TargetConstantNode(object? value, TypeReference? resultType, Instruction instruction,
