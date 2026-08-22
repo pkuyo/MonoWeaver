@@ -448,6 +448,18 @@ internal sealed class ExpressionNodeMatcher
                 matched = target;
                 return true;
 
+            case FieldStorePatternNode fieldStorePattern when target.Node is TargetFieldStoreNode fieldStore:
+                if (!fieldStorePattern.Field.Matches(fieldStore.Field))
+                    break;
+                if (!MatchOptionalChild(fieldStorePattern.Instance, fieldStore.Instance,
+                        fieldStore.ProducerInstruction, context))
+                    break;
+                if (!TryMatch(fieldStorePattern.Value,
+                        TargetOccurrence.Direct(fieldStore.Value, fieldStore.ProducerInstruction), context, out _))
+                    break;
+                matched = target;
+                return true;
+
             case ArrayStorePatternNode storePattern when target.Node is TargetArrayStoreNode arrayStore:
                 if (!TryMatch(storePattern.Array,
                         TargetOccurrence.Direct(arrayStore.Array, arrayStore.ProducerInstruction), context, out _)

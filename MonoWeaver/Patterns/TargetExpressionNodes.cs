@@ -102,6 +102,22 @@ internal sealed class TargetFieldNode : TargetExpressionNode
     public TargetExpressionNode? Instance { get; }
 }
 
+internal sealed class TargetFieldStoreNode : TargetExpressionNode
+{
+    public TargetFieldStoreNode(FieldReference field, TargetExpressionNode? instance,
+        TargetExpressionNode value, Instruction instruction)
+        : base(null, instance?.FirstInstruction ?? value.FirstInstruction, instruction)
+    {
+        Field = field;
+        Instance = instance;
+        Value = value;
+    }
+
+    public FieldReference Field { get; }
+    public TargetExpressionNode? Instance { get; }
+    public TargetExpressionNode Value { get; }
+}
+
 internal sealed class TargetCallNode : TargetExpressionNode
 {
     public TargetCallNode(MethodReference method, TargetExpressionNode? instance,

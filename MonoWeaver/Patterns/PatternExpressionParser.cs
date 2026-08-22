@@ -66,6 +66,7 @@ internal static class PatternExpressionParser
             nameof(P.Any) => new AnyPatternNode(GetRequiredString(call.Arguments[0]), CilTypeSpec.From(call.Type).Assignable()),
             nameof(P.Mark) => new MarkPatternNode(GetRequiredString(call.Arguments[0]), Parse(call.Arguments[1])),
             nameof(P.StoreElement) => ParseStoreElementPlaceholder(call),
+            nameof(P.StoreField) => ParseStoreFieldPlaceholder(call),
             _ => throw Unsupported(call, $"Unknown pattern placeholder P.{name}.")
         };
     }
@@ -155,7 +156,13 @@ internal static class PatternExpressionParser
             return new ArrayStorePatternNode(Parse(arrayIndex.Left), Parse(arrayIndex.Right), Parse(binary.Right));
         }
 
-        throw Unsupported(binary, "Only array element assignment is supported by the pattern matcher.");
+        if (binary.Left is MemberExpression { Member: FieldInfo } fieldAccess
+            && Parse(fieldAccess) is FieldPatternNode fieldRead)
+        {
+            return new FieldStorePatternNode(fieldRead.Field, fieldRead.Instance, Parse(binary.Right));
+        }
+
+        throw Unsupported(binary, "Only array element and field assignment are supported by the pattern matcher.");
     }
 
     private static PatternNode ParseBinary(BinaryExpression binary)
@@ -185,6 +192,21 @@ internal static class PatternExpressionParser
             throw Unsupported(call, "P.StoreElement expects array, index, and value arguments.");
 
         return new ArrayStorePatternNode(Parse(call.Arguments[0]), Parse(call.Arguments[1]), Parse(call.Arguments[2]));
+    }
+
+    private static PatternNode ParseStoreFieldPlaceholder(MethodCallExpression call)
+    {
+        if (call.Arguments.Count != 2)
+            throw Unsupported(call, "P.StoreField expects a field access and a value argument.");
+
+        if (Parse(call.Arguments[0]) is not FieldPatternNode fieldRead)
+        {
+            throw Unsupported(call.Arguments[0],
+                "P.StoreField requires a field access expression as its first argument, " +
+                "for example P.Arg<Player>(0).Hp or a static field.");
+        }
+
+        return new FieldStorePatternNode(fieldRead.Field, fieldRead.Instance, Parse(call.Arguments[1]));
     }
 
     private static string GetRequiredString(Expression expression)

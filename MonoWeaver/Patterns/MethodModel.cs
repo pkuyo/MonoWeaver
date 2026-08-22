@@ -23,6 +23,7 @@ internal sealed class MethodModel
     private readonly Dictionary<BasicBlock, TargetExpressionNode> _conditionExpressions = new();
     private readonly List<TargetExpressionNode> _valueCandidates = new();
     private readonly List<TargetEffect> _effectCandidates = new();
+    private readonly HashSet<TargetExpressionNode> _duplicatedNodes = new();
 
     private MethodModel(ILBasicBlockGraph graph)
     {
@@ -280,6 +281,7 @@ internal sealed class MethodModel
                 stack.Add(value);
                 stack.Add(value);
                 _instructionResults[instruction] = value;
+                _duplicatedNodes.Add(value); //该值有多个消费者，覆盖它的区间不能整体删除
                 return;
             }
             case Code.Pop:
@@ -370,8 +372,13 @@ internal sealed class MethodModel
                 var value = Pop();
                 var index = Pop();
                 var array = Pop();
-                _effectCandidates.Add(new TargetEffect(new TargetArrayStoreNode(array, index, value,
-                    ResolveArrayElementType(array, instruction), instruction), instruction));//类似于 value[x] = y;
+                //同字段写入：操作数被 dup 复用时删除区间会破坏其他消费者的栈值
+                if (!_duplicatedNodes.Contains(value) && !_duplicatedNodes.Contains(index)
+                    && !_duplicatedNodes.Contains(array))
+                {
+                    _effectCandidates.Add(new TargetEffect(new TargetArrayStoreNode(array, index, value,
+                        ResolveArrayElementType(array, instruction), instruction), instruction));//类似于 value[x] = y;
+                }
                 return;
             }
 
@@ -523,12 +530,30 @@ internal sealed class MethodModel
                 Pop();
                 return;
             case Code.Stfld:
-                Pop(); // value
-                Pop(); // instance
+            {
+                var value = Pop();
+                var instance = Pop();
+                //赋值结果被 dup 复用（如 return obj.F = x;）时，删除该区间会拿掉其他消费者依赖的值，
+                //因此不作为独立 effect 提供。
+                if (instruction.Operand is FieldReference field
+                    && !_duplicatedNodes.Contains(value) && !_duplicatedNodes.Contains(instance))
+                {
+                    _effectCandidates.Add(new TargetEffect(
+                        new TargetFieldStoreNode(field, instance, value, instruction), instruction)); //obj.F = x;
+                }
                 return;
+            }
             case Code.Stsfld:
-                Pop();
+            {
+                var value = Pop();
+                if (instruction.Operand is FieldReference field
+                    && !_duplicatedNodes.Contains(value))
+                {
+                    _effectCandidates.Add(new TargetEffect(
+                        new TargetFieldStoreNode(field, null, value, instruction), instruction)); //Type.F = x;
+                }
                 return;
+            }
         }
 
         //保守 fallback。它保持 stack shape 可用，但不会假装理解当前 pattern DSL 无法表达的 operation。

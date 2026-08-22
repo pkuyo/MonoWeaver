@@ -96,6 +96,24 @@ public sealed class FieldPatternNode : PatternNode
 }
 
 /// <summary>
+/// 匹配字段写入（stfld/stsfld）。Instance 为 null 表示 static field。
+/// </summary>
+public sealed class FieldStorePatternNode : PatternNode
+{
+    internal FieldStorePatternNode(CilFieldSpec field, PatternNode? instance, PatternNode value)
+        : base(CilTypeSpec.Void)
+    {
+        Field = field ?? throw new ArgumentNullException(nameof(field));
+        Instance = instance;
+        Value = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    public CilFieldSpec Field { get; }
+    public PatternNode? Instance { get; }
+    public PatternNode Value { get; }
+}
+
+/// <summary>
 /// 匹配一维数组创建。
 /// </summary>
 public sealed class NewArrayPatternNode : PatternNode

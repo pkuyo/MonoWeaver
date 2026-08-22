@@ -255,6 +255,13 @@ public static class P
         => ThrowVoid();
 
     /// <summary>
+    /// 匹配字段写入。第一个参数写出字段访问表达式（如 <c>P.Arg&lt;Player&gt;(0).Hp</c> 或静态字段），
+    /// 第二个参数描述写入的值。
+    /// </summary>
+    public static void StoreField<T>(T field, T value)
+        => ThrowVoid();
+
+    /// <summary>
     /// 匹配 metadata type 指定的 instance，不要求该 type 被 CLR 加载。
     /// </summary>
     public static CilExpr This(CilTypeSpec type, string? captureName = null)
@@ -343,6 +350,34 @@ public static class P
             array?.Node ?? throw new ArgumentNullException(nameof(array)),
             index?.Node ?? throw new ArgumentNullException(nameof(index)),
             value?.Node ?? throw new ArgumentNullException(nameof(value))));
+
+    /// <summary>
+    /// 匹配 instance field 写入（stfld）。
+    /// </summary>
+    public static CilExpr StoreField(CilExpr instance, CilFieldSpec field, CilExpr value)
+    {
+        if (instance is null)
+            throw new ArgumentNullException(nameof(instance));
+        if (field is null)
+            throw new ArgumentNullException(nameof(field));
+        if (field.IsStatic == true)
+            throw new ArgumentException("The field is static. Use the P.StoreField(field, value) overload.", nameof(field));
+        return new CilExpr(new FieldStorePatternNode(field, instance.Node,
+            value?.Node ?? throw new ArgumentNullException(nameof(value))));
+    }
+
+    /// <summary>
+    /// 匹配 static field 写入（stsfld）。
+    /// </summary>
+    public static CilExpr StoreField(CilFieldSpec field, CilExpr value)
+    {
+        if (field is null)
+            throw new ArgumentNullException(nameof(field));
+        if (field.IsStatic == false)
+            throw new ArgumentException("The field is not static. Use the P.StoreField(instance, field, value) overload.", nameof(field));
+        return new CilExpr(new FieldStorePatternNode(field, null,
+            value?.Node ?? throw new ArgumentNullException(nameof(value))));
+    }
 
     public static CilExpr Constant(object? value, CilTypeSpec type)
         => new(new ConstantPatternNode(value, RequireType(type)));
