@@ -177,7 +177,7 @@ public partial class ILMethodVerifier
 
     public bool VerifyLocalInit => _verifyOptions.HasFlag(VerifyOptions.LocalInit) && _needInitAnalysis;
 
-    public bool VerifyAccess => _verifyOptions.HasFlag(VerifyOptions.AccessTest) && _needInitAnalysis;
+    public bool VerifyAccess => _verifyOptions.HasFlag(VerifyOptions.AccessTest);
 
     public MethodDefinition Method => _method;
 
@@ -659,6 +659,11 @@ public partial class ILMethodVerifier
                             {
                                 ReportDiagnostic(CFGDiagnostic.MethodAccessViolation(inst, _method.DeclaringType, mf));
                             }
+
+                            if (inst.OpCode.Code is Code.Jmp)
+                            {
+                                VerifyJmpSignature(inst, mf);
+                            }
                         }
                         break;
                     }
@@ -821,6 +826,16 @@ public partial class ILMethodVerifier
                         }
                         break;
                     }
+                case Code.Jmp:
+                    {
+                        //ECMA-335 III.3.37: jmp 不允许出现在 try/filter/handler 区域内
+                        if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Normal)
+                        {
+                            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.InvalidInstruction,
+                                inst, DiagnosticSeverity.Error, "Invalid 'jmp' inside EH block."));
+                        }
+                        break;
+                    }
                 case Code.Rethrow:
                     {
                         if (_regionFrames[instEhFrames[i]].Kind is not RegionKind.Handler ||
@@ -920,6 +935,42 @@ public partial class ILMethodVerifier
                 _method.Body.Instructions.Last(), prefix.Value));
         }
         ThrowIfNeedAbort(AbortStrategy.AbortNextStep);
+    }
+
+    //ECMA-335 III.3.37: jmp 目标方法的签名必须与当前方法一致
+    private void VerifyJmpSignature(Instruction inst, MethodReference target)
+    {
+        if (target.HasThis != _method.HasThis ||
+            target.ExplicitThis != _method.ExplicitThis ||
+            target.CallingConvention != _method.CallingConvention)
+        {
+            ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.TypeMismatch, inst,
+                DiagnosticSeverity.Error, "Jmp target calling convention does not match the current method."));
+            return;
+        }
+
+        if (target.Parameters.Count != _method.Parameters.Count)
+        {
+            ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(TypeMismatchKind.MethodParameterCount,
+                _method.Parameters.Count.ToString(), target.Parameters.Count.ToString(), inst));
+            return;
+        }
+
+        for (var parameterIndex = 0; parameterIndex < target.Parameters.Count; parameterIndex++)
+        {
+            if (!target.Parameters[parameterIndex].ParameterType.IsSameWith(_method.Parameters[parameterIndex].ParameterType))
+            {
+                ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(TypeMismatchKind.MethodParameterType,
+                    _method.Parameters[parameterIndex].ParameterType, target.Parameters[parameterIndex].ParameterType,
+                    inst, parameterIndex));
+            }
+        }
+
+        if (!target.ReturnType.IsSameWith(_method.ReturnType))
+        {
+            ReportDiagnostic(CFGDiagnostic.MethodSignatureMismatch(TypeMismatchKind.MethodReturnType,
+                _method.ReturnType, target.ReturnType, inst));
+        }
     }
 
     private void VerifyBranchTargets(Instruction inst, int instructionIndex, int[] instEhFrames)
@@ -1230,6 +1281,12 @@ public partial class ILMethodVerifier
                 }
 
                 bool endBlock = false;
+                if (inst.OpCode.Code is Code.Jmp)
+                {
+                    //ECMA-335 III.3.37: jmp 时求值栈必须为空，且控制流不落穿
+                    ValidateExitStackHeight(inst, stackHeight, 0);
+                    endBlock = true;
+                }
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:
@@ -1493,6 +1550,15 @@ public partial class ILMethodVerifier
 
                         }
                         retType = VerifyVarPop(inst, ref funcBuffer, out var len, out var hasThis);
+                        if (inst.OpCode.Code is Code.Calli)
+                        {
+                            //calli 的参数之上还压着函数指针，需要先弹出并校验；下溢时 Pop 已报错，不再重复报类型错误
+                            var fnPtr = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
+                            if (fnPtr != StackType.Invalid && fnPtr != StackType.I && fnPtr.Type is not FunctionPointerType)
+                            {
+                                ReportStackTypeMismatch("native int or function pointer", fnPtr, inst);
+                            }
+                        }
                         StackType lastTwo = StackType.Invalid;
                         for (int j = len - 1; j > 0; j--)
                         {
@@ -1595,6 +1661,12 @@ public partial class ILMethodVerifier
                 }
 
                 bool endBlock = false;
+                if (inst.OpCode.Code is Code.Jmp)
+                {
+                    //ECMA-335 III.3.37: jmp 时求值栈必须为空，且控制流不落穿
+                    ValidateExitStackHeight(inst, localStack.Count + node.Depth, 0);
+                    endBlock = true;
+                }
                 switch (inst.OpCode.FlowControl)
                 {
                     case FlowControl.Next:

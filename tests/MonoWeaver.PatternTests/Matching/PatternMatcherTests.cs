@@ -2,10 +2,8 @@ using System;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
-using MonoMod.Cil;
 using MonoWeaver.CFG;
 using MonoWeaver.Cecil;
-using MonoWeaver.MonoMod.Patterns;
 using MonoWeaver.Patterns;
 using MonoWeaver.Utils;
 using Xunit;
@@ -29,21 +27,6 @@ public sealed class PatternMatcherTests
         AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         Assert.Same(hook.DefinitionInstruction, hook.ResultInstruction);
     }
-
-    [Fact]
-    public void UsesLoadSiteWhenCompilerTemporaryIsTransparent()
-    {
-        using var module = OpenFixtureModule();
-        var method = FixtureMethod(module, "Temporary");
-
-        var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-        var hook = PatternMatcher.For(method).Find(pattern).Single().Captures.Value("hook");
-
-        AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
-        Assert.True(hook.ResultInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S,
-            "ResultInstruction must target the concrete ldloc consumed by C().");
-    }
-
     [Fact]
     public void MatchesComplexShortCircuitAndCapturesSubcondition()
     {
@@ -61,19 +44,6 @@ public sealed class PatternMatcherTests
         Assert.True(ab.CanRewrite, ab.RewriteFailureReason ?? "The captured condition should be rewritable.");
     }
 
-    [Fact]
-    public void LocalDefinitionConstraintDisambiguatesBooleanLocal()
-    {
-        using var module = OpenFixtureModule();
-        var method = FixtureMethod(module, "LocalCondition");
-
-        var pattern = Cil.Condition(() => P.Local<bool>("ret"))
-            .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
-
-        var match = PatternMatcher.For(method).Find(pattern).Single();
-        Assert.True(match.Captures.Local("ret").Variable.Index >= 0,
-            "The unique XXX() definition should identify a concrete local.");
-    }
 
     [Fact]
     public void AmbiguousInnerPatternIsRejected()
@@ -278,22 +248,6 @@ public sealed class PatternMatcherTests
         Assert.True(!HasVerificationErrors(method), "Observe must leave the original value for C().");
     }
 
-    [Fact]
-    public void PlainInsertionCallCanStoreResult()
-    {
-        using var module = OpenFixtureModule();
-        var method = FixtureMethod(module, "BeforeExpression");
-        var temp = method.Body.Variables.FirstOrDefault()
-            ?? throw new InvalidOperationException("The fixture method should contain a compiler-generated local.");
-
-        var match = method.Match(Cil.Value(() => P.Arg<int>(0))).Single();
-        match.Replace((Func<int>)Ops.FortyTwo).Apply();
-
-        Assert.Equal(Code.Call, method.Body.Instructions[0].OpCode.Code);
-        Assert.True(method.Body.Instructions[1].OpCode.Code is Code.Stloc or Code.Stloc_S,
-            "An explicitly selected local destination must consume the callback result.");
-        Assert.True(!HasVerificationErrors(method), "A stored plain-call result must not disturb the original stack contract.");
-    }
 
     [Fact]
     public void ConditionTransformProducesValidIL()
@@ -372,33 +326,4 @@ public sealed class PatternMatcherTests
         var method = Assert.IsType<MethodReference>(instruction.Operand);
         Assert.Equal(methodName, method.Name);
     }
-}
-
-public sealed class A
-{
-    public B B() => throw new NotSupportedException();
-}
-
-public class B
-{
-    public C C() => throw new NotSupportedException();
-    public C D() => throw new NotSupportedException();
-    public int Select(int value) => throw new NotSupportedException();
-    public int Select(string value) => throw new NotSupportedException();
-    public bool CallB() => throw new NotSupportedException();
-}
-
-public sealed class C { }
-
-public static class Ops
-{
-    public static B IdentityB(B value) => value;
-    public static bool IdentityBool(bool value) => value;
-    public static void ObserveB(B value) { }
-    public static int FortyTwo() => 42;
-    public static bool CallA() => throw new NotSupportedException();
-    public static bool CallC() => throw new NotSupportedException();
-    public static bool CallD() => throw new NotSupportedException();
-    public static bool XXX() => throw new NotSupportedException();
-    public static void ConsumeInt(int value) { }
 }

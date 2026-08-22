@@ -226,10 +226,7 @@ public sealed class RewritePlan
     {
         EnsureNotApplied();
 
-        var label = _method.Body.Instructions.FirstOrDefault(instruction =>
-            instruction.OpCode.FlowControl is FlowControl.Cond_Branch or FlowControl.Branch
-            && instruction.Operand is { } operand
-            && CecilHelper.IsMonoModILLabel(operand.GetType()))?.Operand;
+        var label = CecilHelper.FindMonoModLabelOperand(_method.Body);
 
         try
         {

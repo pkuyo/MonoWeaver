@@ -215,6 +215,38 @@ public static partial class CecilHelper
     internal static bool IsMonoModILLabel(Type type)
         => type.FullName == MonoModILLabelFullName;
 
+    /// <summary>
+    /// 探测方法体是否处于 MonoMod ILContext 下并返回一个 ILLabel 实例：
+    /// 普通 branch 的操作数是 ILLabel，switch 的操作数是 ILLabel[]。找不到时返回 null。
+    /// </summary>
+    public static object? FindMonoModLabelOperand(MethodBody body)
+    {
+        foreach (var instruction in body.Instructions)
+        {
+            if (instruction.OpCode.FlowControl is not (FlowControl.Cond_Branch or FlowControl.Branch))
+                continue;
+
+            switch (instruction.Operand)
+            {
+                case Array array:
+                    if (array.GetType().GetElementType() is { } elementType &&
+                        IsMonoModILLabel(elementType))
+                    {
+                        foreach (var element in array)
+                        {
+                            if (element is not null)
+                                return element;
+                        }
+                    }
+                    break;
+                case { } operand when IsMonoModILLabel(operand.GetType()):
+                    return operand;
+            }
+        }
+
+        return null;
+    }
+
     private static OperandTargetResolveError InvalidTargetOperand(Type current, string message)
         => new(typeof(Instruction), current,
             $"{message} Expected {typeof(Instruction).FullName} or {MonoModILLabelFullName}.");

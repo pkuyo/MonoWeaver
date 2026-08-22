@@ -115,9 +115,12 @@ public static partial class CecilHelper
                 return method.ReturnType.StripType().IsVoid()
                     ? 0 : 1;
             }
-            throw new Exception(); //TODO:
+            throw new NotSupportedException(
+                $"Cannot determine variable pop count for '{inst.SafeToString()}': operand is not an IMethodSignature.");
         }
-        return sig.Parameters.Count + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0);
+        return sig.Parameters.Count
+            + (sig.HasThis && (inst.OpCode.Code is not Code.Newobj) ? 1 : 0)
+            + (inst.OpCode.Code is Code.Calli ? 1 : 0); //calli 额外弹出栈顶的函数指针
     }
 
     public static int ReturnCount(this MethodDefinition method)
@@ -135,7 +138,8 @@ public static partial class CecilHelper
     {
         if (inst.Operand is not IMethodSignature sig)
         {
-            throw new Exception(); //TODO:
+            throw new NotSupportedException(
+                $"Cannot determine variable push count for '{inst.SafeToString()}': operand is not an IMethodSignature.");
         }
         return (sig.ReturnType.StripType().IsVoid()) ? 0 : 1;
     }

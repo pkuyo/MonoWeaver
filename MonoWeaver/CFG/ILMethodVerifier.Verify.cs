@@ -1270,7 +1270,7 @@ public partial class ILMethodVerifier
         var expectType = inst.OpCode.Code switch
         {
             Code.Stelem_I => StackType.I,
-            Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I2 or Code.Stelem_I4 => StackType.I4,
+            Code.Stelem_I1 or Code.Stelem_I2 or Code.Stelem_I4 => StackType.I4,
             Code.Stelem_I8 => StackType.I8,
             Code.Stelem_R4 or Code.Stelem_R8 => StackType.F,
             Code.Stelem_Ref => StackType.Invalid,

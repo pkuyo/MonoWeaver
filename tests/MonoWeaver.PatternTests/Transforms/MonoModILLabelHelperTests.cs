@@ -56,6 +56,29 @@ public sealed class MonoModILLabelHelperTests
         Assert.Equal(switchTargets, Assert.IsType<Instruction[]>(switchInstruction.Operand));
     }
 
+    [Fact]
+    public void FindMonoModLabelOperandDetectsSwitchOnlyLabels()
+    {
+        ResetMonoModHelperCache();
+        using var module = CreateBranchAndSwitchModule(out var method);
+
+        //纯 Cecil 状态下不应误报
+        Assert.Null(CecilHelper.FindMonoModLabelOperand(method.Body));
+
+        using var context = new ILContext(method);
+        CecilHelper.BranchTargetsToLabels(context);
+
+        //把唯一的 br 还原成 Instruction 目标，只保留 switch 的 ILLabel[]
+        var branch = context.Instrs.Single(instruction => instruction.OpCode.Code == Code.Br);
+        branch.Operand = CecilHelper.GetTarget(Assert.IsType<ILLabel>(branch.Operand))
+            ?? throw new InvalidOperationException("The branch label has no target.");
+
+        var label = CecilHelper.FindMonoModLabelOperand(method.Body);
+
+        Assert.IsType<ILLabel>(label);
+        Assert.Same(context, CecilHelper.GetContext(label!));
+    }
+
     private static ModuleDefinition CreateBranchAndSwitchModule(out MethodDefinition method)
     {
         var module = ModuleDefinition.CreateModule("MonoModILLabelHelperFixtures", ModuleKind.Dll);
