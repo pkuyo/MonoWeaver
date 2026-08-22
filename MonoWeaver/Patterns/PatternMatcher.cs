@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -15,14 +15,27 @@ namespace MonoWeaver.Patterns;
 /// </summary>
 public sealed class PatternMatcher
 {
-    private readonly MethodModel _model;
+    private readonly MethodDefinition _method;
+    private MethodModel _model;
 
     private PatternMatcher(MethodDefinition method)
     {
+        _method = method;
         _model = MethodModel.Create(method);
     }
 
-    public MethodDefinition Method => _model.Method;
+    public MethodDefinition Method => _method;
+
+    /// <summary>
+    /// 每个公开查询入口调用一次：模型与 body 不一致就重建。
+    /// 同一个 matcher 改写 IL 后再查询时，过时的模型会返回指向已删除指令的幽灵匹配。
+    /// 只在入口检查，避免一次查询里重复付出 O(n) 的比对开销。
+    /// </summary>
+    private void RefreshModelIfStale()
+    {
+        if (_model.IsStale)
+            _model = MethodModel.Create(_method);
+    }
 
     public static PatternMatcher For(MethodDefinition method)
     {
@@ -35,6 +48,7 @@ public sealed class PatternMatcher
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
+        RefreshModelIfStale();
         var diagnostics = CreateCollector();
         var matches = FindValues<ValueMatch>(pattern, diagnostics,
             (matched, captures) => CreateValueMatch(pattern, matched, captures));
@@ -46,6 +60,7 @@ public sealed class PatternMatcher
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
+        RefreshModelIfStale();
         var diagnostics = CreateCollector();
         var matches = FindValues<ValueMatch<T>>(pattern, diagnostics,
             (matched, captures) => CreateValueMatch<T>(pattern, matched, captures));
@@ -57,6 +72,7 @@ public sealed class PatternMatcher
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
+        RefreshModelIfStale();
         var diagnostics = CreateCollector();
         var matches = FindEffects(pattern, diagnostics);
         return new CilMatchSet<EffectMatch>(Method, pattern, matches,
@@ -67,6 +83,7 @@ public sealed class PatternMatcher
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
+        RefreshModelIfStale();
         var diagnostics = CreateCollector();
         var matches = FindConditions(pattern, diagnostics);
         return new CilMatchSet<ConditionMatch>(Method, pattern, matches,

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -25,6 +25,8 @@ internal sealed class MethodModel
     private readonly List<TargetEffect> _effectCandidates = new();
     private readonly HashSet<TargetExpressionNode> _duplicatedNodes = new();
     private readonly MatchDiagnosticCollector _modelDiagnostics = new();
+    private readonly int _variableCount;
+    private readonly int _exceptionHandlerCount;
 
     private MethodModel(ILBasicBlockGraph graph)
     {
@@ -34,6 +36,8 @@ internal sealed class MethodModel
         Blocks = graph.Blocks;
         EntryBlocks = graph.EntryBlocks;
         _blockByInstruction = graph.BlockByInstruction;
+        _variableCount = Method.HasBody ? Method.Body.Variables.Count : 0;
+        _exceptionHandlerCount = Method.HasBody ? Method.Body.ExceptionHandlers.Count : 0;
     }
 
     public MethodDefinition Method { get; }
@@ -61,6 +65,36 @@ internal sealed class MethodModel
         model.BuildExpressions();
         model.LocalDefinitions = LocalDefinitionIndex.Create(model);
         return model;
+    }
+
+    /// <summary>
+    /// 模型是否已与当前 body 不一致。建模时拍下的指令快照逐项比引用，
+    /// 因此 MonoWeaver 自身的改写和外部直接改 Cecil 都能检出。
+    /// 代价是 O(n) 次引用比较，远低于重建模型。
+    /// </summary>
+    public bool IsStale
+    {
+        get
+        {
+            if (!Method.HasBody)
+                return true;
+
+            var body = Method.Body;
+            if (body.Instructions.Count != Instructions.Length
+                || body.Variables.Count != _variableCount
+                || body.ExceptionHandlers.Count != _exceptionHandlerCount)
+            {
+                return true;
+            }
+
+            for (var i = 0; i < Instructions.Length; i++)
+            {
+                if (!ReferenceEquals(body.Instructions[i], Instructions[i]))
+                    return true;
+            }
+
+            return false;
+        }
     }
 
     public int IndexOf(Instruction instruction)
