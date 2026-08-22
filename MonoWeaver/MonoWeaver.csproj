@@ -1,14 +1,58 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
-	<LangVersion>12</LangVersion>
+    <TargetFrameworks Condition="'$(CecilFlavor)' == 'Cecil10'">net46;netstandard2.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(CecilFlavor)' == 'Latest'">netstandard2.0</TargetFrameworks>
+
+    <LangVersion>12</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+
+    <AssemblyName>MonoWeaver</AssemblyName>
+    <RootNamespace>MonoWeaver</RootNamespace>
+
+    <Authors>Pkuyo</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/pkuyo/MonoWeaver</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/pkuyo/MonoWeaver.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>cecil;monomod;il;il-rewriting;modding;patching;bepinex;unity</PackageTags>
+
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CecilFlavor)' == 'Cecil10'">
+    <PackageId>MonoWeaver.Cecil10</PackageId>
+    <DefineConstants>$(DefineConstants);CECIL_010</DefineConstants>
+    <Description>Expression-level IL patching for C# game mods: describe the code you want to hook instead of matching a fixed list of IL instructions. This is the legacy build for Mono.Cecil 0.10.x — use it for older Unity games and MonoMod 19.x. For Mono.Cecil 0.11.2+, use the MonoWeaver package instead.</Description>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CecilFlavor)' == 'Latest'">
+    <PackageId>MonoWeaver</PackageId>
+    <Description>Expression-level IL patching for C# game mods: describe the code you want to hook instead of matching a fixed list of IL instructions. Built against Mono.Cecil 0.11.2+. If your game or mod loader ships Mono.Cecil 0.10.x, use the MonoWeaver.Cecil10 package instead.</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Mono.Cecil" Version="[0.10.0, 0.10.4]" />
+    <PackageReference Include="Mono.Cecil" Version="$(CecilPackageVersion)" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- 提供 net46 参考程序集，构建不再依赖 runner 上装没装 .NET Framework targeting pack -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- net46 缺 System.ValueTuple；netstandard2.0 内置，无需引入 -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
+    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
 </Project>

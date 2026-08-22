@@ -1,0 +1,113 @@
+name: Release
+
+# 打 tag 触发，例如：
+#   git tag v0.1.0 && git push origin v0.1.0
+# 两个包共用 tag 上的版本号 —— 同一份源码编出来的，功能集本来就一致。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '包版本号（不带 v 前缀），例如 0.1.0'
+        required: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [Cecil10, Latest]
+
+    name: test (${{ matrix.flavor }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test MonoWeaver.slnx -c Release -p:CecilFlavor=${{ matrix.flavor }}
+
+  publish:
+    # 两个 flavor 全绿才发布
+    needs: test
+    runs-on: windows-latest
+    environment: nuget
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            v="${{ github.event.inputs.version }}"
+          else
+            v="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          case "$v" in
+            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "Publishing MonoWeaver + MonoWeaver.Cecil10 version $v"
+
+      # 先把两个包都打出来，再统一推送。
+      # dotnet nuget push 不是事务性的，先打包能把「编译/打包失败」挡在推送之前，
+      # 避免出现只发上去一半的版本。
+      - name: Pack both flavors
+        run: |
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=${{ steps.ver.outputs.version }} -p:ContinuousIntegrationBuild=true
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest  -p:Version=${{ steps.ver.outputs.version }} -p:ContinuousIntegrationBuild=true
+
+      - name: List packages
+        shell: bash
+        run: ls -l artifacts/nupkg
+
+      # 逐个显式推送。dotnet nuget push 自带的通配符在 Windows 上只认反斜杠分隔符，
+      # 写成 "artifacts/nupkg/*.nupkg" 会直接报「文件不存在」，所以这里用 PowerShell 展开。
+      # *.nupkg 不会匹配到 *.snupkg，符号包由 NuGet 客户端自动随主包一起推送。
+      - name: Push to NuGet.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          $packages = Get-ChildItem artifacts/nupkg/*.nupkg
+          if ($packages.Count -ne 2) {
+            throw "Expected 2 packages (MonoWeaver + MonoWeaver.Cecil10), found $($packages.Count)."
+          }
+          foreach ($p in $packages) {
+            Write-Host "Pushing $($p.Name)"
+            dotnet nuget push $p.FullName `
+              --api-key $env:NUGET_API_KEY `
+              --source https://api.nuget.org/v3/index.json `
+              --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "Push failed for $($p.Name)" }
+          }
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/nupkg/*
+          prerelease: ${{ steps.ver.outputs.prerelease }}
+          generate_release_notes: true
+          body: |
+            两个包，同一份源码，同一个版本号：
+
+            | 包 | Mono.Cecil | 目标框架 |
+            |---|---|---|
+            | `MonoWeaver` | 0.11.2+ | netstandard2.0 |
+            | `MonoWeaver.Cecil10` | 0.10.0 – 0.10.4 | net46, netstandard2.0 |
+
+            老 Unity 游戏 / MonoMod 19.x 用 `MonoWeaver.Cecil10`，其余用 `MonoWeaver`。
+            两个包不要同时引用 —— 它们的程序集同名。

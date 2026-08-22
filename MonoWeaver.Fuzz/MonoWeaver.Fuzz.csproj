@@ -11,6 +11,6 @@
     <ProjectReference Include="..\MonoWeaver\MonoWeaver.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Mono.Cecil" Version="0.10.4" />
+    <PackageReference Include="Mono.Cecil" Version="$(CecilPinnedVersion)" />
   </ItemGroup>
 </Project>

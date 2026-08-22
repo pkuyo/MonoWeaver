@@ -28,7 +28,7 @@
 
   <ItemGroup>
     <PackageReference Include="MonoMod" Version="19.9.1.6" />
-    <PackageReference Include="Mono.Cecil" Version="0.10.4" />
+    <PackageReference Include="Mono.Cecil" Version="$(CecilPinnedVersion)" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" PrivateAssets="all" />
     <PackageReference Include="xunit" Version="2.9.3" PrivateAssets="all" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">

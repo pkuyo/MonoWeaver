@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # PatternTests 目标框架是 net48，只能在 Windows 上跑
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [Cecil10, Latest]
+
+    name: test (${{ matrix.flavor }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore MonoWeaver.slnx -p:CecilFlavor=${{ matrix.flavor }}
+
+      - name: Build
+        run: dotnet build MonoWeaver.slnx -c Release --no-restore -p:CecilFlavor=${{ matrix.flavor }}
+
+      - name: Test
+        run: dotnet test MonoWeaver.slnx -c Release --no-build -p:CecilFlavor=${{ matrix.flavor }}
+
+  pack:
+    # 每次 CI 都试打一遍包，避免只有发 tag 时才发现打包配置坏了
+    runs-on: windows-latest
+    name: pack (dry run)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack both flavors
+        run: |
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.0.0-ci -p:ContinuousIntegrationBuild=true
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest  -p:Version=0.0.0-ci -p:ContinuousIntegrationBuild=true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg-ci
+          path: artifacts/nupkg/*

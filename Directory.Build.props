@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <CecilFlavor Condition="'$(CecilFlavor)' == ''">Cecil10</CecilFlavor>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CecilFlavor)' == 'Cecil10'">
+    <CecilPackageVersion>[0.10.0, 0.10.4]</CecilPackageVersion>
+    <CecilPinnedVersion>0.10.4</CecilPinnedVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CecilFlavor)' == 'Latest'">
+    <CecilPackageVersion>[0.11.2,)</CecilPackageVersion>
+    <CecilPinnedVersion>0.11.6</CecilPinnedVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'MonoWeaver'">
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts/obj/$(CecilFlavor)/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts/bin/$(CecilFlavor)/</BaseOutputPath>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)artifacts/nupkg/</PackageOutputPath>
+  </PropertyGroup>
+
+</Project>
