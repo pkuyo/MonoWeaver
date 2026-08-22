@@ -52,3 +52,19 @@ jobs:
         with:
           name: nupkg-ci
           path: artifacts/nupkg/*
+
+  verify-perf:
+    # IL 验证性能闸门：单方法最坏耗时超阈值就失败。
+    runs-on: windows-latest
+    name: verify perf gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run verification gate
+        run: >
+          dotnet run -c Release --project benchmarks/MonoWeaver.Benchmarks
+          -- --verify-only --max-method-us 50000

@@ -1924,6 +1924,9 @@ public partial class ILMethodVerifier
             {
                 to.initLocals = new BitArray(currentInitLocals!);
             }
+            //入队即标记，否则后续到达同一块的边会重复入队而非走合并分支，退化为 2^N 次块分析
+            to.EntryNode = currentNode;
+            usedBlocks.Add(to);
             bfsBlocks.Add((to, currentNode));
         }
     }

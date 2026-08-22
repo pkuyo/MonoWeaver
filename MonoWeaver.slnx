@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/benchmarks/">
-    <Project Path="benchmarks/MonoWeaver.HookBenchmarks/MonoWeaver.HookBenchmarks.csproj" />
+    <Project Path="benchmarks/MonoWeaver.Benchmarks/MonoWeaver.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj" />
