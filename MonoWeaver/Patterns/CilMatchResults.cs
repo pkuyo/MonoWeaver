@@ -16,22 +16,32 @@ public sealed class CilPatternMatchException : Exception
 /// <summary>某一种强类型 match 的结果集合。</summary>
 public sealed class CilMatchSet<TMatch> : IReadOnlyList<TMatch>
 {
+    private const int MaxDiagnosticsInExceptionMessage = 5;
+
     private readonly IReadOnlyList<TMatch> _matches;
     private readonly Func<TMatch, Instruction> _location;
 
     internal CilMatchSet(MethodDefinition method, ExpressionPattern pattern,
-        IReadOnlyList<TMatch> matches, Func<TMatch, Instruction> location)
+        IReadOnlyList<TMatch> matches, Func<TMatch, Instruction> location,
+        IReadOnlyList<MatchDiagnostic>? diagnostics = null)
     {
         Method = method ?? throw new ArgumentNullException(nameof(method));
         Pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
         _matches = matches ?? throw new ArgumentNullException(nameof(matches));
         _location = location ?? throw new ArgumentNullException(nameof(location));
+        Diagnostics = diagnostics ?? Array.Empty<MatchDiagnostic>();
     }
 
     public MethodDefinition Method { get; }
     public ExpressionPattern Pattern { get; }
     public int Count => _matches.Count;
     public TMatch this[int index] => _matches[index];
+
+    /// <summary>
+    /// 本次匹配收集到的诊断：方法中不可表达的 IL、被拒绝的临时变量穿透、LocalDefinedBy 失败原因。
+    /// 诊断的存在不代表匹配失败，只在结果不符合预期时用于解释原因。
+    /// </summary>
+    public IReadOnlyList<MatchDiagnostic> Diagnostics { get; }
 
     /// <summary>返回唯一结果；0 个或多个候选都视为不安全。</summary>
     public TMatch Single()
@@ -43,8 +53,33 @@ public sealed class CilMatchSet<TMatch> : IReadOnlyList<TMatch>
             ? "No matching expression was found."
             : $"{_matches.Count} matching expressions were found at: " +
               string.Join(", ", _matches.Select(match => $"IL_{_location(match).Offset:X4}"));
-        throw new CilPatternMatchException(details +
-            " Add surrounding expression context, a Mark, or a local-definition constraint.");
+        var message = details +
+            " Add surrounding expression context, a Mark, or a local-definition constraint.";
+        if (_matches.Count == 0 && Diagnostics.Count != 0)
+            message += Environment.NewLine + FormatDiagnostics(MaxDiagnosticsInExceptionMessage);
+        throw new CilPatternMatchException(message);
+    }
+
+    /// <summary>把诊断格式化成适合日志输出的多行报告。</summary>
+    public string ExplainFailure()
+    {
+        if (Diagnostics.Count == 0)
+        {
+            return $"No diagnostics were recorded for {Method.FullName}. " +
+                   "The method model understood every instruction; check the pattern shape, constants, and overloads.";
+        }
+
+        return $"Match diagnostics for {Method.FullName} ({Count} match(es)):" +
+               Environment.NewLine + FormatDiagnostics(Diagnostics.Count);
+    }
+
+    private string FormatDiagnostics(int limit)
+    {
+        var lines = Diagnostics.Take(limit).Select(diagnostic => "  " + diagnostic);
+        var text = "Possible reasons:" + Environment.NewLine + string.Join(Environment.NewLine, lines);
+        if (Diagnostics.Count > limit)
+            text += Environment.NewLine + $"  ... and {Diagnostics.Count - limit} more (see CilMatchSet.Diagnostics).";
+        return text;
     }
 
     public IEnumerator<TMatch> GetEnumerator() => _matches.GetEnumerator();

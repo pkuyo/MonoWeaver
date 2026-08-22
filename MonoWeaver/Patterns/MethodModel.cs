@@ -24,6 +24,7 @@ internal sealed class MethodModel
     private readonly List<TargetExpressionNode> _valueCandidates = new();
     private readonly List<TargetEffect> _effectCandidates = new();
     private readonly HashSet<TargetExpressionNode> _duplicatedNodes = new();
+    private readonly MatchDiagnosticCollector _modelDiagnostics = new();
 
     private MethodModel(ILBasicBlockGraph graph)
     {
@@ -42,6 +43,9 @@ internal sealed class MethodModel
     public IReadOnlyList<TargetExpressionNode> ValueCandidates => _valueCandidates;
     public IReadOnlyList<TargetEffect> EffectCandidates => _effectCandidates;
     public LocalDefinitionIndex LocalDefinitions { get; private set; } = null!;
+
+    /// <summary>模型构建期发现的不可表达 IL；与具体 pattern 无关，对该方法的所有匹配生效。</summary>
+    public IReadOnlyList<MatchDiagnostic> ModelDiagnostics => _modelDiagnostics.Diagnostics;
 
     public static MethodModel Create(MethodDefinition method)
     {
@@ -200,7 +204,11 @@ internal sealed class MethodModel
         TargetExpressionNode Pop()
         {
             if (stack.Count == 0)
+            {
+                _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                    "Stack underflow while building the pattern model; expressions feeding this instruction cannot be matched.");
                 return new TargetUnknownNode(null, instruction, "stack underflow while building pattern model");
+            }
             var value = stack[stack.Count - 1];
             stack.RemoveAt(stack.Count - 1);
             return value;
@@ -329,6 +337,8 @@ internal sealed class MethodModel
 
             case Code.Ldflda:
             {
+                _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                    $"'{code}' takes a field address; expressions covering it cannot be matched.");
                 var instance = Pop();
                 var resultType = instruction.Operand is FieldReference field
                     ? new ByReferenceType(field.FieldType)
@@ -338,6 +348,8 @@ internal sealed class MethodModel
             }
             case Code.Ldsflda:
             {
+                _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                    $"'{code}' takes a field address; expressions covering it cannot be matched.");
                 var resultType = instruction.Operand is FieldReference field
                     ? new ByReferenceType(field.FieldType)
                     : null;
@@ -410,6 +422,10 @@ internal sealed class MethodModel
                 {
                     _effectCandidates.Add(new TargetEffect(new TargetArrayStoreNode(array, index, value,
                         ResolveArrayElementType(array, instruction), instruction), instruction));//类似于 value[x] = y;
+                }
+                else
+                {
+                    ReportReusedStoreResult(instruction, code);
                 }
                 return;
             }
@@ -567,22 +583,34 @@ internal sealed class MethodModel
                 var instance = Pop();
                 //赋值结果被 dup 复用（如 return obj.F = x;）时，删除该区间会拿掉其他消费者依赖的值，
                 //因此不作为独立 effect 提供。
-                if (instruction.Operand is FieldReference field
-                    && !_duplicatedNodes.Contains(value) && !_duplicatedNodes.Contains(instance))
+                if (instruction.Operand is FieldReference field)
                 {
-                    _effectCandidates.Add(new TargetEffect(
-                        new TargetFieldStoreNode(field, instance, value, instruction), instruction)); //obj.F = x;
+                    if (!_duplicatedNodes.Contains(value) && !_duplicatedNodes.Contains(instance))
+                    {
+                        _effectCandidates.Add(new TargetEffect(
+                            new TargetFieldStoreNode(field, instance, value, instruction), instruction)); //obj.F = x;
+                    }
+                    else
+                    {
+                        ReportReusedStoreResult(instruction, code);
+                    }
                 }
                 return;
             }
             case Code.Stsfld:
             {
                 var value = Pop();
-                if (instruction.Operand is FieldReference field
-                    && !_duplicatedNodes.Contains(value))
+                if (instruction.Operand is FieldReference field)
                 {
-                    _effectCandidates.Add(new TargetEffect(
-                        new TargetFieldStoreNode(field, null, value, instruction), instruction)); //Type.F = x;
+                    if (!_duplicatedNodes.Contains(value))
+                    {
+                        _effectCandidates.Add(new TargetEffect(
+                            new TargetFieldStoreNode(field, null, value, instruction), instruction)); //Type.F = x;
+                    }
+                    else
+                    {
+                        ReportReusedStoreResult(instruction, code);
+                    }
                 }
                 return;
             }
@@ -594,6 +622,11 @@ internal sealed class MethodModel
         for (var i = 0; i < popCount; i++)
             inputs.Insert(0, Pop());
         var pushCount = SafePushCount(instruction);
+        if (popCount > 0 || pushCount > 0)
+        {
+            _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                $"'{code}' is not supported by the pattern model; expressions covering it cannot be matched.");
+        }
         for (var i = 0; i < pushCount; i++)
             Push(new TargetOperationNode(code, inputs, null, instruction));
 
@@ -602,6 +635,8 @@ internal sealed class MethodModel
 
         void PushUnknown(int count)
         {
+            _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                $"'{code}' has an operand the pattern model cannot resolve; expressions covering it cannot be matched.");
             for (var i = 0; i < count; i++)
                 Push(new TargetUnknownNode(null, instruction, $"unsupported {code}"));
         }
@@ -627,6 +662,12 @@ internal sealed class MethodModel
                 Method.Module.TypeSystem.Boolean, instruction);
         }
     }
+
+    //赋值结果被后续代码使用（如 return obj.F = x;）时该写入不作为可删除 effect 提供，
+    //这里记录原因，便于匹配为空时解释。
+    private void ReportReusedStoreResult(Instruction instruction, Code code)
+        => _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+            $"The result of this '{code}' is reused by later code, so the store is not offered as a removable effect.");
 
     private static StackType CreateArgumentStackType(TypeReference type, bool isThis,
         ParameterDefinition? parameter)
@@ -660,6 +701,8 @@ internal sealed class MethodModel
     {
         if (instruction.Operand is not MethodReference method)
         {
+            _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                $"'{instruction.OpCode.Code}' does not call a direct method reference; expressions covering it cannot be matched.");
             var fallbackInputs = new List<TargetExpressionNode>();
             var popCount = SafePopCount(instruction);
             for (var i = 0; i < popCount; i++)

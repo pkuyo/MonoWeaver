@@ -27,4 +27,8 @@ public static partial class Target
         Ops.Mutate(ref value);
         return value;
     }
+
+    //字段地址（ldflda）目前仍不可建模，用于诊断测试
+    public static void FieldAddressArgument(MemberHost host)
+        => Ops.Mutate(ref host.InstanceField);
 }

@@ -35,44 +35,59 @@ public sealed class PatternMatcher
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
-        var matches = FindValues<ValueMatch>(pattern,
+        var diagnostics = CreateCollector();
+        var matches = FindValues<ValueMatch>(pattern, diagnostics,
             (matched, captures) => CreateValueMatch(pattern, matched, captures));
         return new CilMatchSet<ValueMatch>(Method, pattern, matches,
-            static match => match.FirstInstruction);
+            static match => match.FirstInstruction, diagnostics.Diagnostics);
     }
 
     public CilMatchSet<ValueMatch<T>> Find<T>(ValuePattern<T> pattern)
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
-        var matches = FindValues<ValueMatch<T>>(pattern,
+        var diagnostics = CreateCollector();
+        var matches = FindValues<ValueMatch<T>>(pattern, diagnostics,
             (matched, captures) => CreateValueMatch<T>(pattern, matched, captures));
         return new CilMatchSet<ValueMatch<T>>(Method, pattern, matches,
-            static match => match.FirstInstruction);
+            static match => match.FirstInstruction, diagnostics.Diagnostics);
     }
 
     public CilMatchSet<EffectMatch> Find(EffectPattern pattern)
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
-        var matches = FindEffects(pattern);
-        return new CilMatchSet<EffectMatch>(Method, pattern, matches, static match => match.FirstInstruction);
+        var diagnostics = CreateCollector();
+        var matches = FindEffects(pattern, diagnostics);
+        return new CilMatchSet<EffectMatch>(Method, pattern, matches,
+            static match => match.FirstInstruction, diagnostics.Diagnostics);
     }
 
     public CilMatchSet<ConditionMatch> Find(ConditionPattern pattern)
     {
         if (pattern is null)
             throw new ArgumentNullException(nameof(pattern));
-        var matches = FindConditions(pattern);
-        return new CilMatchSet<ConditionMatch>(Method, pattern, matches, static match => match.FirstInstruction);
+        var diagnostics = CreateCollector();
+        var matches = FindConditions(pattern, diagnostics);
+        return new CilMatchSet<ConditionMatch>(Method, pattern, matches,
+            static match => match.FirstInstruction, diagnostics.Diagnostics);
+    }
+
+    //模型级诊断与 pattern 无关，先填充；匹配过程中的诊断随后追加。
+    private MatchDiagnosticCollector CreateCollector()
+    {
+        var collector = new MatchDiagnosticCollector();
+        collector.ReportAll(_model.ModelDiagnostics);
+        return collector;
     }
 
     private IReadOnlyList<TMatch> FindValues<TMatch>(ValuePattern pattern,
+        MatchDiagnosticCollector diagnostics,
         Func<TargetOccurrence, IReadOnlyDictionary<string, MatchCapture>, TMatch> create)
     {
         var result = new List<TMatch>();
         var seen = new HashSet<(Instruction producer, Instruction use)>();
-        var matcher = new ExpressionNodeMatcher(_model, pattern.Options);
+        var matcher = new ExpressionNodeMatcher(_model, pattern.Options, diagnostics);
 
         foreach (var candidate in _model.ValueCandidates)
         {
@@ -80,7 +95,7 @@ public sealed class PatternMatcher
             var context = new MatchContext();
             if (!matcher.TryMatch(pattern.Root, occurrence, context, out var matched))
                 continue;
-            if (!ApplyLocalConstraints(pattern, context, matcher))
+            if (!ApplyLocalConstraints(pattern, context, matcher, diagnostics))
                 continue;
             if (!seen.Add((matched.Node.ProducerInstruction, matched.UseAnchor)))
                 continue;
@@ -91,11 +106,12 @@ public sealed class PatternMatcher
         return result;
     }
 
-    private IReadOnlyList<EffectMatch> FindEffects(EffectPattern pattern)
+    private IReadOnlyList<EffectMatch> FindEffects(EffectPattern pattern,
+        MatchDiagnosticCollector diagnostics)
     {
         var result = new List<EffectMatch>();
         var seen = new HashSet<Instruction>();
-        var matcher = new ExpressionNodeMatcher(_model, pattern.Options);
+        var matcher = new ExpressionNodeMatcher(_model, pattern.Options, diagnostics);
 
         foreach (var candidate in _model.EffectCandidates)
         {
@@ -103,7 +119,7 @@ public sealed class PatternMatcher
             var context = new MatchContext();
             if (!matcher.TryMatch(pattern.Root, occurrence, context, out var matched))
                 continue;
-            if (!ApplyLocalConstraints(pattern, context, matcher))
+            if (!ApplyLocalConstraints(pattern, context, matcher, diagnostics))
                 continue;
             if (!seen.Add(candidate.TerminalInstruction))
                 continue;
@@ -116,10 +132,11 @@ public sealed class PatternMatcher
         return result;
     }
 
-    private IReadOnlyList<ConditionMatch> FindConditions(ConditionPattern pattern)
+    private IReadOnlyList<ConditionMatch> FindConditions(ConditionPattern pattern,
+        MatchDiagnosticCollector diagnostics)
     {
         var result = new List<ConditionMatch>();
-        var conditionMatcher = new ConditionPatternMatcher(_model, pattern.Options);
+        var conditionMatcher = new ConditionPatternMatcher(_model, pattern.Options, diagnostics);
         var seen = new HashSet<(int entry, int trueTarget, int falseTarget)>();
 
         foreach (var block in _model.Blocks)
@@ -130,7 +147,7 @@ public sealed class PatternMatcher
             var context = new MatchContext();
             if (!conditionMatcher.TryMatch(pattern.Root, block, context, out var fragment))
                 continue;
-            if (!ApplyLocalConstraints(pattern, context, conditionMatcher.ExpressionMatcher))
+            if (!ApplyLocalConstraints(pattern, context, conditionMatcher.ExpressionMatcher, diagnostics))
                 continue;
 
             fragment.AnalyzeRewriteSafety();
@@ -172,19 +189,25 @@ public sealed class PatternMatcher
     }
 
     private bool ApplyLocalConstraints(ExpressionPattern pattern, MatchContext context,
-        ExpressionNodeMatcher matcher)
+        ExpressionNodeMatcher matcher, MatchDiagnosticCollector? diagnostics)
     {
         foreach (var constraint in pattern.LocalDefinitionConstraints)
         {
             if (!context.Captures.TryGetValue(constraint.CaptureName, out var capture)
                 || capture is not ValueInternalCapture { Occurrence.Node: TargetLocalReadNode localRead })
             {
+                diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed, null,
+                    $"LocalDefinedBy('{constraint.CaptureName}') failed: the pattern did not capture '{constraint.CaptureName}' as a local variable read.");
                 return false;
             }
 
             if (!_model.LocalDefinitions.TryGetUniqueDefinition(localRead,
-                    out var store, out var storedValue, out _))
+                    out var store, out var storedValue, out var failure))
             {
+                //失败原因此前被计算后丢弃；记录下来供匹配失败时诊断。
+                diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed,
+                    localRead.ProducerInstruction,
+                    $"LocalDefinedBy('{constraint.CaptureName}') failed: {failure}");
                 return false;
             }
 
@@ -193,10 +216,12 @@ public sealed class PatternMatcher
             if (!matcher.TryMatch(constraint.Definition.Root, definitionOccurrence,
                     definitionContext, out _))
             {
+                diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed, store,
+                    $"LocalDefinedBy('{constraint.CaptureName}') failed: the defining expression stored at IL_{store.Offset:X4} did not match the required definition pattern.");
                 return false;
             }
 
-            if (!ApplyLocalConstraints(constraint.Definition, definitionContext, matcher))
+            if (!ApplyLocalConstraints(constraint.Definition, definitionContext, matcher, diagnostics))
                 return false;
         }
 
@@ -326,12 +351,15 @@ internal sealed class ExpressionNodeMatcher
 {
     private readonly MethodModel _model;
     private readonly PatternOptions _options;
+    private readonly MatchDiagnosticCollector? _diagnostics;
     private readonly HashSet<(Instruction load, Instruction definition)> _activeLocalExpansion = new();
 
-    public ExpressionNodeMatcher(MethodModel model, PatternOptions options)
+    public ExpressionNodeMatcher(MethodModel model, PatternOptions options,
+        MatchDiagnosticCollector? diagnostics = null)
     {
         _model = model;
         _options = options;
+        _diagnostics = diagnostics;
     }
 
     public bool TryMatch(PatternNode pattern, TargetOccurrence target,
@@ -370,22 +398,31 @@ internal sealed class ExpressionNodeMatcher
         // 同时匹配到原始位置和 ldloc位置
         if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead
             && _options.TemporaryNormalization == TemporaryNormalization.UniqueDefinitions
-            && _model.LocalDefinitions.TryGetUniqueDefinition(localRead,
-                out var store, out var storedValue, out _) && !pattern.IsRoot)
+            && !pattern.IsRoot)
         {
-            var key = (localRead.ProducerInstruction, store);
-            if (_activeLocalExpansion.Add(key))
+            if (_model.LocalDefinitions.TryGetUniqueDefinition(localRead,
+                    out var store, out var storedValue, out var expansionFailure))
             {
-                try
+                var key = (localRead.ProducerInstruction, store);
+                if (_activeLocalExpansion.Add(key))
                 {
-                    //存在前继则替换 node 尝试匹配
-                    if (TryMatch(pattern, target.WithNode(storedValue), context, out matched))
-                        return true;
+                    try
+                    {
+                        //存在前继则替换 node 尝试匹配
+                        if (TryMatch(pattern, target.WithNode(storedValue), context, out matched))
+                            return true;
+                    }
+                    finally
+                    {
+                        _activeLocalExpansion.Remove(key);
+                    }
                 }
-                finally
-                {
-                    _activeLocalExpansion.Remove(key);
-                }
+            }
+            else
+            {
+                //拒绝穿透的原因此前被计算后丢弃；记录下来供匹配失败时诊断。
+                _diagnostics?.Report(MatchDiagnosticKind.AmbiguousLocal,
+                    localRead.ProducerInstruction, expansionFailure);
             }
         }
 
@@ -779,11 +816,12 @@ internal sealed class ConditionPatternMatcher
     private readonly MethodModel _model;
     private readonly PatternOptions _options;
 
-    public ConditionPatternMatcher(MethodModel model, PatternOptions options)
+    public ConditionPatternMatcher(MethodModel model, PatternOptions options,
+        MatchDiagnosticCollector? diagnostics = null)
     {
         _model = model;
         _options = options;
-        ExpressionMatcher = new ExpressionNodeMatcher(model, options);
+        ExpressionMatcher = new ExpressionNodeMatcher(model, options, diagnostics);
     }
 
     public ExpressionNodeMatcher ExpressionMatcher { get; }
