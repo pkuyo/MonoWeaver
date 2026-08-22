@@ -33,4 +33,17 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
   </ItemGroup>
+
+  <!--
+    ILTests 用 ilasm 把 ILVerification/ILTests/*.il 语料编成测试程序集。
+    这里必须显式引用 CoreCLR 版 ilasm：TestAssetBuilder 的解析顺序是
+    ILASM 环境变量 -> NuGet 缓存 -> PATH -> .NET Framework 目录，
+    缓存里没有时会掉到 .NET Framework 4.0.30319 目录下的 ilasm.exe，
+    而 Framework 4.8 的 ilasm 不认识 RuntimeAsyncTests.il 里的 async 方法属性。
+    ExcludeAssets=all：只要求 restore 把它放进缓存，不参与编译。
+  -->
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <PackageReference Include="runtime.win-x64.microsoft.netcore.ilasm" Version="10.0.11" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>
