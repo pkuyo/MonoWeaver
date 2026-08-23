@@ -1,5 +1,10 @@
 # MonoWeaver
 
+[![MonoWeaver on NuGet](https://img.shields.io/nuget/v/MonoWeaver.svg?logo=nuget&label=MonoWeaver)](https://www.nuget.org/packages/MonoWeaver)
+[![MonoWeaver.Cecil10 on NuGet](https://img.shields.io/nuget/v/MonoWeaver.Cecil10.svg?logo=nuget&label=MonoWeaver.Cecil10)](https://www.nuget.org/packages/MonoWeaver.Cecil10)
+[![License](https://img.shields.io/github/license/pkuyo/MonoWeaver)](LICENSE)
+[![CI](https://github.com/pkuyo/MonoWeaver/actions/workflows/ci.yml/badge.svg)](https://github.com/pkuyo/MonoWeaver/actions/workflows/ci.yml)
+
 [简体中文](readme_cn.md)
 
 MonoWeaver helps C# mod developers find a piece of compiled game logic and safely change it. You describe the expression you are looking for—such as a damage calculation, a method call, or an `if` condition—and then choose what should happen before, after, or instead of it.
@@ -141,11 +146,11 @@ Both forms produce the same kind of match result and use the same rewrite operat
 
 Full documentation, in English and Simplified Chinese: **<https://pkuyo.github.io/MonoWeaver/en/>**
 
-- [Your first hook](docs/content/en/getting-started/first-hook.md) — the complete offline patch flow, step by step.
-- [Patterns by example](docs/content/en/cookbook/index.md) — common game functions shown beside the pattern and the exact part it finds.
-- [Rewrite operations](docs/content/en/reference/rewrite-operations.md) — what `Before`, `After`, `Transform`, `Observe`, `Replace`, and `Remove` do per match kind.
-- [Verification](docs/content/en/reference/verification.md) — recommended checks and plain-language troubleshooting.
-- [Type matching](docs/content/en/reference/type-matching.md) — practical type comparisons for game classes, callbacks, and member access.
+- [Your first hook](https://pkuyo.github.io/MonoWeaver/en/getting-started/first-hook/) — the complete offline patch flow, step by step.
+- [Patterns by example](https://pkuyo.github.io/MonoWeaver/en/cookbook/) — common game functions shown beside the pattern and the exact part it finds.
+- [Rewrite operations](https://pkuyo.github.io/MonoWeaver/en/reference/rewrite-operations/) — what `Before`, `After`, `Transform`, `Observe`, `Replace`, and `Remove` do per match kind.
+- [Verification](https://pkuyo.github.io/MonoWeaver/en/reference/verification/) — recommended checks and plain-language troubleshooting.
+- [Type matching](https://pkuyo.github.io/MonoWeaver/en/reference/type-matching/) — practical type comparisons for game classes, callbacks, and member access.
 
 ## Build and test the repository
 

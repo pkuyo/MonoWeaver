@@ -1,5 +1,10 @@
 # MonoWeaver
 
+[![MonoWeaver NuGet 版本](https://img.shields.io/nuget/v/MonoWeaver.svg?logo=nuget&label=MonoWeaver)](https://www.nuget.org/packages/MonoWeaver)
+[![MonoWeaver.Cecil10 NuGet 版本](https://img.shields.io/nuget/v/MonoWeaver.Cecil10.svg?logo=nuget&label=MonoWeaver.Cecil10)](https://www.nuget.org/packages/MonoWeaver.Cecil10)
+[![开源协议](https://img.shields.io/github/license/pkuyo/MonoWeaver)](LICENSE)
+[![CI](https://github.com/pkuyo/MonoWeaver/actions/workflows/ci.yml/badge.svg)](https://github.com/pkuyo/MonoWeaver/actions/workflows/ci.yml)
+
 [English](README.md)
 
 MonoWeaver 是给 C# Mod 开发者用的代码匹配与改写工具。你只需要描述想找的游戏逻辑，例如“两个参数相加”“读取某个字段”“调用某个方法”或“一段 `if` 条件”，然后选择在它前后追加代码、读取结果，或直接替换它。
@@ -153,11 +158,11 @@ var scorePattern = Cil.Value(
 
 完整文档（中英双语）：**<https://pkuyo.github.io/MonoWeaver/>**
 
-- [第一个 Hook](docs/content/zh/getting-started/first-hook.md)：完整的离线补丁流程。
-- [按游戏代码查写法](docs/content/zh/cookbook/index.md)：常见目标函数、对应 Pattern 和实际命中位置。
-- [改写操作](docs/content/zh/reference/rewrite-operations.md)：`Before`/`After`/`Transform`/`Observe`/`Replace`/`Remove` 在三种匹配种类下的语义。
-- [修改后检查](docs/content/zh/reference/verification.md)：推荐检查方式和常见报错处理。
-- [类型判断](docs/content/zh/reference/type-matching.md)：处理游戏类、回调参数和成员访问时常用的类型判断。
+- [第一个 Hook](https://pkuyo.github.io/MonoWeaver/getting-started/first-hook/)：完整的离线补丁流程。
+- [按游戏代码查写法](https://pkuyo.github.io/MonoWeaver/cookbook/)：常见目标函数、对应 Pattern 和实际命中位置。
+- [改写操作](https://pkuyo.github.io/MonoWeaver/reference/rewrite-operations/)：`Before`/`After`/`Transform`/`Observe`/`Replace`/`Remove` 在三种匹配种类下的语义。
+- [修改后检查](https://pkuyo.github.io/MonoWeaver/reference/verification/)：推荐检查方式和常见报错处理。
+- [类型判断](https://pkuyo.github.io/MonoWeaver/reference/type-matching/)：处理游戏类、回调参数和成员访问时常用的类型判断。
 
 ## 构建与测试仓库
 

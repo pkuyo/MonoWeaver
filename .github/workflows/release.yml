@@ -111,12 +111,7 @@ jobs:
           prerelease: ${{ steps.ver.outputs.prerelease }}
           generate_release_notes: true
           body: |
-            两个包，同一份源码，同一个版本号：
-
-            | 包 | Mono.Cecil | 目标框架 |
+            | 包 | Mono.Cecil | target framework |
             |---|---|---|
             | `MonoWeaver` | 0.11.2+ | netstandard2.0 |
             | `MonoWeaver.Cecil10` | 0.10.0 – 0.10.4 | net46, netstandard2.0 |
-
-            老 Unity 游戏 / MonoMod 19.x 用 `MonoWeaver.Cecil10`，其余用 `MonoWeaver`。
-            两个包不要同时引用 —— 它们的程序集同名。
