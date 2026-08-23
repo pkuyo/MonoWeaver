@@ -373,3 +373,4 @@ TestResults/
 *.trx
 reports/ILTests_NonValid_ActualDiagnostics.xlsx
 /.VSCodeCounter
+/docs/site/

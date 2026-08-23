@@ -149,12 +149,15 @@ var scorePattern = Cil.Value(
 - 离线补丁尽量使用静态回调；实例委托、闭包和多播委托仅用于当前运行时。
 - 多匹配时补充外层调用、常量、字段或 `P.Mark` 上下文，不要固定取第一个。
 
-## 详细指南
+## 详细文档
 
-- [Pattern 代表性示例](docs/pattern-examples.md)：常见目标函数、对应 Pattern 和实际命中位置。
-- [匹配与改写](docs/matching-and-rewriting.md)：从目标游戏逻辑到 Pattern、捕获、回调和常用 Hook 写法。
-- [修改后检查](docs/il-verification.md)：推荐检查方式和常见报错处理。
-- [Cecil 类型判断](docs/cecil-extensions.md)：处理游戏类、回调参数和成员访问时常用的类型判断。
+完整文档（中英双语）：**<https://pkuyo.github.io/MonoWeaver/>**
+
+- [第一个 Hook](docs/content/zh/getting-started/first-hook.md)：完整的离线补丁流程。
+- [按游戏代码查写法](docs/content/zh/cookbook/index.md)：常见目标函数、对应 Pattern 和实际命中位置。
+- [改写操作](docs/content/zh/reference/rewrite-operations.md)：`Before`/`After`/`Transform`/`Observe`/`Replace`/`Remove` 在三种匹配种类下的语义。
+- [修改后检查](docs/content/zh/reference/verification.md)：推荐检查方式和常见报错处理。
+- [类型判断](docs/content/zh/reference/type-matching.md)：处理游戏类、回调参数和成员访问时常用的类型判断。
 
 ## 构建与测试仓库
 
@@ -185,6 +188,7 @@ dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Ver
 | `MonoWeaver` | Mod 实际引用的库。 |
 | `tests/MonoWeaver.PatternTests` | 匹配、改写、委托和 MonoMod 兼容测试。 |
 | `tests/MonoWeaver.ILTests` | 修改后检查器的测试。 |
+| `tests/MonoWeaver.DocSamples` | 文档里所有代码块的来源，只编译不运行。 |
 | `MonoWeaver.Fuzz` | 自动生成大量情况做压力测试。 |
 | `benchmarks/MonoWeaver.Benchmarks` | IL 验证吞吐，以及与 MonoMod 的打补丁耗时对比。 |
 

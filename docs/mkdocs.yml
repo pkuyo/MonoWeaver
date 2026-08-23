@@ -1,0 +1,149 @@
+site_name: MonoWeaver
+site_description: Expression-level IL matching and rewriting for C# game mods.
+site_author: Pkuyo
+# Project pages live under a sub-path. Without it every stylesheet and internal
+# link 404s once the site is deployed.
+site_url: https://pkuyo.github.io/MonoWeaver/
+repo_url: https://github.com/pkuyo/MonoWeaver
+repo_name: pkuyo/MonoWeaver
+edit_uri: edit/main/docs/content/
+copyright: MIT licensed.
+
+docs_dir: content
+site_dir: site
+
+# Turn cross-page link and anchor mistakes into build failures under --strict.
+validation:
+  links:
+    absolute_links: warn
+    unrecognized_links: warn
+    anchors: warn
+
+theme:
+  name: material
+  language: zh
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search:
+      # Splits CJK runs so a Chinese query actually hits. jieba (in requirements.txt)
+      # does the segmentation; this separator handles the punctuation around it.
+      separator: '[\s​\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;'
+      lang:
+        - en
+        - zh
+  - i18n:
+      docs_structure: folder
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: zh
+          name: 简体中文
+          default: true
+          build: true
+        - locale: en
+          name: English
+          build: true
+          nav_translations:
+            开始使用: Getting Started
+            安装与选包: Installation
+            第一个 Hook: Your First Hook
+            在 MonoMod 中使用: Using MonoMod
+            核心概念: Concepts
+            三种匹配种类: The Three Match Kinds
+            匹配结果与捕获: Matches and Captures
+            改写计划: The Rewrite Plan
+            示例集: Cookbook
+            按游戏代码查写法: Patterns by Example
+            参考: Reference
+            Pattern 写法: Pattern DSL
+            改写操作: Rewrite Operations
+            类型判断: Type Matching
+            修改后检查: Verification
+            排错: Troubleshooting
+            匹配不到或匹配过多: No Match, or Too Many
+            检查失败: Verification Failures
+            参与开发: Contributing
+            构建与测试: Build and Test
+            代码结构: Architecture
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  # Required for Material's :icon-name: shortcodes; without it they render as plain text.
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      # Code blocks are pulled out of tests/MonoWeaver.DocSamples, which is compiled
+      # by CI. A DSL signature change breaks the build instead of rotting the docs.
+      # Relative to the working directory, so builds must run from the repo root:
+      #   mkdocs build -f docs/mkdocs.yml
+      base_path:
+        - .
+      check_paths: true
+      # Section snippets keep the C# indentation of the enclosing method otherwise.
+      dedent_subsections: true
+
+nav:
+  - MonoWeaver: index.md
+  - 开始使用:
+      - 安装与选包: getting-started/installation.md
+      - 第一个 Hook: getting-started/first-hook.md
+      - 在 MonoMod 中使用: getting-started/monomod.md
+  - 核心概念:
+      - 三种匹配种类: concepts/match-kinds.md
+      - 匹配结果与捕获: concepts/captures.md
+      - 改写计划: concepts/rewrite-plan.md
+  - 示例集:
+      - 按游戏代码查写法: cookbook/index.md
+  - 参考:
+      - Pattern 写法: reference/pattern-dsl.md
+      - 改写操作: reference/rewrite-operations.md
+      - 类型判断: reference/type-matching.md
+      - 修改后检查: reference/verification.md
+  - 排错:
+      - 匹配不到或匹配过多: troubleshooting/no-match.md
+      - 检查失败: troubleshooting/verification-failures.md
+  - 参与开发:
+      - 构建与测试: contributing/build-and-test.md
+      - 代码结构: contributing/architecture.md

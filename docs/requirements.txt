@@ -1,0 +1,8 @@
+# MonoWeaver documentation site.
+# Pinned so a CI build and a local build always render the same output.
+mkdocs==1.6.1
+mkdocs-material==9.5.49
+mkdocs-static-i18n==1.2.3
+pymdown-extensions==10.14
+# Chinese word segmentation for the built-in search index.
+jieba==0.42.1

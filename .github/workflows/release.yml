@@ -35,6 +35,7 @@ jobs:
     environment: nuget
     permissions:
       contents: write
+      id-token: write   # Trusted Publishing 的 OIDC 令牌，缺了会静默拿不到 key
 
     steps:
       - uses: actions/checkout@v4
@@ -73,13 +74,21 @@ jobs:
         shell: bash
         run: ls -l artifacts/nupkg
 
+      # Trusted Publishing：用 GitHub 的 OIDC 令牌换一个 1 小时有效的临时 key，
+      # 仓库里不存长期密钥。紧挨着 push 之前再换，避免 key 提前过期。
+      - name: NuGet login (OIDC)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       # 逐个显式推送。dotnet nuget push 自带的通配符在 Windows 上只认反斜杠分隔符，
       # 写成 "artifacts/nupkg/*.nupkg" 会直接报「文件不存在」，所以这里用 PowerShell 展开。
       # *.nupkg 不会匹配到 *.snupkg，符号包由 NuGet 客户端自动随主包一起推送。
       - name: Push to NuGet.org
         shell: pwsh
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
           $packages = Get-ChildItem artifacts/nupkg/*.nupkg
           if ($packages.Count -ne 2) {

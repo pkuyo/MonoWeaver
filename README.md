@@ -137,14 +137,15 @@ var scorePattern = Cil.Value(
 
 Both forms produce the same kind of match result and use the same rewrite operations.
 
-## Guides
+## Documentation
 
-- [Representative Pattern examples](docs/pattern-examples.md) — common game functions shown beside the Pattern and the exact part it finds.
-- [Matching and rewriting](docs/matching-and-rewriting.md) — start here for patterns, captures, callbacks, and common hook recipes.
-- [Checking an edited method](docs/il-verification.md) — recommended checks and plain-language troubleshooting.
-- [Working with Cecil types](docs/cecil-extensions.md) — practical type comparisons for game classes, callbacks, and member access.
+Full documentation, in English and Simplified Chinese: **<https://pkuyo.github.io/MonoWeaver/en/>**
 
-The focused guides are currently written in Simplified Chinese.
+- [Your first hook](docs/content/en/getting-started/first-hook.md) — the complete offline patch flow, step by step.
+- [Patterns by example](docs/content/en/cookbook/index.md) — common game functions shown beside the pattern and the exact part it finds.
+- [Rewrite operations](docs/content/en/reference/rewrite-operations.md) — what `Before`, `After`, `Transform`, `Observe`, `Replace`, and `Remove` do per match kind.
+- [Verification](docs/content/en/reference/verification.md) — recommended checks and plain-language troubleshooting.
+- [Type matching](docs/content/en/reference/type-matching.md) — practical type comparisons for game classes, callbacks, and member access.
 
 ## Build and test the repository
 
@@ -175,6 +176,7 @@ The main projects in this repository are:
 | `MonoWeaver` | The library used by mods. |
 | `tests/MonoWeaver.PatternTests` | Matching, rewriting, delegate, and MonoMod compatibility tests. |
 | `tests/MonoWeaver.ILTests` | Edited-method checker tests. |
+| `tests/MonoWeaver.DocSamples` | Source of every code block in the docs; compiled, not run. |
 | `MonoWeaver.Fuzz` | Automated stress tests. |
 | `benchmarks/MonoWeaver.Benchmarks` | IL verification throughput, plus a patch-time comparison against MonoMod. |
 
