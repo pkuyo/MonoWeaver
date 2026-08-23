@@ -4,7 +4,7 @@
 
 MonoWeaver 是给 C# Mod 开发者用的代码匹配与改写工具。你只需要描述想找的游戏逻辑，例如“两个参数相加”“读取某个字段”“调用某个方法”或“一段 `if` 条件”，然后选择在它前后追加代码、读取结果，或直接替换它。
 
-大多数时候不需要自己数 IL 指令。编译器即使多生成了一个临时变量，或换了一种条件跳转写法，匹配仍有机会保持稳定。
+大多数时候不需要自己数 IL 指令。编译器即使多生成了一个临时变量，或换了一种条件跳转写法，匹配仍可以保持稳定。
 
 常见用途：
 
@@ -15,34 +15,19 @@ MonoWeaver 是给 C# Mod 开发者用的代码匹配与改写工具。你只需�
 - 在离线修改 DLL 和 MonoMod `ILContext` 中使用同一套写法；
 - 在保存或执行前检查修改后的方法。
 
-MonoWeaver 只适用于 Mono.Cecil 能读取的 .NET/Mono 托管程序集，不用于 IL2CPP 或原生代码。
-
 ## 兼容范围
 
-- MonoWeaver 的目标框架是 .NET Framework 4.8。
-- Mono.Cecil 版本范围为 `[0.10.0, 0.10.4]`。
-- 运行时接入已用 MonoMod `19.9.1.6` 和 Mono.Cecil `0.10.4` 测试。
-- 当前仓库没有配置包源或发布流程。可以把项目加入 Mod 解决方案，或编译后引用 `MonoWeaver.dll`。
+| 包 | Mono.Cecil | 目标框架 |
+| --- | --- | --- |
+| `MonoWeaver` | `0.11.2+` | `netstandard2.0` |
+| `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `net46`、`netstandard2.0` |
+
+
+
 
 如果 Mod Loader 已经自带 Mono.Cecil，请先确认版本兼容。Mod 中同时出现多份不兼容的 Cecil，是常见的加载失败原因。
 
-## 接入 Mod 项目
-
-可以添加项目引用，并按自己的目录调整路径：
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="..\MonoWeaver\MonoWeaver\MonoWeaver.csproj" />
-</ItemGroup>
-```
-
-也可以先编译 Release DLL：
-
-```bash
-dotnet build MonoWeaver/MonoWeaver.csproj -c Release
-```
-
-输出位于 `MonoWeaver/bin/Release/net48/`。
+MonoWeaver 只适用于 Mono.Cecil 能读取的 .NET/Mono 托管程序集，不用于 IL2CPP 或原生代码。
 
 ## 快速开始
 
@@ -173,10 +158,24 @@ var scorePattern = Cil.Value(
 
 ## 构建与测试仓库
 
+整个解决方案共用同一个 `CecilFlavor` 开关，因此两代 Cecil 都能跑全量测试：
+
 ```bash
-dotnet build MonoWeaver.slnx
-dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
-dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
+dotnet test MonoWeaver.slnx
+```
+
+```bash
+dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
+```
+
+本地打出两个包到 `artifacts/nupkg/`：
+
+```bash
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.0
+```
+
+```bash
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.0
 ```
 
 仓库中的主要项目：
@@ -187,4 +186,8 @@ dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
 | `tests/MonoWeaver.PatternTests` | 匹配、改写、委托和 MonoMod 兼容测试。 |
 | `tests/MonoWeaver.ILTests` | 修改后检查器的测试。 |
 | `MonoWeaver.Fuzz` | 自动生成大量情况做压力测试。 |
-| `benchmarks/MonoWeaver.HookBenchmarks` | Hook 性能测试。 |
+| `benchmarks/MonoWeaver.Benchmarks` | IL 验证吞吐，以及与 MonoMod 的打补丁耗时对比。 |
+
+```bash
+dotnet run -c Release --project benchmarks/MonoWeaver.Benchmarks -- --verify-only --max-method-us 50000
+```

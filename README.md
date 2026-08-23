@@ -15,34 +15,15 @@ Typical uses include:
 - applying the same matching API to a Cecil `MethodDefinition` or a MonoMod `ILContext`;
 - checking the edited method before it is written or executed.
 
-MonoWeaver works with managed .NET/Mono assemblies that Mono.Cecil can read. It is not an IL2CPP or native-code patcher.
-
 ## Compatibility
 
-- MonoWeaver targets .NET Framework 4.8.
-- It references Mono.Cecil `[0.10.0, 0.10.4]`.
-- Runtime integration is tested with MonoMod `19.9.1.6` and Mono.Cecil `0.10.4`.
-- No package feed or publish workflow is configured in this repository. Add the project to your solution, or build and reference `MonoWeaver.dll`.
 
-If your mod loader already ships Mono.Cecil, make sure it uses a compatible version. Cecil version conflicts are a common cause of load-time failures in mod projects.
+| Package | Mono.Cecil | Target frameworks |
+| --- | --- | --- |
+| `MonoWeaver` | `0.11.2+` | `netstandard2.0` |
+| `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `net46`, `netstandard2.0` |
 
-## Add it to a mod project
-
-Either add a project reference and adjust the path for your repository layout:
-
-```xml
-<ItemGroup>
-  <ProjectReference Include="..\MonoWeaver\MonoWeaver\MonoWeaver.csproj" />
-</ItemGroup>
-```
-
-Or build a release DLL:
-
-```bash
-dotnet build MonoWeaver/MonoWeaver.csproj -c Release
-```
-
-The output is under `MonoWeaver/bin/Release/net48/`.
+Use `MonoWeaver.Cecil10` for older Unity games and MonoMod 19.x. Its `net46` build matches Unity's .NET 4.x runtime without going through the `netstandard.dll` facade, which is more reliable on older Unity versions. Runtime integration is tested with MonoMod `19.9.1.6` and Mono.Cecil `0.10.4`.
 
 ## Quick start
 
@@ -167,10 +148,24 @@ The focused guides are currently written in Simplified Chinese.
 
 ## Build and test the repository
 
+The whole solution follows the same `CecilFlavor` switch, so the tests run against either Cecil generation:
+
 ```bash
-dotnet build MonoWeaver.slnx
-dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
-dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
+dotnet test MonoWeaver.slnx
+```
+
+```bash
+dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
+```
+
+Build both packages locally into `artifacts/nupkg/`:
+
+```bash
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.0
+```
+
+```bash
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.0
 ```
 
 The main projects in this repository are:
@@ -181,4 +176,8 @@ The main projects in this repository are:
 | `tests/MonoWeaver.PatternTests` | Matching, rewriting, delegate, and MonoMod compatibility tests. |
 | `tests/MonoWeaver.ILTests` | Edited-method checker tests. |
 | `MonoWeaver.Fuzz` | Automated stress tests. |
-| `benchmarks/MonoWeaver.HookBenchmarks` | Hooking benchmarks. |
+| `benchmarks/MonoWeaver.Benchmarks` | IL verification throughput, plus a patch-time comparison against MonoMod. |
+
+```bash
+dotnet run -c Release --project benchmarks/MonoWeaver.Benchmarks -- --verify-only --max-method-us 50000
+```
