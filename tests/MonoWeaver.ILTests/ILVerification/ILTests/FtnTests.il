@@ -281,6 +281,42 @@
         ret
     }
 
+    .method static public hidebysig void LdvirtFtn.BoxedValueTypeObjectMethodClosed_Valid() cil managed
+    {
+        ldc.i4.s   42
+        box        [System.Runtime]System.Int32
+        dup
+        ldvirtftn  instance string [System.Runtime]System.Object::ToString()
+        newobj     instance void class [System.Runtime]System.Func`1<string>::.ctor(object, native int)
+        callvirt   instance !0 class [System.Runtime]System.Func`1<string>::Invoke()
+        pop
+        ret
+    }
+
+    .method static public hidebysig void LdvirtFtn.BoxedValueTypeInterfaceMethodClosed_Valid() cil managed
+    {
+        ldc.i4.s   42
+        box        [System.Runtime]System.Int32
+        dup
+        ldvirtftn  instance int32 class [System.Runtime]System.IComparable`1<int32>::CompareTo(!0)
+        newobj     instance void class [System.Runtime]System.Func`2<int32, int32>::.ctor(object, native int)
+        ldc.i4.0
+        callvirt   instance !1 class [System.Runtime]System.Func`2<int32, int32>::Invoke(!0)
+        pop
+        ret
+    }
+
+    // a boxed int32 is not a valid target for an instance method on an unrelated class
+    .method static public hidebysig void LdFtn.BoxedValueTypeForTestClassInstance_Full_Invalid_TypeMismatch() cil managed
+    {
+        ldc.i4.s   42
+        box        [System.Runtime]System.Int32
+        ldftn      instance void TestClass::InstanceMethod()
+        newobj     instance void [System.Runtime]System.Action::.ctor(object, native int)
+        pop
+        ret
+    }
+
     .method static public hidebysig void LdvirtFtn.InstanceMethodClosed_Valid() cil managed
     {
         // static void StaticMethodString(this string x)
