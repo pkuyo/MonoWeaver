@@ -117,7 +117,7 @@ jobs:
           prerelease: ${{ steps.ver.outputs.prerelease }}
           generate_release_notes: true
           body: |
-            | 包 | Mono.Cecil | 测试使用 MonoMod | target framework |
-            |---|---|---|---|
-            | `MonoWeaver` | 0.11.2+（测试使用 0.11.6） | 22.7.31.1 | netstandard2.0 |
-            | `MonoWeaver.Cecil10` | 0.10.0 – 0.10.4（测试使用 0.10.4） | 19.9.1.6 | net46, netstandard2.0 |
+            | 包 | Mono.Cecil | target framework |
+            |---|---|---|
+            | `MonoWeaver` | 0.11.2+ | netstandard2.0 |
+            | `MonoWeaver.Cecil10` | 0.10.0 – 0.10.4 | net46, netstandard2.0 |
