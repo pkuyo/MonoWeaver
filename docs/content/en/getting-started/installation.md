@@ -11,7 +11,7 @@ MonoWeaver ships two packages. The API is identical; they differ only in which M
 
 Check which Cecil generation the game or mod loader already loads, then pick.
 
-- **Older Unity games, MonoMod 19.x** → `MonoWeaver.Cecil10`. Its `net46` build matches Unity's .NET 4.x runtime without going through the `netstandard.dll` facade, which is more reliable on older Unity versions. Runtime integration is tested with MonoMod `19.9.1.6` and Mono.Cecil `0.10.4`.
+- **Older Unity games, MonoMod 19.x** → `MonoWeaver.Cecil10`. Its `net46` build matches Unity's .NET 4.x runtime without going through the `netstandard.dll` facade, which is more reliable on older Unity versions.
 - **Everything else** → `MonoWeaver`.
 
 ```bash

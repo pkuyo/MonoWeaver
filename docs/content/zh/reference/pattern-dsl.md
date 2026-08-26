@@ -20,6 +20,21 @@ Pattern 有两种等价的写法，产生的匹配结果和改写 API 完全相�
 
     用程序集名、类型名和方法签名描述目标。
 
+## 带参数的 lambda
+
+`Cil.Value`、`Cil.Effect` 和 `Cil.Condition` 都可以直接用 lambda 参数描述目标方法的参数。参数按名称绑定，`__this` 表示当前实例：
+
+```csharp
+var sum = Cil.Value((int left, int right) => left + right);
+var play = Cil.Effect((Player player) => Audio.Play(player.HitSound));
+var gate = Cil.Condition((Player player) => player.HasKey && !player.IsDead);
+var damage = Cil.Value((Player __this, int amount) => __this.baseDamage + amount);
+```
+
+lambda 参数无需按目标方法的声明顺序排列，也只需声明表达式实际使用的参数。`P.Arg` 和 `P.This` 仍可用于目标参数没有可靠名称或需要按类型、位置匹配的情况。
+
+lambda 参数不会隐式创建捕获；需要在匹配结果中取得参数时，请使用 `P.Mark("name", parameter)` 显式捕获。
+
 ## 占位符（lambda 写法）
 
 | 写法 | 含义 |

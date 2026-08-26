@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -35,6 +34,7 @@ internal static class PatternExpressionParser
                 => ParseBinary((BinaryExpression)expression),
             ExpressionType.NewArrayBounds => ParseNewArrayBounds((NewArrayExpression)expression),
             ExpressionType.New => ParseNew((NewExpression)expression),
+            ExpressionType.Parameter => ParseParameter((ParameterExpression)expression),
             ExpressionType.Default => new ConstantPatternNode(null, CilTypeSpec.From(expression.Type)),
             _ => throw Unsupported(expression, $"Expression node '{expression.NodeType}' is not supported by the single-expression matcher.")
         };
@@ -207,6 +207,17 @@ internal static class PatternExpressionParser
         }
 
         return new FieldStorePatternNode(fieldRead.Field, fieldRead.Instance, Parse(call.Arguments[1]));
+    }
+
+    private static PatternNode ParseParameter(ParameterExpression parameter)
+    {
+        // 参数名用于绑定目标方法参数；__this 由 matcher 解释为当前实例。
+        if (string.IsNullOrWhiteSpace(parameter.Name))
+            throw Unsupported(parameter, "Pattern lambda parameters must have non-empty names.");
+
+        return new LambdaParameterPatternNode(
+            parameter.Name,
+            CilTypeSpec.From(parameter.Type).Assignable());
     }
 
     private static string GetRequiredString(Expression expression)

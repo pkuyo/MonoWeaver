@@ -53,6 +53,20 @@ public sealed class ArgumentPatternNode : PatternNode
 }
 
 /// <summary>
+/// 匹配带参数 lambda 中按名称声明的参数。名称 <c>__this</c> 表示当前实例。
+/// </summary>
+public sealed class LambdaParameterPatternNode : PatternNode
+{
+    internal LambdaParameterPatternNode(string parameterName, CilTypeSpec resultType)
+        : base(resultType)
+    {
+        ParameterName = parameterName;
+    }
+
+    public string ParameterName { get; }
+}
+
+/// <summary>
 /// 匹配 local 读取。
 /// </summary>
 public sealed class LocalPatternNode : PatternNode

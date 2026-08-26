@@ -7,6 +7,85 @@ namespace MonoWeaver.PatternTests;
 
 public sealed class ArgumentsAndLocalsPatternTests
 {
+    [Fact]
+    public void ParameterizedLambdaMatchesStaticArgumentsByNameWithoutImplicitCaptures()
+    {
+        using var module = PatternTestSupport.OpenCurrentTestModule();
+        var method = PatternTestSupport.CurrentMethod(module, typeof(MemberHost), nameof(MemberHost.StaticAdd));
+        var pattern = Cil.Value((int right, int left) => left + right);
+
+        var match = method.Match(pattern).Single();
+
+        Assert.Empty(match.Captures);
+    }
+
+    [Fact]
+    public void ParameterizedLambdaBindsDoubleUnderscoreThisToInstance()
+    {
+        using var module = PatternTestSupport.OpenCurrentTestModule();
+        var method = PatternTestSupport.CurrentMethod(module, typeof(MemberHost), nameof(MemberHost.Add));
+        var pattern = Cil.Value((MemberHost __this, int value) =>
+            P.Mark("instance", __this).InstanceField + value);
+
+        var match = method.Match(pattern).Single();
+
+        Assert.True(match.Captures.Argument("instance").IsThis);
+        Assert.False(match.Captures.ContainsKey("value"));
+    }
+
+    [Fact]
+    public void ParameterizedLambdaCanDeclareOnlyTheArgumentsItUses()
+    {
+        using var module = PatternTestSupport.OpenFixtureModule();
+        var method = PatternTestSupport.FixtureMethod(module, "Argument1");
+        var pattern = Cil.Value((string text) => P.Mark("selected", text));
+
+        var match = method.Match(pattern).Single();
+
+        Assert.Equal(1, match.Captures.Argument("selected").ParameterIndex);
+    }
+
+    [Fact]
+    public void RepeatedParameterizedLambdaArgumentDoesNotCreateImplicitCapture()
+    {
+        using var module = PatternTestSupport.OpenCurrentTestModule();
+        var method = PatternTestSupport.CurrentMethod(module, typeof(ArgumentsAndLocalsPatternTests),
+            nameof(AddArgumentToItself));
+        var pattern = Cil.Value((int value) => value + value);
+
+        var match = method.Match(pattern).Single();
+
+        Assert.Empty(match.Captures);
+    }
+
+    public static int AddArgumentToItself(int value) => value + value;
+
+    [Fact]
+    public void ParameterizedEffectLambdaMatchesArgumentByName()
+    {
+        using var module = PatternTestSupport.OpenCurrentTestModule();
+        var method = PatternTestSupport.CurrentMethod(module, typeof(MemberHost),
+            nameof(MemberHost.InvokeNamedEffect));
+        var pattern = Cil.Effect((int value) => MemberHost.Consume(value));
+
+        var match = method.Match(pattern).Single();
+
+        Assert.Empty(match.Captures);
+    }
+
+    [Fact]
+    public void ParameterizedConditionLambdaMatchesArgumentsByName()
+    {
+        using var module = PatternTestSupport.OpenCurrentTestModule();
+        var method = PatternTestSupport.CurrentMethod(module, typeof(MemberHost),
+            nameof(MemberHost.NamedCondition));
+        var pattern = Cil.Condition((bool right, bool left) => left && right);
+
+        var match = method.Match(pattern).Single();
+
+        Assert.Empty(match.Captures);
+    }
+
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
     public void MatchesThisAndPreservesThisCapture(PatternDsl dsl)

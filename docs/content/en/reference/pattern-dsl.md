@@ -20,6 +20,21 @@ Patterns can be written two equivalent ways. Both produce the same match results
 
     Describes the target by assembly name, type name, and signature.
 
+## Parameterized lambdas
+
+`Cil.Value`, `Cil.Effect`, and `Cil.Condition` can all describe target method parameters directly through lambda parameters. Parameters bind by name, and `__this` denotes the current instance:
+
+```csharp
+var sum = Cil.Value((int left, int right) => left + right);
+var play = Cil.Effect((Player player) => Audio.Play(player.HitSound));
+var gate = Cil.Condition((Player player) => player.HasKey && !player.IsDead);
+var damage = Cil.Value((Player __this, int amount) => __this.baseDamage + amount);
+```
+
+Lambda parameters do not need to follow the target method's declaration order, and only parameters used by the expression need to be declared. `P.Arg` and `P.This` remain useful when target parameter names are unavailable or matching by type or position is required.
+
+Lambda parameters do not create implicit captures. Use `P.Mark("name", parameter)` when the matched argument must be available in the match result.
+
 ## Placeholders (lambda form)
 
 | Call | Meaning |

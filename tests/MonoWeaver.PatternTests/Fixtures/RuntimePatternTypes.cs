@@ -35,6 +35,17 @@ public sealed class MemberHost
     public int Add(int value) => InstanceField + value;
 
     public static int StaticAdd(int left, int right) => left + right;
+
+    public static void InvokeNamedEffect(int value) => Consume(value);
+
+    public static void Consume(int value) { }
+
+    public static bool NamedCondition(bool left, bool right)
+    {
+        if (left && right)
+            return true;
+        return false;
+    }
 }
 
 public interface ICompute

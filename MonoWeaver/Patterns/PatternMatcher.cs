@@ -461,6 +461,17 @@ internal sealed class ExpressionNodeMatcher
                        || context.TryAdd(argumentPattern.CaptureName,
                            new ValueInternalCapture(argumentPattern.CaptureName, matched));
 
+            case LambdaParameterPatternNode parameterPattern when target.Node is TargetArgumentNode argument:
+                if (!TypeMatches(argument, parameterPattern.ResultType)
+                    || (parameterPattern.ParameterName == "__this"
+                        ? !argument.IsThis
+                        : argument.IsThis
+                          || !string.Equals(argument.Parameter?.Name,
+                              parameterPattern.ParameterName, StringComparison.Ordinal)))
+                    break;
+                matched = target;
+                return true;
+
             case LocalPatternNode localPattern when target.Node is TargetLocalReadNode local:
                 if (!TypeMatches(local, localPattern.ResultType)
                     || (localPattern.Index.HasValue && local.Variable.Index != localPattern.Index.Value))

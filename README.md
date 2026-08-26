@@ -28,7 +28,7 @@ Typical uses include:
 | `MonoWeaver` | `0.11.2+` | `netstandard2.0` |
 | `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `net46`, `netstandard2.0` |
 
-Use `MonoWeaver.Cecil10` for older Unity games and MonoMod 19.x. Its `net46` build matches Unity's .NET 4.x runtime without going through the `netstandard.dll` facade, which is more reliable on older Unity versions. Runtime integration is tested with MonoMod `19.9.1.6` and Mono.Cecil `0.10.4`.
+Use `MonoWeaver.Cecil10` for older Unity games and MonoMod 19.x. Its `net46` build matches Unity's .NET 4.x runtime without going through the `netstandard.dll` facade, which is more reliable on older Unity versions.
 
 ## Quick start
 
