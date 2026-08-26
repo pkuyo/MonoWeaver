@@ -36,7 +36,51 @@ MonoWeaver 只适用于 Mono.Cecil 能读取的 .NET/Mono 托管程序集，不�
 
 ## 快速开始
 
-下面的例子在 `Game.Player.ComputeDamage` 中查找 `arg0 + arg1`，把原结果交给 Mod 回调处理，检查修改是否安全，然后写出新的程序集。
+先按 Mod 的运行方式选择入口。MonoMod Hook 从 `ILContext` 取得目标方法；离线补丁则通过 Cecil 从程序集中读取方法。拿到方法以后，两种场景使用完全相同的 Pattern 和改写代码。
+
+下面两个例子都会在 `Game.Player.ComputeDamage` 中查找 `baseDamage + bonus`。lambda 参数按名称绑定目标方法的同名参数，并共用这个回调：
+
+```csharp
+using System;
+
+public static class ModHooks
+{
+    public static int ClampDamage(int value)
+        => Math.Min(Math.Max(value, 0), 999);
+}
+```
+
+### MonoMod 运行时 Hook
+
+如果 Mod Loader 会用 `ComputeDamage` 的 `ILContext` 调用 Hook，直接修改 `il.Method`：
+
+```csharp
+using System;
+using MonoMod.Cil;
+using MonoWeaver.Cecil;
+using MonoWeaver.CFG;
+using MonoWeaver.Patterns;
+
+public static class DamagePatch
+{
+    public static void Patch(ILContext il)
+    {
+        var pattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
+
+        il.Method.Match(pattern)
+          .Single()
+          .Transform((Func<int, int>)ModHooks.ClampDamage)
+          .Apply(VerifyOptions.Full);
+    }
+}
+```
+
+提交改写时，MonoWeaver 会处理 MonoMod 的跳转标签。调用 `Apply` 时，所有标签都必须已经指向有效位置。
+
+### 离线修改 DLL
+
+如果最终产物是写到磁盘上的补丁程序集，通过 Cecil 读取和保存：
 
 ```csharp
 using System;
@@ -46,32 +90,32 @@ using MonoWeaver.Cecil;
 using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
 
-public static class ModHooks
+public static class DamagePatcher
 {
-    public static int ClampDamage(int value)
-        => Math.Min(Math.Max(value, 0), 999);
+    public static void Patch(string inputPath, string outputPath)
+    {
+        using var module = ModuleDefinition.ReadModule(inputPath);
+
+        var method = module.Types
+            .Single(type => type.FullName == "Game.Player")
+            .Methods.Single(candidate => candidate.Name == "ComputeDamage");
+
+        var pattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
+
+        method.Match(pattern)
+              .Single()
+              .Transform((Func<int, int>)ModHooks.ClampDamage)
+              .Apply(VerifyOptions.Full);
+
+        module.Write(outputPath);
+    }
 }
-
-using var module = ModuleDefinition.ReadModule("Game.dll");
-
-var method = module.Types
-    .Single(type => type.FullName == "Game.Player")
-    .Methods.Single(candidate => candidate.Name == "ComputeDamage");
-
-var damagePattern = Cil.Value(() =>
-    P.Arg<int>(0) + P.Arg<int>(1));
-
-var damage = method.Match(damagePattern).Single();
-
-damage.Transform((Func<int, int>)ModHooks.ClampDamage)
-      .Apply(VerifyOptions.Full);
-
-module.Write("Game.Patched.dll");
 ```
 
 `Single()` 会在“没有找到”或“找到多处”时直接报错。这是有意设计：Mod Hook 应该补充匹配条件，而不是悄悄修改第一个候选位置。
 
-离线写出 DLL 时，包含 `ModHooks` 的 Mod DLL 也要随成品一起部署。实例委托和闭包引用的是当前进程里的对象，只适合运行时 Hook。
+离线写出 DLL 时，包含 `ModHooks` 的 Mod DLL 也要随成品一起部署。实例委托和闭包引用当前进程里的对象，只能用于运行时 Hook。
 
 ## 按目的选择操作
 
@@ -93,8 +137,8 @@ module.Write("Game.Patched.dll");
 完整匹配结果可以直接修改。只有需要选中内部某一段时，才使用 `P.Mark`：
 
 ```csharp
-var pattern = Cil.Value(() =>
-    P.Mark("baseDamage", P.Arg<int>(0)) + P.Arg<int>(1));
+var pattern = Cil.Value((int baseDamage, int bonus) =>
+    P.Mark("baseDamage", baseDamage) + bonus);
 
 var match = method.Match(pattern).Single();
 var baseDamage = match.Captures.Value("baseDamage");
@@ -104,31 +148,6 @@ baseDamage.Transform((Func<int, int>)ModHooks.ClampDamage)
 ```
 
 MonoWeaver 默认会跟随来源唯一的编译器临时变量。如果同一个读取位置可能来自多次赋值，它会停止匹配，不会猜测。
-
-## 在 MonoMod 中运行时使用
-
-`ILContext` 中可以直接使用同一套 API：
-
-```csharp
-using System;
-using MonoMod.Cil;
-using MonoWeaver.Cecil;
-using MonoWeaver.CFG;
-using MonoWeaver.Patterns;
-
-public static void Patch(ILContext il)
-{
-    var pattern = Cil.Value(() =>
-        P.Arg<int>(0) + P.Arg<int>(1));
-
-    il.Method.Match(pattern)
-      .Single()
-      .Transform((Func<int, int>)ModHooks.ClampDamage)
-      .Apply(VerifyOptions.Full);
-}
-```
-
-提交修改时，MonoWeaver 会处理 MonoMod 的跳转标签。此时所有标签都必须已经指向有效位置。
 
 ## Mod 项目没有引用游戏类型时
 
@@ -158,6 +177,7 @@ var scorePattern = Cil.Value(
 
 完整文档（中英双语）：**<https://pkuyo.github.io/MonoWeaver/>**
 
+- [在 MonoMod 中使用](https://pkuyo.github.io/MonoWeaver/getting-started/monomod/)：通过 `ILContext` 进行运行时集成。
 - [第一个 Hook](https://pkuyo.github.io/MonoWeaver/getting-started/first-hook/)：完整的离线补丁流程。
 - [按游戏代码查写法](https://pkuyo.github.io/MonoWeaver/cookbook/)：常见目标函数、对应 Pattern 和实际命中位置。
 - [改写操作](https://pkuyo.github.io/MonoWeaver/reference/rewrite-operations/)：`Before`/`After`/`Transform`/`Observe`/`Replace`/`Remove` 在三种匹配种类下的语义。

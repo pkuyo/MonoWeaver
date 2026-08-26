@@ -38,7 +38,7 @@ MonoWeaver 的入口是 Mono.Cecil 的 `MethodDefinition`。
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:value-pattern"
 ```
 
-`P.Arg<int>(0)` 表示目标方法的第 0 个**显式**参数，不包含实例方法的 `this`。三种匹配种类的区别见 [三种匹配种类](../concepts/match-kinds.md)。
+`baseDamage` 和 `bonus` 按名称绑定目标方法的同名参数。三种匹配种类的区别见 [三种匹配种类](../concepts/match-kinds.md)。
 
 ### 3. 确认唯一匹配
 

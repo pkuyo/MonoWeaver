@@ -17,10 +17,10 @@ Check in this order:
 1. **Right match kind?** Value, effect, and condition are three different things — see [The Three Match Kinds](../concepts/match-kinds.md). The test in `if (a && b)` is a condition; the one in `return a && b;` is a value.
 2. **Right method?** Check the `FullName` spelling, the overload, and the `+` separator for nested types.
 3. **Did the game update?** Confirm the expression is still there and the argument order did not change.
-4. **Right argument index?** `P.Arg<T>(0)` does not count `this` on an instance method.
+4. **Right parameter name?** A pattern-lambda parameter must have exactly the same name as the target parameter in metadata.
 5. **Right constants and overloads?** `Select("rare")` will not match `Select(1)`; `1` and `1L` are different constants.
 6. **Right operand order?** `a - b` is not `b - a`, and the same goes for comparisons.
-7. **Did you capture a runtime object in the lambda?** An outer variable becomes a closure field read and will never match a game value. Use `P.Arg`, `P.Local`, `P.Any`, a literal, or a static field.
+7. **Did you capture a runtime object in the lambda?** An outer variable becomes a closure field read and will never match a game value. Use a pattern-lambda parameter, a DSL placeholder, a literal, or a static field.
 8. **Is a temporary in the way?** Temporaries with an unambiguous definition are followed by default, but an ambiguous origin is never guessed. Pin the origin with `LocalDefinedBy` — see [compiler temporaries](../concepts/captures.md#temporaries).
 
 ## Too many matched

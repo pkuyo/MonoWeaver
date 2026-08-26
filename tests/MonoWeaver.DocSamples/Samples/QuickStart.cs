@@ -20,8 +20,8 @@ public static class QuickStart
             .Single(type => type.FullName == "Game.Player")
             .Methods.Single(candidate => candidate.Name == "ComputeDamage");
 
-        var damagePattern = Cil.Value(() =>
-            P.Arg<int>(0) + P.Arg<int>(1));
+        var damagePattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
 
         var damage = method.Match(damagePattern).Single();
 

@@ -34,7 +34,7 @@ Decide between `Cil.Value`, `Cil.Effect`, and `Cil.Condition` first — see [The
     --8<-- "tests/MonoWeaver.DocSamples/Samples/Cookbook.cs:pattern-calculation"
     ```
 
-Matches the whole `baseDamage + bonus`. `P.Arg<int>(0)` and `P.Arg<int>(1)` are the first two parameters; the index does not count `this` on an instance method.
+Matches the whole `baseDamage + bonus`. Each lambda parameter binds to the target-method parameter with the same name.
 
 ## 2. One specific call inside a larger calculation
 
@@ -166,20 +166,8 @@ Matches the whole array read including the array argument and `index + 1`. Array
 
 Both find the same call. The symbol form just does not require a reference to the game DLL in your mod project. `Match`, `Captures`, and the rewrite API are identical.
 
-## Common placeholders
+## More pattern syntax
 
-These drop straight into the patterns above:
-
-| What you need to express | How to write it |
-| --- | --- |
-| The current instance | `P.This<Player>()` |
-| The first parameter | `P.Arg<Player>(0)` |
-| A `Player` parameter at any position | `P.Arg<Player>("player")` |
-| The first local variable | `P.Local<int>(0)` |
-| Anything that produces an `int` | `P.Any<int>("value")` |
-| Name an inner position | `P.Mark("name", expression)` |
-| A null reference | `default(object)` |
-
-Fields, properties, method calls, `new`, numeric conversions, arithmetic, and comparisons are written as the C# your decompiler shows. Types, argument order, and overloads have to line up with the target code.
+Fields, properties, method calls, `new`, numeric conversions, arithmetic, and comparisons are written as the C# your decompiler shows. Types, parameter names, and overloads have to line up with the target code.
 
 Full list: [Pattern DSL](../reference/pattern-dsl.md). Nothing matched, or too much did: [No Match, or Too Many](../troubleshooting/no-match.md).

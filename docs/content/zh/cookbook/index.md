@@ -34,7 +34,7 @@ var match = method.Match(pattern).Single();
     --8<-- "tests/MonoWeaver.DocSamples/Samples/Cookbook.cs:pattern-calculation"
     ```
 
-命中完整的 `baseDamage + bonus`。`P.Arg<int>(0)` 和 `P.Arg<int>(1)` 分别代表前两个参数；参数序号不包含实例方法的 `this`。
+命中完整的 `baseDamage + bonus`。lambda 参数按名称绑定目标方法的同名参数。
 
 ## 2. 在更大的计算中找到准确调用
 
@@ -166,20 +166,8 @@ var match = method.Match(pattern).Single();
 
 两者寻找同一处调用，只是符号写法不需要在 Mod 项目中引用游戏 DLL。`Match`、`Captures` 和改写 API 完全相同。
 
-## 常用占位写法
+## 更多 Pattern 写法
 
-这些写法可以直接放进上面的 Pattern：
-
-| 需要表示的内容 | 写法 |
-| --- | --- |
-| 当前实例 | `P.This<Player>()` |
-| 第 0 个参数 | `P.Arg<Player>(0)` |
-| 任意位置的 `Player` 参数 | `P.Arg<Player>("player")` |
-| 第 0 个局部变量 | `P.Local<int>(0)` |
-| 任意一段产生 `int` 的内容 | `P.Any<int>("value")` |
-| 保存内部命中位置 | `P.Mark("name", expression)` |
-| 空引用 | `default(object)` |
-
-字段、属性、方法调用、`new`、数字转换、加减乘除和比较，可以按反编译器里看到的 C# 直接写。类型、参数顺序和方法重载需要与目标代码对应。
+字段、属性、方法调用、`new`、数字转换、加减乘除和比较，可以按反编译器里看到的 C# 直接写。类型、参数名和方法重载需要与目标代码对应。
 
 完整清单见 [Pattern 写法](../reference/pattern-dsl.md)。找不到或找到太多时见 [匹配不到或匹配过多](../troubleshooting/no-match.md)。

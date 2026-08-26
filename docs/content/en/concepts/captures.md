@@ -68,7 +68,7 @@ It stays conservative. If a load could come from more than one store, or the var
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:local-defined-by"
 ```
 
-This says: the `tmp` in `tmp * 2` must come from `arg0 + 1`.
+This says: the `tmp` in `tmp * 2` must come from `damage + 1`.
 
 ### Turn following off entirely
 

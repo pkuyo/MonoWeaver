@@ -32,7 +32,49 @@ Use `MonoWeaver.Cecil10` for older Unity games and MonoMod 19.x. Its `net46` bui
 
 ## Quick start
 
-This example finds `arg0 + arg1` in `Game.Player.ComputeDamage`, sends the original result through a mod callback, checks the edited method, and writes a patched assembly.
+Both examples find `baseDamage + bonus` in `Game.Player.ComputeDamage`. Lambda parameters bind to target-method parameters with the same names. They use this callback:
+
+```csharp
+using System;
+
+public static class ModHooks
+{
+    public static int ClampDamage(int value)
+        => Math.Min(Math.Max(value, 0), 999);
+}
+```
+
+### Runtime hook with MonoMod
+
+Use this form when the mod loader invokes your hook with an `ILContext` for `ComputeDamage`:
+
+```csharp
+using System;
+using MonoMod.Cil;
+using MonoWeaver.Cecil;
+using MonoWeaver.CFG;
+using MonoWeaver.Patterns;
+
+public static class DamagePatch
+{
+    public static void Patch(ILContext il)
+    {
+        var pattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
+
+        il.Method.Match(pattern)
+          .Single()
+          .Transform((Func<int, int>)ModHooks.ClampDamage)
+          .Apply(VerifyOptions.Full);
+    }
+}
+```
+
+MonoWeaver handles MonoMod branch labels while applying the rewrite. Every label must already point to a valid target when `Apply` is called.
+
+### Offline DLL patch
+
+Use this form when the output should be a patched assembly on disk:
 
 ```csharp
 using System;
@@ -42,32 +84,32 @@ using MonoWeaver.Cecil;
 using MonoWeaver.CFG;
 using MonoWeaver.Patterns;
 
-public static class ModHooks
+public static class DamagePatcher
 {
-    public static int ClampDamage(int value)
-        => Math.Min(Math.Max(value, 0), 999);
+    public static void Patch(string inputPath, string outputPath)
+    {
+        using var module = ModuleDefinition.ReadModule(inputPath);
+
+        var method = module.Types
+            .Single(type => type.FullName == "Game.Player")
+            .Methods.Single(candidate => candidate.Name == "ComputeDamage");
+
+        var pattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
+
+        method.Match(pattern)
+              .Single()
+              .Transform((Func<int, int>)ModHooks.ClampDamage)
+              .Apply(VerifyOptions.Full);
+
+        module.Write(outputPath);
+    }
 }
-
-using var module = ModuleDefinition.ReadModule("Game.dll");
-
-var method = module.Types
-    .Single(type => type.FullName == "Game.Player")
-    .Methods.Single(candidate => candidate.Name == "ComputeDamage");
-
-var damagePattern = Cil.Value(() =>
-    P.Arg<int>(0) + P.Arg<int>(1));
-
-var damage = method.Match(damagePattern).Single();
-
-damage.Transform((Func<int, int>)ModHooks.ClampDamage)
-      .Apply(VerifyOptions.Full);
-
-module.Write("Game.Patched.dll");
 ```
 
 `Single()` is deliberate: it fails when there is no match or when more than one place matches. For a mod hook, making the pattern more specific is safer than silently patching the first candidate.
 
-For an offline patch, deploy the assembly that contains `ModHooks` with the patched game assembly. Instance delegates and closures only make sense for a runtime patch because they refer to objects in the current process.
+For an offline patch, deploy the assembly that contains `ModHooks` with the patched game assembly. Instance delegates and closures are runtime-only because they refer to objects in the current process.
 
 ## Choose the operation by intent
 
@@ -89,8 +131,8 @@ Values, actions, and conditions have slightly different valid operations. In par
 The root match can be edited directly. Use `P.Mark` only when the hook should target an inner value:
 
 ```csharp
-var pattern = Cil.Value(() =>
-    P.Mark("baseDamage", P.Arg<int>(0)) + P.Arg<int>(1));
+var pattern = Cil.Value((int baseDamage, int bonus) =>
+    P.Mark("baseDamage", baseDamage) + bonus);
 
 var match = method.Match(pattern).Single();
 var baseDamage = match.Captures.Value("baseDamage");
@@ -100,31 +142,6 @@ baseDamage.Transform((Func<int, int>)ModHooks.ClampDamage)
 ```
 
 The matcher follows an unambiguous compiler-generated temporary by default. If several assignments could reach the same local read, it refuses to guess.
-
-## Runtime use with MonoMod
-
-The same API can be used inside an `ILContext` hook:
-
-```csharp
-using System;
-using MonoMod.Cil;
-using MonoWeaver.Cecil;
-using MonoWeaver.CFG;
-using MonoWeaver.Patterns;
-
-public static void Patch(ILContext il)
-{
-    var pattern = Cil.Value(() =>
-        P.Arg<int>(0) + P.Arg<int>(1));
-
-    il.Method.Match(pattern)
-      .Single()
-      .Transform((Func<int, int>)ModHooks.ClampDamage)
-      .Apply(VerifyOptions.Full);
-}
-```
-
-MonoWeaver handles MonoMod branch labels while a plan is being applied. All labels must already point to valid targets at that time.
 
 ## When game types are not referenced
 
@@ -146,6 +163,7 @@ Both forms produce the same kind of match result and use the same rewrite operat
 
 Full documentation, in English and Simplified Chinese: **<https://pkuyo.github.io/MonoWeaver/en/>**
 
+- [Using MonoMod](https://pkuyo.github.io/MonoWeaver/en/getting-started/monomod/) — runtime integration through `ILContext`.
 - [Your first hook](https://pkuyo.github.io/MonoWeaver/en/getting-started/first-hook/) — the complete offline patch flow, step by step.
 - [Patterns by example](https://pkuyo.github.io/MonoWeaver/en/cookbook/) — common game functions shown beside the pattern and the exact part it finds.
 - [Rewrite operations](https://pkuyo.github.io/MonoWeaver/en/reference/rewrite-operations/) — what `Before`, `After`, `Transform`, `Observe`, `Replace`, and `Remove` do per match kind.

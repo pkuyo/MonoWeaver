@@ -15,8 +15,8 @@ public static class MonoModSamples
     // --8<-- [start:monomod-patch]
     public static void Patch(ILContext il)
     {
-        var pattern = Cil.Value(() =>
-            P.Arg<int>(0) + P.Arg<int>(1));
+        var pattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
 
         il.Method.Match(pattern)
           .Single()

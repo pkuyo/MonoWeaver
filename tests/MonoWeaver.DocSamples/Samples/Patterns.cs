@@ -11,18 +11,18 @@ public static class PatternSamples
     public static void ThreeKinds()
     {
         // --8<-- [start:value-pattern]
-        var damagePattern = Cil.Value(() =>
-            P.Arg<int>(0) + P.Arg<int>(1));
+        var damagePattern = Cil.Value((int baseDamage, int bonus) =>
+            baseDamage + bonus);
         // --8<-- [end:value-pattern]
 
         // --8<-- [start:effect-pattern]
-        var soundPattern = Cil.Effect(() =>
-            GameAudio.Play(P.Arg<int>(0)));
+        var soundPattern = Cil.Effect((int soundId) =>
+            GameAudio.Play(soundId));
         // --8<-- [end:effect-pattern]
 
         // --8<-- [start:condition-pattern]
-        var gatePattern = Cil.Condition(() =>
-            P.Arg<bool>(0) && P.Arg<bool>(1));
+        var gatePattern = Cil.Condition((bool left, bool right) =>
+            left && right);
         // --8<-- [end:condition-pattern]
 
         _ = (damagePattern, soundPattern, gatePattern);
@@ -30,7 +30,7 @@ public static class PatternSamples
 
     public static void SingleMatch(MethodDefinition method)
     {
-        var damagePattern = Cil.Value(() => P.Arg<int>(0) + P.Arg<int>(1));
+        var damagePattern = Cil.Value((int baseDamage, int bonus) => baseDamage + bonus);
 
         // --8<-- [start:single]
         var damage = method.Match(damagePattern).Single();
@@ -42,7 +42,7 @@ public static class PatternSamples
 
     public static void ListCandidates(MethodDefinition method)
     {
-        var damagePattern = Cil.Value(() => P.Arg<int>(0) + P.Arg<int>(1));
+        var damagePattern = Cil.Value((int baseDamage, int bonus) => baseDamage + bonus);
 
         // --8<-- [start:list-candidates]
         var candidates = method.Match(damagePattern);
@@ -54,7 +54,7 @@ public static class PatternSamples
 
     public static void ExplainFailure(MethodDefinition method)
     {
-        var damagePattern = Cil.Value(() => P.Arg<int>(0) + P.Arg<int>(1));
+        var damagePattern = Cil.Value((int baseDamage, int bonus) => baseDamage + bonus);
 
         // --8<-- [start:explain-failure]
         var candidates = method.Match(damagePattern);
@@ -67,8 +67,8 @@ public static class PatternSamples
     public static void MarkAndCapture(MethodDefinition method)
     {
         // --8<-- [start:mark-capture]
-        var pattern = Cil.Value(() =>
-            P.Mark("baseDamage", P.Arg<int>(0)) + P.Arg<int>(1));
+        var pattern = Cil.Value((int baseDamage, int bonus) =>
+            P.Mark("baseDamage", baseDamage) + bonus);
 
         var match = method.Match(pattern).Single();
         var baseDamage = match.Captures.Value("baseDamage");
@@ -85,7 +85,7 @@ public static class PatternSamples
                 P.Local<int>("tmp") * 2)
             .LocalDefinedBy(
                 "tmp",
-                Cil.Value(() => P.Arg<int>(0) + 1));
+                Cil.Value((int damage) => damage + 1));
         // --8<-- [end:local-defined-by]
         _ = pattern;
     }
@@ -108,8 +108,8 @@ public static class PatternSamples
     public static void LambdaForm()
     {
         // --8<-- [start:lambda-form]
-        var pattern = Cil.Value(() =>
-            P.Arg<Player>(0).GetScore());
+        var pattern = Cil.Value((Player player) =>
+            player.GetScore());
         // --8<-- [end:lambda-form]
         _ = pattern;
     }

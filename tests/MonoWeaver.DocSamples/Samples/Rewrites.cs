@@ -10,7 +10,7 @@ namespace MonoWeaver.DocSamples;
 public static class RewriteSamples
 {
     private static ValueMatch Damage(MethodDefinition method)
-        => method.Match(Cil.Value(() => P.Arg<int>(0) + P.Arg<int>(1))).Single();
+        => method.Match(Cil.Value((int baseDamage, int bonus) => baseDamage + bonus)).Single();
 
     public static void TransformValue(MethodDefinition method)
     {
@@ -59,7 +59,7 @@ public static class RewriteSamples
 
     public static void EffectOperations(MethodDefinition method)
     {
-        var soundPattern = Cil.Effect(() => GameAudio.Play(P.Arg<int>(0)));
+        var soundPattern = Cil.Effect((int soundId) => GameAudio.Play(soundId));
 
         // --8<-- [start:effect-ops]
         var effect = method.Match(soundPattern).Single();
@@ -80,7 +80,7 @@ public static class RewriteSamples
 
     public static void ConditionOperations(MethodDefinition method)
     {
-        var gatePattern = Cil.Condition(() => P.Arg<bool>(0) && P.Arg<bool>(1));
+        var gatePattern = Cil.Condition((bool left, bool right) => left && right);
 
         // --8<-- [start:condition-match]
         var condition = method.Match(gatePattern).Single();
@@ -126,8 +126,8 @@ public static class RewriteSamples
 
     public static void StoreCallbackResult(MethodDefinition method)
     {
-        var pattern = Cil.Value(() =>
-            P.Local<int>("saved") + P.Arg<int>(0));
+        var pattern = Cil.Value((int damage) =>
+            P.Local<int>("saved") + damage);
         var match = method.Match(pattern).Single();
         var damage = (ValueMatch)match;
 

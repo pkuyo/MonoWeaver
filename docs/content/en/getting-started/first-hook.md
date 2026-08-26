@@ -38,7 +38,7 @@ Inside a MonoMod `ILContext`, use `il.Method` instead — see [Using MonoMod](mo
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:value-pattern"
 ```
 
-`P.Arg<int>(0)` is the target method's first **explicit** parameter; the index does not count `this` on an instance method. The three match kinds are explained in [The Three Match Kinds](../concepts/match-kinds.md).
+`baseDamage` and `bonus` bind to target-method parameters with the same names. The three match kinds are explained in [The Three Match Kinds](../concepts/match-kinds.md).
 
 ### 3. Confirm exactly one match
 

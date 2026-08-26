@@ -68,7 +68,7 @@ MonoWeaver 默认会**跟随来源唯一的临时变量**，因此同一个 Patt
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:local-defined-by"
 ```
 
-这表示 `tmp * 2` 中的 `tmp` 必须来自 `arg0 + 1`。
+这表示 `tmp * 2` 中的 `tmp` 必须来自 `damage + 1`。
 
 ### 完全关闭跟随
 
