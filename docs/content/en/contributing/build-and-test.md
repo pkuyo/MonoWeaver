@@ -4,10 +4,10 @@
 
 The whole solution follows one `CecilFlavor` switch, so the full test suite runs against either Cecil generation.
 
-| Value | Mono.Cecil | Package produced |
-| --- | --- | --- |
-| `Cecil10` (default) | `[0.10.0, 0.10.4]` | `MonoWeaver.Cecil10` |
-| `Latest` | `[0.11.2,)` | `MonoWeaver` |
+| Value | Mono.Cecil | MonoMod | Package produced |
+| --- | --- | --- | --- |
+| `Cecil10` (default) | `[0.10.0, 0.10.4]` (tested with `0.10.4`) | `19.9.1.6` | `MonoWeaver.Cecil10` |
+| `Latest` | `[0.11.2,)` (tested with `0.11.6`) | `22.7.31.1` | `MonoWeaver` |
 
 ```bash
 dotnet test MonoWeaver.slnx
@@ -24,11 +24,11 @@ Both have to pass. The switch is defined in `Directory.Build.props` at the repos
 Build both packages locally into `artifacts/nupkg/`:
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1
 ```
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1
 ```
 
 ## Projects in this repository

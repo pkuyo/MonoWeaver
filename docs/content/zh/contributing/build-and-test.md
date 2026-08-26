@@ -4,10 +4,10 @@
 
 整个解决方案共用同一个 `CecilFlavor` 开关，因此两代 Cecil 都能跑全量测试。
 
-| 值 | Mono.Cecil | 产出包 |
-| --- | --- | --- |
-| `Cecil10`（默认） | `[0.10.0, 0.10.4]` | `MonoWeaver.Cecil10` |
-| `Latest` | `[0.11.2,)` | `MonoWeaver` |
+| 值 | Mono.Cecil | MonoMod | 产出包 |
+| --- | --- | --- | --- |
+| `Cecil10`（默认） | `[0.10.0, 0.10.4]`（测试使用 `0.10.4`） | `19.9.1.6` | `MonoWeaver.Cecil10` |
+| `Latest` | `[0.11.2,)`（测试使用 `0.11.6`） | `22.7.31.1` | `MonoWeaver` |
 
 ```bash
 dotnet test MonoWeaver.slnx
@@ -24,11 +24,11 @@ dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
 本地打出两个包到 `artifacts/nupkg/`：
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1
 ```
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1
 ```
 
 ## 仓库里的项目

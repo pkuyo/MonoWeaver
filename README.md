@@ -185,11 +185,11 @@ dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
 Build both packages locally into `artifacts/nupkg/`:
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1
 ```
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1
 ```
 
 The main projects in this repository are:

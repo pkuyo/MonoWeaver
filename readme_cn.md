@@ -199,11 +199,11 @@ dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
 本地打出两个包到 `artifacts/nupkg/`：
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1
 ```
 
 ```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.0
+dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1
 ```
 
 仓库中的主要项目：

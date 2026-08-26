@@ -6,11 +6,13 @@
   <PropertyGroup Condition="'$(CecilFlavor)' == 'Cecil10'">
     <CecilPackageVersion>[0.10.0, 0.10.4]</CecilPackageVersion>
     <CecilPinnedVersion>0.10.4</CecilPinnedVersion>
+    <MonoModPackageVersion>19.9.1.6</MonoModPackageVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(CecilFlavor)' == 'Latest'">
     <CecilPackageVersion>[0.11.2,)</CecilPackageVersion>
     <CecilPinnedVersion>0.11.6</CecilPinnedVersion>
+    <MonoModPackageVersion>22.7.31.1</MonoModPackageVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'MonoWeaver'">
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts/obj/$(CecilFlavor)/</BaseIntermediateOutputPath>

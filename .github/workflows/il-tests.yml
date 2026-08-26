@@ -1,4 +1,4 @@
-name: IL verification tests
+name: IL verifier compatibility
 
 env:
   DOTNET_VERSION: 10.0.x
@@ -7,25 +7,37 @@ env:
 
 on:
   push:
+    branches: [main]
     paths:
-      - ".github/workflows/il-tests.yml"
-      - "MonoWeaver/**"
-      - "MonoWeaver.MonoMod/**"
-      - "tests/MonoWeaver.ILTests/**"
-      - "MonoWeaver.slnx"
+      - '.github/workflows/il-tests.yml'
+      - 'Directory.Build.props'
+      - 'MonoWeaver/**'
+      - 'tests/MonoWeaver.ILTests/**'
+      - 'benchmarks/MonoWeaver.Benchmarks/**'
+      - 'MonoWeaver.slnx'
   pull_request:
     paths:
-      - ".github/workflows/il-tests.yml"
-      - "MonoWeaver/**"
-      - "MonoWeaver.MonoMod/**"
-      - "tests/MonoWeaver.ILTests/**"
-      - "MonoWeaver.slnx"
+      - '.github/workflows/il-tests.yml'
+      - 'Directory.Build.props'
+      - 'MonoWeaver/**'
+      - 'tests/MonoWeaver.ILTests/**'
+      - 'benchmarks/MonoWeaver.Benchmarks/**'
+      - 'MonoWeaver.slnx'
+  workflow_dispatch:
 
 jobs:
-  il-tests:
-    name: IL tests
+  il-verifier-tests:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: Latest
+            label: Latest
+          - flavor: Cecil10
+            label: Cecil 0.10.4
 
+    name: IL verifier tests - ${{ matrix.label }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,22 +80,43 @@ jobs:
           "ILASM=$($ilasm.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "ILASM=$($ilasm.FullName)"
 
-      - name: Show toolchain
-        shell: pwsh
-        run: |
-          dotnet --info
-          Write-Host "ILASM=$env:ILASM"
+      - name: Restore Cecil compatibility target
+        run: dotnet restore tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj -p:CecilFlavor=${{ matrix.flavor }}
 
-      - name: Restore
-        run: dotnet restore tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj
-
-      - name: Test
-        run: dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj --no-restore --configuration Release --logger "trx;LogFileName=il-tests.trx"
+      - name: Run IL verifier tests
+        run: dotnet test tests/MonoWeaver.ILTests/MonoWeaver.ILTests.csproj --no-restore --configuration Release -p:CecilFlavor=${{ matrix.flavor }} --logger "trx;LogFileName=il-tests-${{ matrix.flavor }}.trx"
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: il-test-results
+          name: il-test-results-${{ matrix.flavor }}
           path: tests/MonoWeaver.ILTests/TestResults/**/*.trx
           if-no-files-found: ignore
+
+  il-verifier-performance:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: Latest
+            label: Latest
+          - flavor: Cecil10
+            label: Cecil 0.10.4
+
+    name: IL verifier performance gate - ${{ matrix.label }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Enforce per-method verification limit
+        run: >
+          dotnet run -c Release --project benchmarks/MonoWeaver.Benchmarks
+          -p:CecilFlavor=${{ matrix.flavor }}
+          -- --verify-only --max-method-us 50000

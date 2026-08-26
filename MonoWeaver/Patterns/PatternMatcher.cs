@@ -1017,7 +1017,11 @@ internal sealed class ConditionPatternMatcher
 
         var occurrence = TargetOccurrence.Direct(conditionExpression, entry.Terminator);
         var negateFragment = false;
-        if (!ExpressionMatcher.TryMatch(pattern, occurrence, context, out _))
+        if (TryMatchTruthiness(pattern, occurrence, context, out var truthinessNegated))
+        {
+            negateFragment = truthinessNegated;
+        }
+        else if (!ExpressionMatcher.TryMatch(pattern, occurrence, context, out _))
         {
             if (!TryInvertComparison(pattern, out var inverted)
                 || !ExpressionMatcher.TryMatch(inverted, occurrence, context, out _))
@@ -1037,6 +1041,55 @@ internal sealed class ConditionPatternMatcher
         if (negateFragment)
             fragment = fragment.Negated();
         return true;
+    }
+
+    private bool TryMatchTruthiness(PatternNode pattern, TargetOccurrence occurrence,
+        MatchContext context, out bool negateFragment)
+    {
+        negateFragment = false;
+        if (occurrence.Node.ResultType?.MetadataType == MetadataType.Boolean
+            || pattern is not BinaryPatternNode binary
+            || binary.Operation is not ExpressionType.Equal and not ExpressionType.NotEqual)
+        {
+            return false;
+        }
+
+        PatternNode operand;
+        if (IsNullOrZero(binary.Left))
+            operand = binary.Right;
+        else if (IsNullOrZero(binary.Right))
+            operand = binary.Left;
+        else
+            return false;
+
+        if (!ExpressionMatcher.TryMatch(operand, occurrence, context, out _))
+            return false;
+
+        // brtrue/brfalse 的 CFG true 出口表示原始栈值为 truthy。
+        // x == null/0 与该方向相反，x != null/0 与该方向一致。
+        negateFragment = binary.Operation == ExpressionType.Equal;
+        return true;
+    }
+
+    private static bool IsNullOrZero(PatternNode node)
+    {
+        if (node is not ConstantPatternNode constant)
+            return false;
+        return constant.Value switch
+        {
+            null => true,
+            byte value => value == 0,
+            sbyte value => value == 0,
+            short value => value == 0,
+            ushort value => value == 0,
+            int value => value == 0,
+            uint value => value == 0,
+            long value => value == 0,
+            ulong value => value == 0,
+            char value => value == '\0',
+            bool value => !value,
+            _ => false,
+        };
     }
 
     private static bool TryInvertComparison(PatternNode pattern, out PatternNode inverted)

@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   build:
+    name: Build documentation site
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +52,7 @@ jobs:
           path: docs/site
 
   deploy:
+    name: Deploy documentation site
     # Pull requests build the site but must not publish it.
     if: github.event_name != 'pull_request'
     needs: build

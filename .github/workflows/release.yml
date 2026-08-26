@@ -1,7 +1,7 @@
 name: Release
 
 # 打 tag 触发，例如：
-#   git tag v0.1.0 && git push origin v0.1.0
+#   git tag v0.1.1 && git push origin v0.1.1
 # 两个包共用 tag 上的版本号 —— 同一份源码编出来的，功能集本来就一致。
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '包版本号（不带 v 前缀），例如 0.1.0'
+        description: '包版本号（不带 v 前缀），例如 0.1.1'
         required: true
 
 jobs:
@@ -18,9 +18,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor: [Cecil10, Latest]
+        include:
+          - flavor: Latest
+            label: Latest
+          - flavor: Cecil10
+            label: Cecil 0.10.4
 
-    name: test (${{ matrix.flavor }})
+    name: Release validation - ${{ matrix.label }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -36,6 +40,8 @@ jobs:
     permissions:
       contents: write
       id-token: write   # Trusted Publishing 的 OIDC 令牌，缺了会静默拿不到 key
+
+    name: Publish both NuGet packages
 
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +71,7 @@ jobs:
       # 先把两个包都打出来，再统一推送。
       # dotnet nuget push 不是事务性的，先打包能把「编译/打包失败」挡在推送之前，
       # 避免出现只发上去一半的版本。
-      - name: Pack both flavors
+      - name: Pack MonoWeaver.Cecil10 and MonoWeaver
         run: |
           dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=${{ steps.ver.outputs.version }} -p:ContinuousIntegrationBuild=true
           dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest  -p:Version=${{ steps.ver.outputs.version }} -p:ContinuousIntegrationBuild=true
@@ -111,7 +117,7 @@ jobs:
           prerelease: ${{ steps.ver.outputs.prerelease }}
           generate_release_notes: true
           body: |
-            | 包 | Mono.Cecil | target framework |
-            |---|---|---|
-            | `MonoWeaver` | 0.11.2+ | netstandard2.0 |
-            | `MonoWeaver.Cecil10` | 0.10.0 – 0.10.4 | net46, netstandard2.0 |
+            | 包 | Mono.Cecil | 测试使用 MonoMod | target framework |
+            |---|---|---|---|
+            | `MonoWeaver` | 0.11.2+（测试使用 0.11.6） | 22.7.31.1 | netstandard2.0 |
+            | `MonoWeaver.Cecil10` | 0.10.0 – 0.10.4（测试使用 0.10.4） | 19.9.1.6 | net46, netstandard2.0 |

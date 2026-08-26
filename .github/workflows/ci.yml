@@ -1,31 +1,42 @@
-name: CI
+name: Build and package compatibility
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Directory.Build.props'
+      - 'MonoWeaver/**'
+      - 'MonoWeaver.Fuzz/**'
+      - 'tests/MonoWeaver.DocSamples/**'
+      - 'benchmarks/MonoWeaver.Benchmarks/**'
+      - 'README.md'
+      - 'MonoWeaver.slnx'
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Directory.Build.props'
+      - 'MonoWeaver/**'
+      - 'MonoWeaver.Fuzz/**'
+      - 'tests/MonoWeaver.DocSamples/**'
+      - 'benchmarks/MonoWeaver.Benchmarks/**'
+      - 'README.md'
+      - 'MonoWeaver.slnx'
   workflow_dispatch:
 
 jobs:
-  test:
-    # PatternTests 目标框架是 net48，只能在 Windows 上跑
+  compile-samples-tools:
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        flavor: [Cecil10, Latest]
+        include:
+          - flavor: Latest
+            label: Latest
+          - flavor: Cecil10
+            label: Cecil 0.10.4
 
-    name: test (${{ matrix.flavor }})
+    name: Compile samples/tools - ${{ matrix.label }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,19 +44,18 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Restore
-        run: dotnet restore MonoWeaver.slnx -p:CecilFlavor=${{ matrix.flavor }}
+      - name: Compile documentation samples
+        run: dotnet build tests/MonoWeaver.DocSamples/MonoWeaver.DocSamples.csproj -c Release -p:CecilFlavor=${{ matrix.flavor }}
 
-      - name: Build
-        run: dotnet build MonoWeaver.slnx -c Release --no-restore -p:CecilFlavor=${{ matrix.flavor }}
+      - name: Compile fuzz runner
+        run: dotnet build MonoWeaver.Fuzz/MonoWeaver.Fuzz.csproj -c Release -p:CecilFlavor=${{ matrix.flavor }}
 
-      - name: Test
-        run: dotnet test MonoWeaver.slnx -c Release --no-build -p:CecilFlavor=${{ matrix.flavor }}
+      - name: Compile benchmarks
+        run: dotnet build benchmarks/MonoWeaver.Benchmarks/MonoWeaver.Benchmarks.csproj -c Release -p:CecilFlavor=${{ matrix.flavor }}
 
-  pack:
-    # 每次 CI 都试打一遍包，避免只有发 tag 时才发现打包配置坏了
+  package-validation:
     runs-on: windows-latest
-    name: pack (dry run)
+    name: Package MonoWeaver.Cecil10 and MonoWeaver
     steps:
       - uses: actions/checkout@v4
 
@@ -53,28 +63,25 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Pack both flavors
+      - name: Pack version 0.1.1
         run: |
-          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.0.0-ci -p:ContinuousIntegrationBuild=true
-          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest  -p:Version=0.0.0-ci -p:ContinuousIntegrationBuild=true
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1 -p:ContinuousIntegrationBuild=true
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1 -p:ContinuousIntegrationBuild=true
+
+      - name: Verify package files
+        shell: pwsh
+        run: |
+          $expected = @(
+            'artifacts/nupkg/MonoWeaver.Cecil10.0.1.1.nupkg',
+            'artifacts/nupkg/MonoWeaver.0.1.1.nupkg'
+          )
+          foreach ($path in $expected) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Expected package was not generated: $path"
+            }
+          }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nupkg-ci
+          name: nupkg-0.1.1
           path: artifacts/nupkg/*
-
-  verify-perf:
-    # IL 验证性能闸门：单方法最坏耗时超阈值就失败。
-    runs-on: windows-latest
-    name: verify perf gate
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Run verification gate
-        run: >
-          dotnet run -c Release --project benchmarks/MonoWeaver.Benchmarks
-          -- --verify-only --max-method-us 50000

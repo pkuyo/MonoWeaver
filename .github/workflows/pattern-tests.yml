@@ -1,29 +1,39 @@
-name: Pattern tests
+name: Pattern matcher compatibility
 
 env:
   DOTNET_VERSION: 10.0.x
 
 on:
   push:
+    branches: [main]
     paths:
-      - ".github/workflows/pattern-tests.yml"
-      - "MonoWeaver/**"
-      - "MonoWeaver.MonoMod/**"
-      - "tests/MonoWeaver.PatternTests/**"
-      - "MonoWeaver.slnx"
+      - '.github/workflows/pattern-tests.yml'
+      - 'Directory.Build.props'
+      - 'MonoWeaver/**'
+      - 'tests/MonoWeaver.PatternTests/**'
+      - 'MonoWeaver.slnx'
   pull_request:
     paths:
-      - ".github/workflows/pattern-tests.yml"
-      - "MonoWeaver/**"
-      - "MonoWeaver.MonoMod/**"
-      - "tests/MonoWeaver.PatternTests/**"
-      - "MonoWeaver.slnx"
+      - '.github/workflows/pattern-tests.yml'
+      - 'Directory.Build.props'
+      - 'MonoWeaver/**'
+      - 'tests/MonoWeaver.PatternTests/**'
+      - 'MonoWeaver.slnx'
+  workflow_dispatch:
 
 jobs:
-  pattern-tests:
-    name: Pattern tests
+  pattern-compatibility:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: Latest
+            label: Latest
+          - flavor: Cecil10
+            label: Cecil 0.10.4
 
+    name: Pattern matcher - ${{ matrix.label }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,16 +43,16 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore
-        run: dotnet restore tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj
+      - name: Restore compatibility target
+        run: dotnet restore tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj -p:CecilFlavor=${{ matrix.flavor }}
 
-      - name: Test
-        run: dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj --no-restore --configuration Release --logger "trx;LogFileName=pattern-tests.trx"
+      - name: Run pattern matcher tests
+        run: dotnet test tests/MonoWeaver.PatternTests/MonoWeaver.PatternTests.csproj --no-restore --configuration Release -p:CecilFlavor=${{ matrix.flavor }} --logger "trx;LogFileName=pattern-tests-${{ matrix.flavor }}.trx"
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pattern-test-results
+          name: pattern-test-results-${{ matrix.flavor }}
           path: tests/MonoWeaver.PatternTests/TestResults/**/*.trx
           if-no-files-found: ignore

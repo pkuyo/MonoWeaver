@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoMod" Version="19.9.1.6" />
+    <PackageReference Include="MonoMod" Version="$(MonoModPackageVersion)" />
     <PackageReference Include="Mono.Cecil" Version="$(CecilPinnedVersion)" />
   </ItemGroup>
 
