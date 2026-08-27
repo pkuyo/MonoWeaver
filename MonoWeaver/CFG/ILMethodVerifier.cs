@@ -194,6 +194,14 @@ public partial class ILMethodVerifier
         _method = method;
     }
 
+    internal ILMethodVerifier(MethodDefinition method, VerifyOptions verifyOptions, ILBasicBlockGraph? graph)
+        : this(method, verifyOptions)
+    {
+        _sharedGraph = graph;
+    }
+
+    private readonly ILBasicBlockGraph? _sharedGraph;
+
     public void Verify()
     {
         try
@@ -243,7 +251,9 @@ public partial class ILMethodVerifier
 
         ValidateExceptionHandlerRegionRelations();
 
-        var graph = ILBasicBlockGraphBuilder.Build(_method);
+        var graph = _sharedGraph is { } shared && ReferenceEquals(shared.Method, _method) && !shared.IsStale
+            ? shared
+            : ILBasicBlockGraphBuilder.Build(_method);
         _blocks = graph.Blocks;
         _entryblocks = graph.EntryBlocks;
         _blockMap.Clear();

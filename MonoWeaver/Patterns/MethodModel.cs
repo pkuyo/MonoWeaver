@@ -25,11 +25,23 @@ internal sealed class MethodModel
     private readonly List<TargetEffect> _effectCandidates = new();
     private readonly HashSet<TargetExpressionNode> _duplicatedNodes = new();
     private readonly MatchDiagnosticCollector _modelDiagnostics = new();
+    private readonly List<TargetExpressionNode> _stack = new();
     private readonly int _variableCount;
-    private readonly int _exceptionHandlerCount;
+    private LocalDefinitionIndex? _localDefinitions;
+
+    private static readonly object[] BoxedSmallInts = CreateBoxedSmallInts();
+
+    private static object[] CreateBoxedSmallInts()
+    {
+        var result = new object[10];
+        for (var i = 0; i < result.Length; i++)
+            result[i] = i - 1;
+        return result;
+    }
 
     private MethodModel(ILBasicBlockGraph graph)
     {
+        Graph = graph;
         Method = graph.Method;
         Instructions = graph.Instructions;
         _instructionIndices = graph.InstructionIndices;
@@ -37,16 +49,17 @@ internal sealed class MethodModel
         EntryBlocks = graph.EntryBlocks;
         _blockByInstruction = graph.BlockByInstruction;
         _variableCount = Method.HasBody ? Method.Body.Variables.Count : 0;
-        _exceptionHandlerCount = Method.HasBody ? Method.Body.ExceptionHandlers.Count : 0;
     }
 
+    public ILBasicBlockGraph Graph { get; }
     public MethodDefinition Method { get; }
     public Instruction[] Instructions { get; }
     public IReadOnlyList<BasicBlock> Blocks { get; }
     public IReadOnlyList<BasicBlock> EntryBlocks { get; }
     public IReadOnlyList<TargetExpressionNode> ValueCandidates => _valueCandidates;
     public IReadOnlyList<TargetEffect> EffectCandidates => _effectCandidates;
-    public LocalDefinitionIndex LocalDefinitions { get; private set; } = null!;
+
+    public LocalDefinitionIndex LocalDefinitions => _localDefinitions ??= LocalDefinitionIndex.Create(this);
 
     /// <summary>模型构建期发现的不可表达 IL；与具体 pattern 无关，对该方法的所有匹配生效。</summary>
     public IReadOnlyList<MatchDiagnostic> ModelDiagnostics => _modelDiagnostics.Diagnostics;
@@ -60,42 +73,20 @@ internal sealed class MethodModel
         if (method.Body.Instructions.Count == 0)
             throw new ArgumentException("The method body is empty.", nameof(method));
 
-        var graph = ILBasicBlockGraphBuilder.Build(method);
+        return Create(ILBasicBlockGraphBuilder.Build(method));
+    }
+
+    public static MethodModel Create(ILBasicBlockGraph graph)
+    {
+        if (graph is null)
+            throw new ArgumentNullException(nameof(graph));
         var model = new MethodModel(graph);
         model.BuildExpressions();
-        model.LocalDefinitions = LocalDefinitionIndex.Create(model);
         return model;
     }
 
-    /// <summary>
-    /// 模型是否已与当前 body 不一致。建模时拍下的指令快照逐项比引用，
-    /// 因此 MonoWeaver 自身的改写和外部直接改 Cecil 都能检出。
-    /// 代价是 O(n) 次引用比较，远低于重建模型。
-    /// </summary>
     public bool IsStale
-    {
-        get
-        {
-            if (!Method.HasBody)
-                return true;
-
-            var body = Method.Body;
-            if (body.Instructions.Count != Instructions.Length
-                || body.Variables.Count != _variableCount
-                || body.ExceptionHandlers.Count != _exceptionHandlerCount)
-            {
-                return true;
-            }
-
-            for (var i = 0; i < Instructions.Length; i++)
-            {
-                if (!ReferenceEquals(body.Instructions[i], Instructions[i]))
-                    return true;
-            }
-
-            return false;
-        }
-    }
+        => Graph.IsStale || (Method.HasBody && Method.Body.Variables.Count != _variableCount);
 
     public int IndexOf(Instruction instruction)
         => _instructionIndices.TryGetValue(instruction, out var index) ? index : -1;
@@ -145,13 +136,13 @@ internal sealed class MethodModel
         var entryDepth = ComputeEntryDepths();
         foreach (var block in Blocks)
         {
-            var stack = new List<TargetExpressionNode>();
+            _stack.Clear();
             var depth = entryDepth.TryGetValue(block, out var knownDepth) ? knownDepth : 0;
             for (var i = 0; i < depth; i++)
-                stack.Add(new TargetUnknownNode(null, block.Leader, $"incoming stack slot {i}"));
+                _stack.Add(new TargetUnknownNode(null, block.Leader, "incoming stack slot"));
 
             for (var index = block.StartIndex; index <= block.EndIndex; index++)
-                SimulateInstruction(Instructions[index], stack, block);
+                SimulateInstruction(Instructions[index], block);
         }
     }
 
@@ -229,33 +220,64 @@ internal sealed class MethodModel
         catch { return 0; }
     }
 
-    /// <summary>
-    /// 创建 node，对于非法指令/无法解析指令直接压 unknown。
-    /// </summary>
-    private void SimulateInstruction(Instruction instruction, List<TargetExpressionNode> stack,
-        BasicBlock block)
+    private TargetExpressionNode Pop(Instruction instruction)
     {
-        TargetExpressionNode Pop()
+        if (_stack.Count == 0)
         {
-            if (stack.Count == 0)
-            {
-                _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
-                    "Stack underflow while building the pattern model; expressions feeding this instruction cannot be matched.");
-                return new TargetUnknownNode(null, instruction, "stack underflow while building pattern model");
-            }
-            var value = stack[stack.Count - 1];
-            stack.RemoveAt(stack.Count - 1);
-            return value;
+            _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+                "Stack underflow while building the pattern model; expressions feeding this instruction cannot be matched.");
+            return new TargetUnknownNode(null, instruction, "stack underflow while building pattern model");
         }
+        var value = _stack[_stack.Count - 1];
+        _stack.RemoveAt(_stack.Count - 1);
+        return value;
+    }
 
-        void Push(TargetExpressionNode node, bool candidate = true)
-        {
-            stack.Add(node);
-            _instructionResults[instruction] = node;
-            if (candidate)
-                _valueCandidates.Add(node); //任何一次压栈均可做 value 候选
-        }
+    private void Push(Instruction instruction, TargetExpressionNode node, bool candidate = true)
+    {
+        _stack.Add(node);
+        _instructionResults[instruction] = node;
+        if (candidate)
+            _valueCandidates.Add(node); //任何一次压栈均可做 value 候选
+    }
 
+    private void PushInt(Instruction instruction, int value)
+        => Push(instruction, new TargetConstantNode(
+            value >= -1 && value <= 8 ? BoxedSmallInts[value + 1] : value,
+            Method.Module.TypeSystem.Int32, instruction));
+
+    private void PushUnknown(Instruction instruction, int count)
+    {
+        var code = instruction.OpCode.Code;
+        _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
+            $"'{code}' has an operand the pattern model cannot resolve; expressions covering it cannot be matched.");
+        for (var i = 0; i < count; i++)
+            Push(instruction, new TargetUnknownNode(null, instruction, "unsupported " + code));
+    }
+
+    private void PushBinary(Instruction instruction, ExpressionType operation, TypeReference? resultType = null)
+    {
+        var right = Pop(instruction);
+        var left = Pop(instruction);
+        Push(instruction, new TargetBinaryNode(operation, left, right, resultType ?? left.ResultType, instruction));
+    }
+
+    private void PushUnary(Instruction instruction, ExpressionType operation)
+    {
+        var operand = Pop(instruction);
+        Push(instruction, new TargetUnaryNode(operation, operand, operand.ResultType, instruction));
+    }
+
+    private void SetBranchComparison(Instruction instruction, BasicBlock block, ExpressionType operation)
+    {
+        var right = Pop(instruction);
+        var left = Pop(instruction);
+        _conditionExpressions[block] = new TargetBinaryNode(operation, left, right,
+            Method.Module.TypeSystem.Boolean, instruction);
+    }
+
+    private void SimulateInstruction(Instruction instruction, BasicBlock block)
+    {
         var code = instruction.OpCode.Code;
 
         if (CecilInstructionHelpers.TryGetArgument(Method, instruction, out var isThis, out var parameterIndex, out var parameter)
@@ -264,7 +286,7 @@ internal sealed class MethodModel
             var type = isThis
                 ? Method.DeclaringType
                 : parameter?.ParameterType ?? Method.Module.TypeSystem.Object;
-            Push(new TargetArgumentNode(type, instruction, isThis, parameterIndex, parameter,
+            Push(instruction, new TargetArgumentNode(type, instruction, isThis, parameterIndex, parameter,
                 CreateArgumentStackType(type, isThis, parameter)));
             return;
         }
@@ -277,7 +299,7 @@ internal sealed class MethodModel
                 ? Method.DeclaringType
                 : addressParameter?.ParameterType ?? Method.Module.TypeSystem.Object;
             //地址本身不能作为 value 候选被改写，只作为 struct 接收者 / ref 实参的载体
-            Push(new TargetAddressNode(new TargetArgumentNode(type, instruction, addressIsThis,
+            Push(instruction, new TargetAddressNode(new TargetArgumentNode(type, instruction, addressIsThis,
                 addressParameterIndex, addressParameter,
                 CreateArgumentStackType(type, addressIsThis, addressParameter)), instruction), candidate: false);
             return;
@@ -287,7 +309,7 @@ internal sealed class MethodModel
             && CecilInstructionHelpers.TryGetLocal(Method, instruction, out _, out var loadedLocal)
             && loadedLocal is not null)
         {
-            Push(new TargetLocalReadNode(loadedLocal, instruction));
+            Push(instruction, new TargetLocalReadNode(loadedLocal, instruction));
             return;
         }
 
@@ -295,7 +317,7 @@ internal sealed class MethodModel
             && CecilInstructionHelpers.TryGetLocal(Method, instruction, out _, out var addressedLocal)
             && addressedLocal is not null)
         {
-            Push(new TargetAddressNode(new TargetLocalReadNode(addressedLocal, instruction), instruction),
+            Push(instruction, new TargetAddressNode(new TargetLocalReadNode(addressedLocal, instruction), instruction),
                 candidate: false);
             return;
         }
@@ -304,7 +326,7 @@ internal sealed class MethodModel
             && CecilInstructionHelpers.TryGetLocal(Method, instruction, out _, out var storedLocal)
             && storedLocal is not null)
         {
-            _localStoreValues[instruction] = Pop();
+            _localStoreValues[instruction] = Pop(instruction);
             return;
         }
 
@@ -315,69 +337,69 @@ internal sealed class MethodModel
                 return;
 
             case Code.Ldnull:
-                Push(new TargetConstantNode(null, Method.Module.TypeSystem.Object, instruction, StackType.Null));
+                Push(instruction, new TargetConstantNode(null, Method.Module.TypeSystem.Object, instruction, StackType.Null));
                 return;
             case Code.Ldstr:
-                Push(new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.String, instruction));
+                Push(instruction, new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.String, instruction));
                 return;
-            case Code.Ldc_I4_M1: PushInt(-1); return;
-            case Code.Ldc_I4_0: PushInt(0); return;
-            case Code.Ldc_I4_1: PushInt(1); return;
-            case Code.Ldc_I4_2: PushInt(2); return;
-            case Code.Ldc_I4_3: PushInt(3); return;
-            case Code.Ldc_I4_4: PushInt(4); return;
-            case Code.Ldc_I4_5: PushInt(5); return;
-            case Code.Ldc_I4_6: PushInt(6); return;
-            case Code.Ldc_I4_7: PushInt(7); return;
-            case Code.Ldc_I4_8: PushInt(8); return;
+            case Code.Ldc_I4_M1: PushInt(instruction, -1); return;
+            case Code.Ldc_I4_0: PushInt(instruction, 0); return;
+            case Code.Ldc_I4_1: PushInt(instruction, 1); return;
+            case Code.Ldc_I4_2: PushInt(instruction, 2); return;
+            case Code.Ldc_I4_3: PushInt(instruction, 3); return;
+            case Code.Ldc_I4_4: PushInt(instruction, 4); return;
+            case Code.Ldc_I4_5: PushInt(instruction, 5); return;
+            case Code.Ldc_I4_6: PushInt(instruction, 6); return;
+            case Code.Ldc_I4_7: PushInt(instruction, 7); return;
+            case Code.Ldc_I4_8: PushInt(instruction, 8); return;
             case Code.Ldc_I4:
             case Code.Ldc_I4_S:
-                PushInt(Convert.ToInt32(instruction.Operand)); return;
+                PushInt(instruction, Convert.ToInt32(instruction.Operand)); return;
             case Code.Ldc_I8:
-                Push(new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.Int64, instruction)); return;
+                Push(instruction, new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.Int64, instruction)); return;
             case Code.Ldc_R4:
-                Push(new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.Single, instruction)); return;
+                Push(instruction, new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.Single, instruction)); return;
             case Code.Ldc_R8:
-                Push(new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.Double, instruction)); return;
+                Push(instruction, new TargetConstantNode(instruction.Operand, Method.Module.TypeSystem.Double, instruction)); return;
 
             case Code.Dup:
             {
-                var value = Pop();
-                stack.Add(value);
-                stack.Add(value);
+                var value = Pop(instruction);
+                _stack.Add(value);
+                _stack.Add(value);
                 _instructionResults[instruction] = value;
                 _duplicatedNodes.Add(value); //该值有多个消费者，覆盖它的区间不能整体删除
                 return;
             }
             case Code.Pop:
-                _effectCandidates.Add(new TargetEffect(Pop(), instruction)); //类似于 _ = xxxxx();
+                _effectCandidates.Add(new TargetEffect(Pop(instruction), instruction)); //类似于 _ = xxxxx();
                 return;
 
             case Code.Ldfld:
             {
-                var instance = Pop();
+                var instance = Pop(instruction);
                 if (instruction.Operand is FieldReference field)
-                    Push(new TargetFieldNode(field, instance, instruction));
+                    Push(instruction, new TargetFieldNode(field, instance, instruction));
                 else
-                    PushUnknown(1);
+                    PushUnknown(instruction, 1);
                 return;
             }
             case Code.Ldsfld:
                 if (instruction.Operand is FieldReference staticField)
-                    Push(new TargetFieldNode(staticField, null, instruction));
+                    Push(instruction, new TargetFieldNode(staticField, null, instruction));
                 else
-                    PushUnknown(1);
+                    PushUnknown(instruction, 1);
                 return;
 
             case Code.Ldflda:
             {
                 _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
                     $"'{code}' takes a field address; expressions covering it cannot be matched.");
-                var instance = Pop();
+                var instance = Pop(instruction);
                 var resultType = instruction.Operand is FieldReference field
                     ? new ByReferenceType(field.FieldType)
                     : null;
-                Push(new TargetOperationNode(code, new[] { instance }, resultType, instruction));
+                Push(instruction, new TargetOperationNode(code, new[] { instance }, resultType, instruction));
                 return;
             }
             case Code.Ldsflda:
@@ -387,32 +409,32 @@ internal sealed class MethodModel
                 var resultType = instruction.Operand is FieldReference field
                     ? new ByReferenceType(field.FieldType)
                     : null;
-                Push(new TargetOperationNode(code, Array.Empty<TargetExpressionNode>(), resultType, instruction));
+                Push(instruction, new TargetOperationNode(code, Array.Empty<TargetExpressionNode>(), resultType, instruction));
                 return;
             }
 
             case Code.Newarr:
             {
-                var length = Pop();
+                var length = Pop(instruction);
                 if (instruction.Operand is TypeReference elementType)
-                    Push(new TargetNewArrayNode(elementType, new[] { length }, instruction));
+                    Push(instruction, new TargetNewArrayNode(elementType, new[] { length }, instruction));
                 else
-                    PushUnknown(1);
+                    PushUnknown(instruction, 1);
                 return;
             }
 
             case Code.Ldlen:
             {
-                var array = Pop();
-                Push(new TargetArrayLengthNode(array, Method.Module.TypeSystem.Int32, instruction));
+                var array = Pop(instruction);
+                Push(instruction, new TargetArrayLengthNode(array, Method.Module.TypeSystem.Int32, instruction));
                 return;
             }
 
             case Code.Ldelema:
             {
-                var index = Pop();
-                var array = Pop();
-                Push(new TargetAddressNode(new TargetArrayElementNode(array, index,
+                var index = Pop(instruction);
+                var array = Pop(instruction);
+                Push(instruction, new TargetAddressNode(new TargetArrayElementNode(array, index,
                     ResolveArrayElementType(array, instruction), instruction), instruction), candidate: false);
                 return;
             }
@@ -430,9 +452,9 @@ internal sealed class MethodModel
             case Code.Ldelem_U2:
             case Code.Ldelem_U4:
             {
-                var index = Pop();
-                var array = Pop();
-                Push(new TargetArrayElementNode(array, index,
+                var index = Pop(instruction);
+                var array = Pop(instruction);
+                Push(instruction, new TargetArrayElementNode(array, index,
                     ResolveArrayElementType(array, instruction), instruction));
                 return;
             }
@@ -447,9 +469,9 @@ internal sealed class MethodModel
             case Code.Stelem_R8:
             case Code.Stelem_Ref:
             {
-                var value = Pop();
-                var index = Pop();
-                var array = Pop();
+                var value = Pop(instruction);
+                var index = Pop(instruction);
+                var array = Pop(instruction);
                 //同字段写入：操作数被 dup 复用时删除区间会破坏其他消费者的栈值
                 if (!_duplicatedNodes.Contains(value) && !_duplicatedNodes.Contains(index)
                     && !_duplicatedNodes.Contains(array))
@@ -468,54 +490,54 @@ internal sealed class MethodModel
             case Code.Callvirt:
             case Code.Newobj:
             case Code.Calli:
-                SimulateCall(instruction, stack, Pop, Push);
+                SimulateCall(instruction);
                 return;
 
             case Code.Add:
-                PushBinary(ExpressionType.Add); return;
+                PushBinary(instruction, ExpressionType.Add); return;
             case Code.Add_Ovf:
             case Code.Add_Ovf_Un:
-                PushBinary(ExpressionType.AddChecked); return;
+                PushBinary(instruction, ExpressionType.AddChecked); return;
             case Code.Sub:
-                PushBinary(ExpressionType.Subtract); return;
+                PushBinary(instruction, ExpressionType.Subtract); return;
             case Code.Sub_Ovf:
             case Code.Sub_Ovf_Un:
-                PushBinary(ExpressionType.SubtractChecked); return;
+                PushBinary(instruction, ExpressionType.SubtractChecked); return;
             case Code.Mul:
-                PushBinary(ExpressionType.Multiply); return;
+                PushBinary(instruction, ExpressionType.Multiply); return;
             case Code.Mul_Ovf:
             case Code.Mul_Ovf_Un:
-                PushBinary(ExpressionType.MultiplyChecked); return;
+                PushBinary(instruction, ExpressionType.MultiplyChecked); return;
             case Code.Div:
             case Code.Div_Un:
-                PushBinary(ExpressionType.Divide); return;
+                PushBinary(instruction, ExpressionType.Divide); return;
             case Code.Rem:
             case Code.Rem_Un:
-                PushBinary(ExpressionType.Modulo); return;
+                PushBinary(instruction, ExpressionType.Modulo); return;
             case Code.And:
-                PushBinary(ExpressionType.And); return;
+                PushBinary(instruction, ExpressionType.And); return;
             case Code.Or:
-                PushBinary(ExpressionType.Or); return;
+                PushBinary(instruction, ExpressionType.Or); return;
             case Code.Xor:
-                PushBinary(ExpressionType.ExclusiveOr); return;
+                PushBinary(instruction, ExpressionType.ExclusiveOr); return;
             case Code.Shl:
-                PushBinary(ExpressionType.LeftShift); return;
+                PushBinary(instruction, ExpressionType.LeftShift); return;
             case Code.Shr:
             case Code.Shr_Un:
-                PushBinary(ExpressionType.RightShift); return;
+                PushBinary(instruction, ExpressionType.RightShift); return;
             case Code.Ceq:
-                PushBinary(ExpressionType.Equal, Method.Module.TypeSystem.Boolean); return;
+                PushBinary(instruction, ExpressionType.Equal, Method.Module.TypeSystem.Boolean); return;
             case Code.Cgt:
             case Code.Cgt_Un:
-                PushBinary(ExpressionType.GreaterThan, Method.Module.TypeSystem.Boolean); return;
+                PushBinary(instruction, ExpressionType.GreaterThan, Method.Module.TypeSystem.Boolean); return;
             case Code.Clt:
             case Code.Clt_Un:
-                PushBinary(ExpressionType.LessThan, Method.Module.TypeSystem.Boolean); return;
+                PushBinary(instruction, ExpressionType.LessThan, Method.Module.TypeSystem.Boolean); return;
 
             case Code.Neg:
-                PushUnary(ExpressionType.Negate); return;
+                PushUnary(instruction, ExpressionType.Negate); return;
             case Code.Not:
-                PushUnary(ExpressionType.Not); return;
+                PushUnary(instruction, ExpressionType.Not); return;
 
             case Code.Castclass:
             case Code.Isinst:
@@ -555,7 +577,7 @@ internal sealed class MethodModel
             case Code.Conv_Ovf_U8:
             case Code.Conv_Ovf_U8_Un:
             {
-                var operand = Pop();
+                var operand = Pop(instruction);
                 var targetType = instruction.Operand as TypeReference ?? InferConversionType(code);
                 StackType? resultStackType = null;
                 var operation = IsOverflowConversion(code)
@@ -566,7 +588,7 @@ internal sealed class MethodModel
                     resultStackType = CreateBoxStackType(targetType);
                     targetType = Method.Module.TypeSystem.Object;
                 }
-                Push(new TargetUnaryNode(operation, operand, targetType, instruction, resultStackType));
+                Push(instruction, new TargetUnaryNode(operation, operand, targetType, instruction, resultStackType));
                 return;
             }
 
@@ -574,47 +596,47 @@ internal sealed class MethodModel
             case Code.Brtrue_S:
             case Code.Brfalse:
             case Code.Brfalse_S:
-                _conditionExpressions[block] = Pop();
+                _conditionExpressions[block] = Pop(instruction);
                 return;
 
             case Code.Beq:
             case Code.Beq_S:
-                SetBranchComparison(ExpressionType.Equal); return;
+                SetBranchComparison(instruction, block, ExpressionType.Equal); return;
             case Code.Bne_Un:
             case Code.Bne_Un_S:
-                SetBranchComparison(ExpressionType.NotEqual); return;
+                SetBranchComparison(instruction, block, ExpressionType.NotEqual); return;
             case Code.Bgt:
             case Code.Bgt_S:
             case Code.Bgt_Un:
             case Code.Bgt_Un_S:
-                SetBranchComparison(ExpressionType.GreaterThan); return;
+                SetBranchComparison(instruction, block, ExpressionType.GreaterThan); return;
             case Code.Bge:
             case Code.Bge_S:
             case Code.Bge_Un:
             case Code.Bge_Un_S:
-                SetBranchComparison(ExpressionType.GreaterThanOrEqual); return;
+                SetBranchComparison(instruction, block, ExpressionType.GreaterThanOrEqual); return;
             case Code.Blt:
             case Code.Blt_S:
             case Code.Blt_Un:
             case Code.Blt_Un_S:
-                SetBranchComparison(ExpressionType.LessThan); return;
+                SetBranchComparison(instruction, block, ExpressionType.LessThan); return;
             case Code.Ble:
             case Code.Ble_S:
             case Code.Ble_Un:
             case Code.Ble_Un_S:
-                SetBranchComparison(ExpressionType.LessThanOrEqual); return;
+                SetBranchComparison(instruction, block, ExpressionType.LessThanOrEqual); return;
 
             case Code.Ret:
                 if (!Method.ReturnType.MetadataType.Equals(MetadataType.Void))
-                    Pop();
+                    Pop(instruction);
                 return;
             case Code.Throw:
-                Pop();
+                Pop(instruction);
                 return;
             case Code.Stfld:
             {
-                var value = Pop();
-                var instance = Pop();
+                var value = Pop(instruction);
+                var instance = Pop(instruction);
                 //赋值结果被 dup 复用（如 return obj.F = x;）时，删除该区间会拿掉其他消费者依赖的值，
                 //因此不作为独立 effect 提供。
                 if (instruction.Operand is FieldReference field)
@@ -633,7 +655,7 @@ internal sealed class MethodModel
             }
             case Code.Stsfld:
             {
-                var value = Pop();
+                var value = Pop(instruction);
                 if (instruction.Operand is FieldReference field)
                 {
                     if (!_duplicatedNodes.Contains(value))
@@ -651,59 +673,33 @@ internal sealed class MethodModel
         }
 
         //保守 fallback。它保持 stack shape 可用，但不会假装理解当前 pattern DSL 无法表达的 operation。
+        SimulateUnknown(instruction, reportUnsupported: true);
+    }
+
+    /// <summary>
+    /// 按 opcode 的栈行为压/弹占位节点。leave/endfinally 这类 PopAll 指令只是清空求值栈，
+    /// </summary>
+    private void SimulateUnknown(Instruction instruction, bool reportUnsupported)
+    {
+        var code = instruction.OpCode.Code;
         var popCount = SafePopCount(instruction);
         if (popCount == 0xFF || instruction.OpCode.StackBehaviourPop == StackBehaviour.PopAll)
         {
-            //leave/endfinally 这类 PopAll 指令只是清空求值栈，既不产生值也不消费表达式。
-            //PopCount 用 0xFF 作哨兵，之前被当成 255 次 pop：每次都分配 unknown 节点并报栈下溢诊断，
-            //一个 try 就让建模慢 8 倍，诊断信息也是错的。
-            stack.Clear();
+            _stack.Clear();
             return;
         }
 
-        var inputs = new List<TargetExpressionNode>();
-        for (var i = 0; i < popCount; i++)
-            inputs.Insert(0, Pop());
+        var inputs = popCount == 0 ? Array.Empty<TargetExpressionNode>() : new TargetExpressionNode[popCount];
+        for (var i = popCount - 1; i >= 0; i--)
+            inputs[i] = Pop(instruction);
         var pushCount = SafePushCount(instruction);
-        if (popCount > 0 || pushCount > 0)
+        if (reportUnsupported && (popCount > 0 || pushCount > 0))
         {
             _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
                 $"'{code}' is not supported by the pattern model; expressions covering it cannot be matched.");
         }
         for (var i = 0; i < pushCount; i++)
-            Push(new TargetOperationNode(code, inputs, null, instruction));
-
-        void PushInt(int value)
-            => Push(new TargetConstantNode(value, Method.Module.TypeSystem.Int32, instruction));
-
-        void PushUnknown(int count)
-        {
-            _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
-                $"'{code}' has an operand the pattern model cannot resolve; expressions covering it cannot be matched.");
-            for (var i = 0; i < count; i++)
-                Push(new TargetUnknownNode(null, instruction, $"unsupported {code}"));
-        }
-
-        void PushBinary(ExpressionType operation, TypeReference? resultType = null)
-        {
-            var right = Pop();
-            var left = Pop();
-            Push(new TargetBinaryNode(operation, left, right, resultType ?? left.ResultType, instruction));
-        }
-
-        void PushUnary(ExpressionType operation)
-        {
-            var operand = Pop();
-            Push(new TargetUnaryNode(operation, operand, operand.ResultType, instruction));
-        }
-
-        void SetBranchComparison(ExpressionType operation)
-        {
-            var right = Pop();
-            var left = Pop();
-            _conditionExpressions[block] = new TargetBinaryNode(operation, left, right,
-                Method.Module.TypeSystem.Boolean, instruction);
-        }
+            Push(instruction, new TargetOperationNode(code, inputs, null, instruction));
     }
 
     //赋值结果被后续代码使用（如 return obj.F = x;）时该写入不作为可删除 effect 提供，
@@ -739,29 +735,23 @@ internal sealed class MethodModel
         }
     }
 
-    private void SimulateCall(Instruction instruction, List<TargetExpressionNode> stack,
-        Func<TargetExpressionNode> pop, Action<TargetExpressionNode, bool> push)
+    private void SimulateCall(Instruction instruction)
     {
         if (instruction.Operand is not MethodReference method)
         {
             _modelDiagnostics.Report(MatchDiagnosticKind.UnsupportedInstruction, instruction,
                 $"'{instruction.OpCode.Code}' does not call a direct method reference; expressions covering it cannot be matched.");
-            var fallbackInputs = new List<TargetExpressionNode>();
-            var popCount = SafePopCount(instruction);
-            for (var i = 0; i < popCount; i++)
-                fallbackInputs.Insert(0, pop());
-            if (SafePushCount(instruction) != 0)
-                push(new TargetOperationNode(instruction.OpCode.Code, fallbackInputs, null, instruction), true);
+            SimulateUnknown(instruction, reportUnsupported: false);
             return;
         }
 
         var arguments = new TargetExpressionNode[method.Parameters.Count];
         for (var i = arguments.Length - 1; i >= 0; i--)
-            arguments[i] = pop();
+            arguments[i] = Pop(instruction);
 
         TargetExpressionNode? instance = null;
         if (instruction.OpCode.Code != Code.Newobj && method.HasThis)
-            instance = pop();
+            instance = Pop(instruction);
 
         TypeReference? resultType = instruction.OpCode.Code == Code.Newobj
             ? method.DeclaringType
@@ -773,7 +763,7 @@ internal sealed class MethodModel
         if (resultType is null)
             _effectCandidates.Add(new TargetEffect(node, instruction)); //void call 也算 effect
         else
-            push(node, true);
+            Push(instruction, node);
     }
 
     private static bool IsOverflowConversion(Code code)

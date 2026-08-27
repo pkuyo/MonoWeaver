@@ -308,6 +308,8 @@ public sealed class CilTypeSpec
         }
     }
 
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<ModuleDefinition, TypeReference> _resolvedByModule = new();
+
     internal bool TryResolve(ModuleDefinition module, out TypeReference typeReference)
     {
         if (module is null)
@@ -315,7 +317,7 @@ public sealed class CilTypeSpec
 
         try
         {
-            typeReference = Resolve(module);
+            typeReference = _resolvedByModule.GetValue(module, Resolve);
             return true;
         }
         catch

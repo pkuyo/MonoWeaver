@@ -1,8 +1,8 @@
-﻿using Mono.Cecil;
+using Mono.Cecil;
 using System;
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -11,279 +11,176 @@ namespace MonoWeaver.Utils;
 public static partial class CecilTypeSystem
 {
     /// <summary>
-    ///类型签名 id。
+    /// 类型签名 id：
+    /// <list type="bullet">
+    /// <item><see cref="NameId"/>：名称嵌套匹配，
+    /// <item><see cref="Id"/>：完整表示的 id，带metadataToken和module信息。</item>
+    /// </list>
     /// </summary>
     public readonly struct TypeSig : IEquatable<TypeSig>
     {
-        private static readonly Lazy<CoreTypeSigs> _coreTypes =
-            new(CreateCoreTypeSigs, LazyThreadSafetyMode.ExecutionAndPublication);
+        private static readonly ConcurrentDictionary<TypeSigKey, TypeSig> _interner = new();
+        private static readonly ConcurrentDictionary<int, TypeSigKey> _keysById = new();
+        private static readonly ConcurrentDictionary<DefinitionIdentity, int> _definitionInterner = new();
+        private static readonly ConcurrentDictionary<Type, TypeSig> _runtimeCache = new();
+        private static readonly ConditionalWeakTable<TypeReference, StrongBox<TypeSig>> _specificationCache = new();
+        private static int _nextId;
+        private static int _nextDefinitionId;
 
         private readonly int _id;
+        private readonly int _nameId;
+
+        private TypeSig(int id, int nameId)
+        {
+            _id = id;
+            _nameId = nameId;
+        }
 
         internal int Id => _id;
+        internal int NameId => _nameId;
         public bool IsValid => _id != 0;
-        public static TypeSig Object => _coreTypes.Value.Object;
-        public static TypeSig Void => _coreTypes.Value.Void;
-        public static TypeSig String => _coreTypes.Value.String;
-        public static TypeSig Array => _coreTypes.Value.Array;
-        public static TypeSig Nullable => _coreTypes.Value.Nullable;
-        public static TypeSig ICloneable => _coreTypes.Value.ICloneable;
-        public static TypeSig ValueType => _coreTypes.Value.ValueType;
-        public static TypeSig Enum => _coreTypes.Value.Enum;
-        public static TypeSig Delegate => _coreTypes.Value.Delegate;
-        public static TypeSig MulticastDelegate => _coreTypes.Value.MulticastDelegate;
-        private TypeSig(int id) => _id = id;
+
+        internal TypeSig NameOnly => new(_nameId, _nameId);
+        internal bool IsNameOnly => _id == _nameId;
+
+        public static TypeSig Object { get; } = FromName("System", "Object");
+        public static TypeSig Void { get; } = FromName("System", "Void");
+        public static TypeSig String { get; } = FromName("System", "String");
+        public static TypeSig Array { get; } = FromName("System", "Array");
+        public static TypeSig Nullable { get; } = FromName("System", "Nullable`1");
+        public static TypeSig ICloneable { get; } = FromName("System", "ICloneable");
+        public static TypeSig ValueType { get; } = FromName("System", "ValueType");
+        public static TypeSig Enum { get; } = FromName("System", "Enum");
+        public static TypeSig Delegate { get; } = FromName("System", "Delegate");
+        public static TypeSig MulticastDelegate { get; } = FromName("System", "MulticastDelegate");
+
+        internal static class SystemCollections
+        {
+            public static TypeSig IEnumerable { get; } = FromName("System.Collections", "IEnumerable");
+            public static TypeSig ICollection { get; } = FromName("System.Collections", "ICollection");
+            public static TypeSig IList { get; } = FromName("System.Collections", "IList");
+            public static TypeSig IStructuralComparable { get; } = FromName("System.Collections", "IStructuralComparable");
+        }
+
+        internal static class SystemThreading
+        {
+            public static TypeSig Task { get; } = FromName("System.Threading.Tasks", "Task");
+            public static TypeSig ValueTask { get; } = FromName("System.Threading.Tasks", "ValueTask");
+            public static TypeSig TaskT { get; } = FromName("System.Threading.Tasks", "Task`1");
+            public static TypeSig ValueTaskT { get; } = FromName("System.Threading.Tasks", "ValueTask`1");
+        }
 
         public static TypeSig Create(TypeReference t)
         {
             if (t == null) throw new ArgumentNullException(nameof(t));
 
+            if (t is TypeSpecification)
+                return _specificationCache.GetValue(t, static r => new StrongBox<TypeSig>(Intern(TypeSigKey.Create(r)))).Value;
 
             if (_typeSigCache.TryGetValue(t, out var cached))
                 return cached;
 
-
-            var key = TypeSigKey.Create(t);
-            var sig = new TypeSig(InternTypeSigKey(key));
-
+            var sig = Intern(TypeSigKey.Create(t));
             return _typeSigCache.GetOrAdd(t, sig);
-
         }
 
-        public bool Equals(TypeSig other) => _id == other._id;
+        /// <summary>运行时类型的签名：只有名字身份</summary>
+        public static TypeSig Create(Type t)
+        {
+            if (t == null) throw new ArgumentNullException(nameof(t));
+            return _runtimeCache.GetOrAdd(t, static type => Intern(TypeSigKey.Create(type)));
+        }
+
+
+        public static TypeSig FromName(string @namespace, string name)
+            => Intern(TypeSigKey.Named(TypeDefKey.FromName(@namespace ?? string.Empty, name, default)));
+
+        private static TypeSig Intern(TypeSigKey key)
+        {
+            if (_interner.TryGetValue(key, out var existing))
+                return existing;
+
+            var nameId = key.IsNameOnly ? 0 : Intern(key.Strip()).Id;
+            var id = Interlocked.Increment(ref _nextId);
+            if (id <= 0)
+                throw new InvalidOperationException("TypeSig id space exhausted.");
+            var sig = new TypeSig(id, nameId == 0 ? id : nameId);
+
+            var result = _interner.GetOrAdd(key, sig);
+            if (result._id == id)
+                _keysById[id] = key;
+            return result;
+        }
+
+        private static int InternDefinition(Guid moduleMvid, int metadataToken)
+        {
+            var identity = new DefinitionIdentity(moduleMvid, metadataToken);
+            if (_definitionInterner.TryGetValue(identity, out var id))
+                return id;
+            id = Interlocked.Increment(ref _nextDefinitionId);
+            return _definitionInterner.GetOrAdd(identity, id);
+        }
+
+        /// <summary>同一个定义：两边都解析到了定义就比定义身份，否则退化到名字身份。</summary>
+        public bool Equals(TypeSig other)
+        {
+            if (_id == other._id)
+                return true;
+            if (_nameId != other._nameId)
+                return false;
+            return !DefinitelyDifferent(_id, other._id);
+        }
+
+        /// <summary>只比名字/结构身份。</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool SameName(TypeSig other) => _nameId == other._nameId;
+
+        /// <summary>完整表示逐位相同（缓存 key 用）。</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool ExactEquals(TypeSig other) => _id == other._id;
+
+        private static bool DefinitelyDifferent(int leftId, int rightId)
+        {
+            if (leftId == rightId)
+                return false;
+            if (!_keysById.TryGetValue(leftId, out var left) || !_keysById.TryGetValue(rightId, out var right))
+                return true;
+            return TypeSigKey.DefinitelyDifferent(left, right);
+        }
+
+        internal static bool DefinitelyDifferent(TypeSig left, TypeSig right)
+        {
+            if (left._id == right._id)
+                return false;
+            if (left._nameId != right._nameId)
+                return true;
+            return DefinitelyDifferent(left._id, right._id);
+        }
+
         public override bool Equals(object? obj) => obj is TypeSig other && Equals(other);
-        public override int GetHashCode() => _id;
-        public override string ToString() => _id == 0 ? "<invalid>" : $"sig#{_id}";
+        //哈希使用名字身份
+        public override int GetHashCode() => _nameId;
+        public override string ToString() => _id == 0 ? "<invalid>" : _id == _nameId ? $"sig#{_id}" : $"sig#{_id}(name#{_nameId})";
 
         public static bool operator ==(TypeSig left, TypeSig right) => left.Equals(right);
         public static bool operator !=(TypeSig left, TypeSig right) => !left.Equals(right);
-
-        private static CoreTypeSigs CreateCoreTypeSigs()
-        {
-            using var module = OpenRuntimeModule(typeof(object));
-            return new CoreTypeSigs(
-                Create(RequireRuntimeType(module, typeof(object))),
-                Create(RequireRuntimeType(module, typeof(void))),
-                Create(RequireRuntimeType(module, typeof(string))),
-                Create(RequireRuntimeType(module, typeof(Array))),
-                Create(RequireRuntimeType(module, typeof(Nullable<>))),
-                Create(RequireRuntimeType(module, typeof(ICloneable))),
-                Create(RequireRuntimeType(module, typeof(ValueType))),
-                Create(RequireRuntimeType(module, typeof(Enum))), 
-                Create(RequireRuntimeType(module, typeof(Delegate))),
-                Create(RequireRuntimeType(module, typeof(MulticastDelegate))));
-        }
-
-        private static ModuleDefinition OpenRuntimeModule(Type anchor)
-        {
-            var location = anchor.Assembly.Location;
-            if (string.IsNullOrWhiteSpace(location))
-                throw new NotSupportedException(
-                    $"Cannot locate runtime assembly for '{anchor.FullName}'.");
-
-            return ModuleDefinition.ReadModule(location);
-        }
-
-        private static TypeDefinition RequireRuntimeType(ModuleDefinition module, Type type)
-        {
-            var fullName = type.FullName
-                ?? throw new ArgumentException("Runtime type must have a full name.", nameof(type));
-            return RequireRuntimeType(module, fullName);
-        }
-
-        private static TypeDefinition RequireRuntimeType(ModuleDefinition module, string fullName)
-        {
-            var type = module.GetType(fullName);
-            if (type is null)
-                throw new InvalidOperationException(
-                    $"Runtime type '{fullName}' was not found in module '{module.FileName}'.");
-            return type;
-        }
-
-        internal static class SystemCollections
-        {
-            private static readonly Lazy<SystemCollectionsTypeSigs> _types =
-                new(CreateTypeSigs, LazyThreadSafetyMode.ExecutionAndPublication);
-
-            public static TypeSig IEnumerable => _types.Value.IEnumerable;
-            public static TypeSig ICollection => _types.Value.ICollection;
-            public static TypeSig IList => _types.Value.IList;
-            public static TypeSig IStructuralComparable => _types.Value.IStructuralComparable;
-
-            private static SystemCollectionsTypeSigs CreateTypeSigs()
-            {
-                using var module = OpenRuntimeModule(typeof(global::System.Collections.IEnumerable));
-                return new SystemCollectionsTypeSigs(
-                    Create(RequireRuntimeType(module, typeof(global::System.Collections.IEnumerable))),
-                    Create(RequireRuntimeType(module, typeof(global::System.Collections.ICollection))),
-                    Create(RequireRuntimeType(module, typeof(global::System.Collections.IList))),
-                    Create(RequireRuntimeType(module, typeof(global::System.Collections.IStructuralComparable))));
-            }
-        }
-
-        internal static class SystemThreading
-        {
-            private static readonly Lazy<SystemThreadingTypeSigs> _types =
-                new(CreateTypeSigs, LazyThreadSafetyMode.ExecutionAndPublication);
-
-            public static TypeSig Task => _types.Value.Task;
-            public static TypeSig ValueTask => _types.Value.ValueTask;
-            public static TypeSig TaskT => _types.Value.TaskT;
-            public static TypeSig ValueTaskT => _types.Value.ValueTaskT;
-
-            private static SystemThreadingTypeSigs CreateTypeSigs()
-            {
-                using var module = OpenRuntimeModule(typeof(global::System.Threading.Tasks.Task));
-                var task = RequireRuntimeType(module, typeof(global::System.Threading.Tasks.Task));
-                var taskT = RequireRuntimeType(module, typeof(global::System.Threading.Tasks.Task<>));
-                var valueTask = TryGetRuntimeType(module, "System.Threading.Tasks.ValueTask")
-                                ?? CreateValueTaskReference(module, "ValueTask", task.Scope, false);
-                var valueTaskT = TryGetRuntimeType(module, "System.Threading.Tasks.ValueTask`1")
-                                 ?? CreateValueTaskReference(module, "ValueTask`1", task.Scope, true);
-
-                return new SystemThreadingTypeSigs(
-                    Create(task),
-                    Create(valueTask),
-                    Create(taskT),
-                    Create(valueTaskT));
-            }
-
-            private static TypeReference? TryGetRuntimeType(ModuleDefinition module, string fullName)
-                => module.GetType(fullName);
-
-            private static TypeReference CreateValueTaskReference(
-                ModuleDefinition module,
-                string name,
-                IMetadataScope scope,
-                bool hasGenericParameter)
-            {
-                var type = new TypeReference(
-                    "System.Threading.Tasks",
-                    name,
-                    module,
-                    scope,
-                    true);
-
-                if (hasGenericParameter)
-                    type.GenericParameters.Add(new GenericParameter("TResult", type));
-
-                return type;
-            }
-        }
     }
 
-    private readonly struct CoreTypeSigs
+    private readonly struct DefinitionIdentity : IEquatable<DefinitionIdentity>
     {
-        public readonly TypeSig Object;
-        public readonly TypeSig Void;
-        public readonly TypeSig String;
-        public readonly TypeSig Array;
-        public readonly TypeSig Nullable;
-        public readonly TypeSig ICloneable;
-        public readonly TypeSig ValueType;
-        public readonly TypeSig Enum;
-        public readonly TypeSig Delegate;
-        public readonly TypeSig MulticastDelegate;
+        private readonly Guid _moduleMvid;
+        private readonly int _metadataToken;
 
-        public CoreTypeSigs(
-            TypeSig @object,
-            TypeSig @void,
-            TypeSig @string,
-            TypeSig array,
-            TypeSig nullable,
-            TypeSig iCloneable,
-            TypeSig valueType,
-            TypeSig @enum,
-            TypeSig @delegate,
-            TypeSig multicastDelegate)
+        public DefinitionIdentity(Guid moduleMvid, int metadataToken)
         {
-            Object = @object;
-            Void = @void;
-            String = @string;
-            Array = array;
-            Nullable = nullable;
-            ICloneable = iCloneable;
-            ValueType = valueType;
-            Enum = @enum;
-            Delegate = @delegate;
-            MulticastDelegate = multicastDelegate;
+            _moduleMvid = moduleMvid;
+            _metadataToken = metadataToken;
         }
-    }
-    private readonly struct SystemThreadingTypeSigs
-    {
-        public readonly TypeSig Task;
-        public readonly TypeSig ValueTask;
-        public readonly TypeSig TaskT;
-        public readonly TypeSig ValueTaskT;
 
-        public SystemThreadingTypeSigs(
-          TypeSig task,
-          TypeSig valueTask,
-          TypeSig taskT,
-          TypeSig valueTaskT)
-        {
-            Task = task;
-            ValueTask = valueTask;
-            TaskT = taskT;
-            ValueTaskT = valueTaskT;
-        }
-    }
-    private readonly struct SystemCollectionsGenericTypeSigs
-    {
-        public readonly TypeSig IEnumerable;
-        public readonly TypeSig ICollection;
-        public readonly TypeSig IList;
-        public readonly TypeSig IReadOnlyCollection;
-        public readonly TypeSig IReadOnlyList;
-
-        public SystemCollectionsGenericTypeSigs(
-            TypeSig iEnumerable,
-            TypeSig iCollection,
-            TypeSig iList,
-            TypeSig iReadOnlyCollection,
-            TypeSig iReadOnlyList)
-        {
-            IEnumerable = iEnumerable;
-            ICollection = iCollection;
-            IList = iList;
-            IReadOnlyCollection = iReadOnlyCollection;
-            IReadOnlyList = iReadOnlyList;
-        }
-    }
-
-    private readonly struct SystemCollectionsTypeSigs
-    {
-        public readonly TypeSig IEnumerable;
-        public readonly TypeSig ICollection;
-        public readonly TypeSig IList;
-        public readonly TypeSig IStructuralComparable;
-
-        public SystemCollectionsTypeSigs(
-            TypeSig iEnumerable,
-            TypeSig iCollection,
-            TypeSig iList,
-            TypeSig iStructuralComparable)
-        {
-            IEnumerable = iEnumerable;
-            ICollection = iCollection;
-            IList = iList;
-            IStructuralComparable = iStructuralComparable;
-        }
-    }
-
-    private static readonly ConcurrentDictionary<TypeSigKey, int> _typeSigInterner = new();
-    private static int _nextTypeSigId = 1;
-
-    private static int InternTypeSigKey(TypeSigKey key)
-    {
-        if (_typeSigInterner.TryGetValue(key, out var id))
-            return id;
-
-        id = Interlocked.Increment(ref _nextTypeSigId);
-        if (id <= 0)
-            throw new InvalidOperationException("TypeSig id space exhausted.");
-
-        return _typeSigInterner.GetOrAdd(key, id);
+        public bool Equals(DefinitionIdentity other)
+            => _metadataToken == other._metadataToken && _moduleMvid == other._moduleMvid;
+        public override bool Equals(object? obj) => obj is DefinitionIdentity other && Equals(other);
+        public override int GetHashCode() => unchecked(_moduleMvid.GetHashCode() * 31 + _metadataToken);
     }
 
     private enum TypeSigKind : byte
@@ -301,66 +198,60 @@ public static partial class CecilTypeSystem
         FunctionPointer = 11,
     }
 
+    /// <summary>名字身份 + 可选的定义身份（0 表示未解析）。</summary>
     private readonly struct TypeDefKey : IEquatable<TypeDefKey>
     {
-        private readonly bool _resolved;
-        private readonly Guid _moduleMvid;
-        private readonly int _metadataToken;
-
-        // 兜底身份标识。验证器中这条路径应该很少出现，因为未解析类型直接抛出（
-        private readonly string? _scopeName;
-        private readonly string? _namespace;
+        private readonly string? _namespace;   //嵌套类型为 null
         private readonly string? _name;
         private readonly TypeSig _declaringType;
+        private readonly int _definitionId;
 
-        private TypeDefKey(TypeDefinition definition)
+        private TypeDefKey(string? @namespace, string? name, TypeSig declaringType, int definitionId)
         {
-            _resolved = true;
-            _moduleMvid = definition.Module?.Mvid ?? Guid.Empty;
-            _metadataToken = definition.MetadataToken.ToInt32();
-            _scopeName = null;
-            _namespace = null;
-            _name = null;
-            _declaringType = default;
+            _namespace = @namespace;
+            _name = name;
+            _declaringType = declaringType;
+            _definitionId = definitionId;
         }
 
-        private TypeDefKey(TypeReference reference)
-        {
-            _resolved = false;
-            _moduleMvid = reference.Module?.Mvid ?? Guid.Empty;
-            _metadataToken = reference.MetadataToken.ToInt32();
-            _scopeName = reference.Scope?.Name;
-            _namespace = reference.Namespace;
-            _name = reference.Name;
-            _declaringType = reference.IsNested && reference.DeclaringType != null
-                ? TypeSig.Create(reference.DeclaringType)
-                : default;
-        }
+        public int DefinitionId => _definitionId;
+        public bool IsNameOnly => _definitionId == 0;
+        public TypeDefKey Strip() => _definitionId == 0 ? this : new TypeDefKey(_namespace, _name, _declaringType, 0);
+
+        public static TypeDefKey FromName(string? @namespace, string name, TypeSig declaringType)
+            => new(declaringType.IsValid ? null : @namespace ?? string.Empty, name, declaringType, 0);
 
         public static TypeDefKey Create(TypeReference reference)
         {
             var definition = TryResolve(reference);
-            return definition != null ? new TypeDefKey(definition) : new TypeDefKey(reference);
+            var definitionId = definition?.Module is { } module
+                ? TypeSig_InternDefinition(module.Mvid, definition.MetadataToken.ToInt32())
+                : 0;
+            //名字取自引用本身；嵌套类型和 Cecil 一样只看 DeclaringType 链
+            var declaring = reference.DeclaringType is { } declaringType
+                ? TypeSig.Create(declaringType).NameOnly
+                : default;
+            return new TypeDefKey(declaring.IsValid ? null : reference.Namespace ?? string.Empty,
+                reference.Name, declaring, definitionId);
         }
+
+        public static TypeDefKey Create(Type type)
+        {
+            //反射对嵌套类型的 Namespace 返回外层命名空间，这里只用 DeclaringType 链
+            var declaring = type.DeclaringType is { } declaringType && !type.IsGenericParameter
+                ? TypeSig.Create(declaringType)
+                : default;
+            return new TypeDefKey(declaring.IsValid ? null : type.Namespace ?? string.Empty, type.Name, declaring, 0);
+        }
+
+        public static bool DefinitelyDifferent(TypeDefKey left, TypeDefKey right)
+            => left._definitionId != 0 && right._definitionId != 0 && left._definitionId != right._definitionId;
 
         public bool Equals(TypeDefKey other)
-        {
-            if (_resolved != other._resolved) return false;
-
-            if (_resolved)
-            {
-                return _moduleMvid == other._moduleMvid
-                       && _metadataToken == other._metadataToken;
-            }
-
-            //兜底
-            return _moduleMvid == other._moduleMvid
-                   && _metadataToken == other._metadataToken
-                   && _scopeName == other._scopeName
-                   && _namespace == other._namespace
-                   && _name == other._name
-                   && _declaringType == other._declaringType;
-        }
+            => _definitionId == other._definitionId
+               && _declaringType.ExactEquals(other._declaringType)
+               && string.Equals(_name, other._name, StringComparison.Ordinal)
+               && string.Equals(_namespace, other._namespace, StringComparison.Ordinal);
 
         public override bool Equals(object? obj) => obj is TypeDefKey other && Equals(other);
 
@@ -369,88 +260,108 @@ public static partial class CecilTypeSystem
             unchecked
             {
                 int h = 17;
-                h = h * 31 + _resolved.GetHashCode();
-                h = h * 31 + _moduleMvid.GetHashCode();
-                h = h * 31 + _metadataToken;
-                if (!_resolved)
-                {
-                    h = h * 31 + (_scopeName?.GetHashCode() ?? 0);
-                    h = h * 31 + (_namespace?.GetHashCode() ?? 0);
-                    h = h * 31 + (_name?.GetHashCode() ?? 0);
-                    h = h * 31 + _declaringType.GetHashCode();
-                }
+                h = h * 31 + _definitionId;
+                h = h * 31 + _declaringType.Id;
+                h = h * 31 + (_name is null ? 0 : StringComparer.Ordinal.GetHashCode(_name));
+                h = h * 31 + (_namespace is null ? 0 : StringComparer.Ordinal.GetHashCode(_namespace));
                 return h;
             }
         }
     }
 
+    private static int TypeSig_InternDefinition(Guid moduleMvid, int metadataToken)
+        => TypeSigDefinitionInterner.Intern(moduleMvid, metadataToken);
+
+    private static class TypeSigDefinitionInterner
+    {
+        private static readonly ConcurrentDictionary<DefinitionIdentity, int> _interner = new();
+        private static int _nextId;
+
+        public static int Intern(Guid moduleMvid, int metadataToken)
+        {
+            var identity = new DefinitionIdentity(moduleMvid, metadataToken);
+            if (_interner.TryGetValue(identity, out var id))
+                return id;
+            id = Interlocked.Increment(ref _nextId);
+            return _interner.GetOrAdd(identity, id);
+        }
+    }
+
     private readonly struct MethodOwnerKey : IEquatable<MethodOwnerKey>
     {
-        private readonly bool _resolved;
-        private readonly Guid _moduleMvid;
-        private readonly int _metadataToken;
-
-        // 兜底逻辑。这里不要包含参数 TypeSig，否则方法泛型参数
-        // 可能递归到其所属方法签名。
         private readonly TypeSig _declaringType;
         private readonly string? _name;
         private readonly int _genericParameterCount;
         private readonly int _parameterCount;
         private readonly bool _hasThis;
         private readonly MethodCallingConvention _callingConvention;
+        private readonly int _definitionId;
 
-        private MethodOwnerKey(MethodDefinition definition)
+        private MethodOwnerKey(TypeSig declaringType, string? name, int genericParameterCount, int parameterCount,
+            bool hasThis, MethodCallingConvention callingConvention, int definitionId)
         {
-            _resolved = true;
-            _moduleMvid = definition.Module?.Mvid ?? Guid.Empty;
-            _metadataToken = definition.MetadataToken.ToInt32();
-            _declaringType = default;
-            _name = null;
-            _genericParameterCount = 0;
-            _parameterCount = 0;
-            _hasThis = false;
-            _callingConvention = default;
+            _declaringType = declaringType;
+            _name = name;
+            _genericParameterCount = genericParameterCount;
+            _parameterCount = parameterCount;
+            _hasThis = hasThis;
+            _callingConvention = callingConvention;
+            _definitionId = definitionId;
         }
 
-        private MethodOwnerKey(MethodReference reference)
-        {
-            _resolved = false;
-            _moduleMvid = reference.Module?.Mvid ?? Guid.Empty;
-            _metadataToken = reference.MetadataToken.ToInt32();
-            _declaringType = reference.DeclaringType != null ? TypeSig.Create(reference.DeclaringType) : default;
-            _name = reference.Name;
-            _genericParameterCount = reference.GenericParameters.Count;
-            _parameterCount = reference.Parameters.Count;
-            _hasThis = reference.HasThis;
-            _callingConvention = reference.CallingConvention;
-        }
+        public bool IsValid => _name is not null;
+        public bool IsNameOnly => _definitionId == 0 && (!_declaringType.IsValid || _declaringType.IsNameOnly);
+
+        public MethodOwnerKey Strip()
+            => IsNameOnly ? this : new MethodOwnerKey(_declaringType.NameOnly, _name, _genericParameterCount,
+                _parameterCount, _hasThis, _callingConvention, 0);
 
         public static MethodOwnerKey Create(MethodReference reference)
         {
             var definition = TryResolve(reference);
-            return definition != null ? new MethodOwnerKey(definition) : new MethodOwnerKey(reference);
+            var definitionId = definition?.Module is { } module
+                ? TypeSig_InternDefinition(module.Mvid, definition.MetadataToken.ToInt32())
+                : 0;
+            return new MethodOwnerKey(
+                reference.DeclaringType != null ? TypeSig.Create(reference.DeclaringType) : default,
+                reference.Name,
+                reference.GenericParameters.Count,
+                reference.Parameters.Count,
+                reference.HasThis,
+                reference.CallingConvention,
+                definitionId);
+        }
+
+        public static MethodOwnerKey Create(MethodBase method)
+        {
+            var genericCount = method.IsGenericMethodDefinition || method.IsGenericMethod
+                ? method.GetGenericArguments().Length
+                : 0;
+            return new MethodOwnerKey(
+                method.DeclaringType != null ? TypeSig.Create(method.DeclaringType) : default,
+                method.Name,
+                genericCount,
+                method.GetParameters().Length,
+                !method.IsStatic,
+                genericCount != 0 ? MethodCallingConvention.Generic : MethodCallingConvention.Default,
+                0);
+        }
+
+        public static bool DefinitelyDifferent(MethodOwnerKey left, MethodOwnerKey right)
+        {
+            if (left._definitionId != 0 && right._definitionId != 0)
+                return left._definitionId != right._definitionId;
+            return TypeSig.DefinitelyDifferent(left._declaringType, right._declaringType);
         }
 
         public bool Equals(MethodOwnerKey other)
-        {
-            if (_resolved != other._resolved) return false;
-
-            if (_resolved)
-            {
-                return _moduleMvid == other._moduleMvid
-                       && _metadataToken == other._metadataToken;
-            }
-
-            //兜底
-            return _moduleMvid == other._moduleMvid
-                   && _metadataToken == other._metadataToken
-                   && _declaringType == other._declaringType
-                   && _name == other._name
-                   && _genericParameterCount == other._genericParameterCount
-                   && _parameterCount == other._parameterCount
-                   && _hasThis == other._hasThis
-                   && _callingConvention == other._callingConvention;
-        }
+            => _definitionId == other._definitionId
+               && _declaringType.ExactEquals(other._declaringType)
+               && string.Equals(_name, other._name, StringComparison.Ordinal)
+               && _genericParameterCount == other._genericParameterCount
+               && _parameterCount == other._parameterCount
+               && _hasThis == other._hasThis
+               && _callingConvention == other._callingConvention;
 
         public override bool Equals(object? obj) => obj is MethodOwnerKey other && Equals(other);
 
@@ -459,18 +370,13 @@ public static partial class CecilTypeSystem
             unchecked
             {
                 int h = 17;
-                h = h * 31 + _resolved.GetHashCode();
-                h = h * 31 + _moduleMvid.GetHashCode();
-                h = h * 31 + _metadataToken;
-                if (!_resolved)
-                {
-                    h = h * 31 + _declaringType.GetHashCode();
-                    h = h * 31 + (_name?.GetHashCode() ?? 0);
-                    h = h * 31 + _genericParameterCount;
-                    h = h * 31 + _parameterCount;
-                    h = h * 31 + _hasThis.GetHashCode();
-                    h = h * 31 + (int)_callingConvention;
-                }
+                h = h * 31 + _definitionId;
+                h = h * 31 + _declaringType.Id;
+                h = h * 31 + (_name is null ? 0 : StringComparer.Ordinal.GetHashCode(_name));
+                h = h * 31 + _genericParameterCount;
+                h = h * 31 + _parameterCount;
+                h = h * 31 + (_hasThis ? 1 : 0);
+                h = h * 31 + (int)_callingConvention;
                 return h;
             }
         }
@@ -502,6 +408,7 @@ public static partial class CecilTypeSystem
         private readonly TypeSig _returnType;
 
         private readonly int _hashCode;
+        private readonly bool _isNameOnly;
 
         private TypeSigKey(
             TypeSigKind kind,
@@ -542,7 +449,119 @@ public static partial class CecilTypeSystem
             _explicitThis = explicitThis;
             _returnType = returnType;
             _hashCode = ComputeHashCode();
+            _isNameOnly = ComputeIsNameOnly();
         }
+
+        public bool IsNameOnly => _isNameOnly;
+
+        public static TypeSigKey Named(TypeDefKey defKey) => new(TypeSigKind.Named, defKey: defKey);
+
+        /// <summary>去掉所有定义身份（和数组边界）后的名字键。</summary>
+        public TypeSigKey Strip()
+        {
+            if (_isNameOnly)
+                return this;
+
+            return new TypeSigKey(
+                _kind,
+                defKey: _defKey.Strip(),
+                element: _element.IsValid ? _element.NameOnly : default,
+                modifier: _modifier.IsValid ? _modifier.NameOnly : default,
+                arguments: StripArray(_arguments),
+                rank: _rank,
+                isVector: _isVector,
+                genericParameterType: _genericParameterType,
+                genericParameterPosition: _genericParameterPosition,
+                genericParameterOwnerKind: _genericParameterOwnerKind,
+                genericParameterOwnerType: _genericParameterOwnerType.IsValid ? _genericParameterOwnerType.NameOnly : default,
+                genericParameterOwnerMethod: _genericParameterOwnerMethod.IsValid ? _genericParameterOwnerMethod.Strip() : default,
+                callingConvention: _callingConvention,
+                hasThis: _hasThis,
+                explicitThis: _explicitThis,
+                returnType: _returnType.IsValid ? _returnType.NameOnly : default);
+        }
+
+        private static TypeSig[]? StripArray(TypeSig[]? sigs)
+        {
+            if (sigs is null)
+                return null;
+            var result = new TypeSig[sigs.Length];
+            for (var i = 0; i < sigs.Length; i++)
+                result[i] = sigs[i].NameOnly;
+            return result;
+        }
+
+        private bool ComputeIsNameOnly()
+        {
+            if (!_defKey.IsNameOnly) return false;
+            if (_element.IsValid && !_element.IsNameOnly) return false;
+            if (_modifier.IsValid && !_modifier.IsNameOnly) return false;
+            if (_returnType.IsValid && !_returnType.IsNameOnly) return false;
+            if (_genericParameterOwnerType.IsValid && !_genericParameterOwnerType.IsNameOnly) return false;
+            if (_genericParameterOwnerMethod.IsValid && !_genericParameterOwnerMethod.IsNameOnly) return false;
+            if (_lowerBounds is not null || _upperBounds is not null) return false;
+            if (_arguments is not null)
+            {
+                foreach (var argument in _arguments)
+                    if (!argument.IsNameOnly) return false;
+            }
+            return true;
+        }
+
+        /// <summary>两个同名键是否在某个叶子上带有不同的定义身份。</summary>
+        public static bool DefinitelyDifferent(TypeSigKey left, TypeSigKey right)
+        {
+            if (left._kind != right._kind)
+                return true;
+
+            switch (left._kind)
+            {
+                case TypeSigKind.Named:
+                    return TypeDefKey.DefinitelyDifferent(left._defKey, right._defKey);
+
+                case TypeSigKind.GenericParameter:
+                    if (left._genericParameterOwnerKind != right._genericParameterOwnerKind)
+                        return true;
+                    return left._genericParameterOwnerKind switch
+                    {
+                        1 => TypeSig.DefinitelyDifferent(left._genericParameterOwnerType, right._genericParameterOwnerType),
+                        2 => MethodOwnerKey.DefinitelyDifferent(left._genericParameterOwnerMethod, right._genericParameterOwnerMethod),
+                        _ => false,
+                    };
+
+                case TypeSigKind.GenericInstance:
+                    return TypeSig.DefinitelyDifferent(left._element, right._element)
+                           || ArrayDefinitelyDifferent(left._arguments, right._arguments);
+
+                case TypeSigKind.RequiredModifier:
+                case TypeSigKind.OptionalModifier:
+                    return TypeSig.DefinitelyDifferent(left._element, right._element)
+                           || TypeSig.DefinitelyDifferent(left._modifier, right._modifier);
+
+                case TypeSigKind.FunctionPointer:
+                    return TypeSig.DefinitelyDifferent(left._returnType, right._returnType)
+                           || ArrayDefinitelyDifferent(left._arguments, right._arguments);
+
+                default:
+                    return TypeSig.DefinitelyDifferent(left._element, right._element);
+            }
+        }
+
+        private static bool ArrayDefinitelyDifferent(TypeSig[]? left, TypeSig[]? right)
+        {
+            if (left is null || right is null)
+                return !(left is null && right is null);
+            if (left.Length != right.Length)
+                return true;
+            for (var i = 0; i < left.Length; i++)
+            {
+                if (TypeSig.DefinitelyDifferent(left[i], right[i]))
+                    return true;
+            }
+            return false;
+        }
+
+        // ---------------------------------------------------------------- Cecil
 
         public static TypeSigKey Create(TypeReference type)
         {
@@ -669,6 +688,57 @@ public static partial class CecilTypeSystem
             return result;
         }
 
+        // ---------------------------------------------------------------- 反射（只有名字身份）
+
+        public static TypeSigKey Create(Type type)
+        {
+            if (type.IsGenericParameter)
+            {
+                var gpType = type.DeclaringMethod is not null ? GenericParameterType.Method : GenericParameterType.Type;
+                if (type.DeclaringMethod is { } method)
+                {
+                    return new TypeSigKey(
+                        TypeSigKind.GenericParameter,
+                        genericParameterType: gpType,
+                        genericParameterPosition: type.GenericParameterPosition,
+                        genericParameterOwnerKind: 2,
+                        genericParameterOwnerMethod: MethodOwnerKey.Create(method));
+                }
+                return new TypeSigKey(
+                    TypeSigKind.GenericParameter,
+                    genericParameterType: gpType,
+                    genericParameterPosition: type.GenericParameterPosition,
+                    genericParameterOwnerKind: 1,
+                    genericParameterOwnerType: type.DeclaringType is { } owner ? TypeSig.Create(owner) : default);
+            }
+
+            if (type.IsByRef)
+                return new TypeSigKey(TypeSigKind.ByRef, element: TypeSig.Create(type.GetElementType()!));
+            if (type.IsPointer)
+                return new TypeSigKey(TypeSigKind.Pointer, element: TypeSig.Create(type.GetElementType()!));
+            if (type.IsArray)
+            {
+                var rank = type.GetArrayRank();
+                //int[] 是 vector，int[*] 不是；反射里只能从名字区分。边界不进名字键
+                var isVector = rank == 1 && type.Name.EndsWith("[]", StringComparison.Ordinal);
+                return new TypeSigKey(TypeSigKind.Array, element: TypeSig.Create(type.GetElementType()!),
+                    rank: rank, isVector: isVector);
+            }
+            if (type.IsGenericType && !type.IsGenericTypeDefinition)
+            {
+                var runtimeArguments = type.GetGenericArguments();
+                var arguments = new TypeSig[runtimeArguments.Length];
+                for (var i = 0; i < arguments.Length; i++)
+                    arguments[i] = TypeSig.Create(runtimeArguments[i]);
+                return new TypeSigKey(TypeSigKind.GenericInstance,
+                    element: TypeSig.Create(type.GetGenericTypeDefinition()), arguments: arguments);
+            }
+
+            return new TypeSigKey(TypeSigKind.Named, defKey: TypeDefKey.Create(type));
+        }
+
+        // ---------------------------------------------------------------- 相等（完整表示，嵌套签名按 Id 严格比较）
+
         public bool Equals(TypeSigKey? other)
         {
             if (ReferenceEquals(this, other)) return true;
@@ -685,15 +755,15 @@ public static partial class CecilTypeSystem
                     return _genericParameterType == other._genericParameterType
                            && _genericParameterPosition == other._genericParameterPosition
                            && _genericParameterOwnerKind == other._genericParameterOwnerKind
-                           && _genericParameterOwnerType == other._genericParameterOwnerType
+                           && _genericParameterOwnerType.ExactEquals(other._genericParameterOwnerType)
                            && _genericParameterOwnerMethod.Equals(other._genericParameterOwnerMethod);
 
                 case TypeSigKind.GenericInstance:
-                    return _element == other._element
+                    return _element.ExactEquals(other._element)
                            && TypeSigArrayEquals(_arguments, other._arguments);
 
                 case TypeSigKind.Array:
-                    return _element == other._element
+                    return _element.ExactEquals(other._element)
                            && _rank == other._rank
                            && _isVector == other._isVector
                            && NullableIntArrayEquals(_lowerBounds, other._lowerBounds)
@@ -703,18 +773,18 @@ public static partial class CecilTypeSystem
                 case TypeSigKind.Pointer:
                 case TypeSigKind.Pinned:
                 case TypeSigKind.Sentinel:
-                    return _element == other._element;
+                    return _element.ExactEquals(other._element);
 
                 case TypeSigKind.RequiredModifier:
                 case TypeSigKind.OptionalModifier:
-                    return _element == other._element
-                           && _modifier == other._modifier;
+                    return _element.ExactEquals(other._element)
+                           && _modifier.ExactEquals(other._modifier);
 
                 case TypeSigKind.FunctionPointer:
                     return _callingConvention == other._callingConvention
                            && _hasThis == other._hasThis
                            && _explicitThis == other._explicitThis
-                           && _returnType == other._returnType
+                           && _returnType.ExactEquals(other._returnType)
                            && TypeSigArrayEquals(_arguments, other._arguments);
 
                 default:
@@ -732,8 +802,8 @@ public static partial class CecilTypeSystem
                 int h = 17;
                 h = h * 31 + (int)_kind;
                 h = h * 31 + _defKey.GetHashCode();
-                h = h * 31 + _element.GetHashCode();
-                h = h * 31 + _modifier.GetHashCode();
+                h = h * 31 + _element.Id;
+                h = h * 31 + _modifier.Id;
                 h = h * 31 + TypeSigArrayHash(_arguments);
                 h = h * 31 + _rank;
                 h = h * 31 + _isVector.GetHashCode();
@@ -742,12 +812,12 @@ public static partial class CecilTypeSystem
                 h = h * 31 + (int)_genericParameterType;
                 h = h * 31 + _genericParameterPosition;
                 h = h * 31 + _genericParameterOwnerKind;
-                h = h * 31 + _genericParameterOwnerType.GetHashCode();
+                h = h * 31 + _genericParameterOwnerType.Id;
                 h = h * 31 + _genericParameterOwnerMethod.GetHashCode();
                 h = h * 31 + (int)_callingConvention;
                 h = h * 31 + _hasThis.GetHashCode();
                 h = h * 31 + _explicitThis.GetHashCode();
-                h = h * 31 + _returnType.GetHashCode();
+                h = h * 31 + _returnType.Id;
                 return h;
             }
         }
@@ -757,7 +827,7 @@ public static partial class CecilTypeSystem
             if (ReferenceEquals(a, b)) return true;
             if (a == null || b == null || a.Length != b.Length) return false;
             for (int i = 0; i < a.Length; i++)
-                if (a[i] != b[i]) return false;
+                if (!a[i].ExactEquals(b[i])) return false;
             return true;
         }
 
@@ -768,7 +838,7 @@ public static partial class CecilTypeSystem
             {
                 int h = array.Length;
                 for (int i = 0; i < array.Length; i++)
-                    h = h * 31 + array[i].GetHashCode();
+                    h = h * 31 + array[i].Id;
                 return h;
             }
         }

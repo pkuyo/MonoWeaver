@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using MonoWeaver.CFG;
 
 namespace MonoWeaver.Patterns;
 
@@ -97,6 +98,7 @@ public abstract class MatchCapture
 
     public MethodDefinition Method { get; }
     public string? Name { get; }
+    internal ILBasicBlockGraph? Graph { get; set; }
 }
 
 /// <summary>命名 capture 的只读集合，并提供按语义类型读取的入口。</summary>

@@ -101,6 +101,7 @@ public sealed class PatternMatcher
     private IReadOnlyList<TMatch> FindValues<TMatch>(ValuePattern pattern,
         MatchDiagnosticCollector diagnostics,
         Func<TargetOccurrence, IReadOnlyDictionary<string, MatchCapture>, TMatch> create)
+        where TMatch : MatchCapture
     {
         var result = new List<TMatch>();
         var seen = new HashSet<(Instruction producer, Instruction use)>();
@@ -117,7 +118,9 @@ public sealed class PatternMatcher
             if (!seen.Add((matched.Node.ProducerInstruction, matched.UseAnchor)))
                 continue;
 
-            result.Add(create(matched, MaterializeCaptures(context)));
+            var match = create(matched, MaterializeCaptures(context));
+            match.Graph = _model.Graph;
+            result.Add(match);
         }
 
         return result;
@@ -143,7 +146,7 @@ public sealed class PatternMatcher
 
             result.Add(new EffectMatch(Method, pattern, matched.Node.FirstInstruction,
                 candidate.TerminalInstruction,
-                MaterializeCaptures(context)));
+                MaterializeCaptures(context)) { Graph = _model.Graph });
         }
 
         return result;
@@ -173,7 +176,7 @@ public sealed class PatternMatcher
                 continue;
 
             result.Add(new ConditionMatch(Method, pattern, fragment,
-                MaterializeCaptures(context)));
+                MaterializeCaptures(context)) { Graph = _model.Graph });
         }
 
         return result;
@@ -201,7 +204,11 @@ public sealed class PatternMatcher
     {
         var result = new Dictionary<string, MatchCapture>(StringComparer.Ordinal);
         foreach (var pair in context.Captures)
-            result[pair.Key] = pair.Value.ToPublic(Method);
+        {
+            var capture = pair.Value.ToPublic(Method);
+            capture.Graph = _model.Graph;
+            result[pair.Key] = capture;
+        }
         return result;
     }
 

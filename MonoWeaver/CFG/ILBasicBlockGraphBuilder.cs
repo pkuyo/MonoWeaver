@@ -68,7 +68,34 @@ internal sealed record ILBasicBlockGraph(
     Dictionary<Instruction, int> InstructionIndices,
     List<BasicBlock> Blocks,
     Dictionary<Instruction, BasicBlock> BlockByInstruction,
-    List<BasicBlock> EntryBlocks);
+    List<BasicBlock> EntryBlocks)
+{
+    private readonly int _exceptionHandlerCount = Method.Body.ExceptionHandlers.Count;
+
+    public bool IsStale
+    {
+        get
+        {
+            if (!Method.HasBody)
+                return true;
+
+            var body = Method.Body;
+            if (body.Instructions.Count != Instructions.Length
+                || body.ExceptionHandlers.Count != _exceptionHandlerCount)
+            {
+                return true;
+            }
+
+            for (var i = 0; i < Instructions.Length; i++)
+            {
+                if (!ReferenceEquals(body.Instructions[i], Instructions[i]))
+                    return true;
+            }
+
+            return false;
+        }
+    }
+}
 
 internal static class ILBasicBlockGraphBuilder
 {

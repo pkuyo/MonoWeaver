@@ -540,11 +540,27 @@ public sealed class CallArguments
         if (!ReferenceEquals(site.Method, _target))
             throw new ArgumentException("The emission site belongs to a different method.", nameof(site));
 
-        var facts = CaptureAvailability.Create(_target);
-        foreach (var captured in _argPlans.OfType<CapturedArgumentPlan>())
+        var capturedPlans = CapturedPlans();
+        if (capturedPlans.Count == 0)
+            return;
+
+        var facts = CaptureAvailability.Create(_target, capturedPlans[0].Value.Graph);
+        foreach (var captured in capturedPlans)
         {
             facts.RequireAvailable(captured.Value, site.Anchor, site.Position, operation);
         }
+    }
+
+    //没有 captured 参数时可用性检查没有任何事可做；有的话复用匹配阶段的 CFG（body 未变就不重建）
+    private List<CapturedArgumentPlan> CapturedPlans()
+    {
+        var result = new List<CapturedArgumentPlan>();
+        foreach (var plan in _argPlans)
+        {
+            if (plan is CapturedArgumentPlan captured)
+                result.Add(captured);
+        }
+        return result;
     }
 
     internal void ValidateForReplacement(Instruction first, Instruction last, string operation)
@@ -560,8 +576,12 @@ public sealed class CallArguments
         if (firstIndex < 0 || lastIndex < firstIndex)
             throw new InvalidOperationException("The replacement range is stale or invalid.");
 
-        var facts = CaptureAvailability.Create(_target);
-        foreach (var captured in _argPlans.OfType<CapturedArgumentPlan>())
+        var capturedPlans = CapturedPlans();
+        if (capturedPlans.Count == 0)
+            return;
+
+        var facts = CaptureAvailability.Create(_target, capturedPlans[0].Value.Graph);
+        foreach (var captured in capturedPlans)
         {
             var captureIndex = body.Instructions.IndexOf(captured.Value.ResultInstruction);
             if (captureIndex >= firstIndex && captureIndex <= lastIndex)
@@ -587,8 +607,12 @@ public sealed class CallArguments
             .Select(static edge => edge.From.Terminator)
             .Distinct()
             .ToArray();
-        var facts = CaptureAvailability.Create(_target);
-        foreach (var captured in _argPlans.OfType<CapturedArgumentPlan>())
+        var capturedPlans = CapturedPlans();
+        if (capturedPlans.Count == 0)
+            return;
+
+        var facts = CaptureAvailability.Create(_target, condition.Graph);
+        foreach (var captured in capturedPlans)
         {
             foreach (var site in sites)
                 // The temporary store is emitted immediately after the captured producer,
@@ -604,8 +628,12 @@ public sealed class CallArguments
         if (!ReferenceEquals(condition.Method, _target))
             throw new ArgumentException("The condition belongs to a different method.", nameof(condition));
 
-        var facts = CaptureAvailability.Create(_target);
-        foreach (var captured in _argPlans.OfType<CapturedArgumentPlan>())
+        var capturedPlans = CapturedPlans();
+        if (capturedPlans.Count == 0)
+            return;
+
+        var facts = CaptureAvailability.Create(_target, condition.Graph);
+        foreach (var captured in capturedPlans)
         {
             var captureBlock = facts.BlockOf(captured.Value.ResultInstruction);
             if (condition.Fragment.Blocks.Contains(captureBlock))
@@ -977,16 +1005,23 @@ internal sealed class CapturedArgumentPlan : IArgumentPlan
 internal sealed class CaptureAvailability
 {
     private readonly ILBasicBlockGraph _graph;
-    private readonly Dictionary<BasicBlock, HashSet<BasicBlock>> _dominators;
+    private Dictionary<BasicBlock, HashSet<BasicBlock>>? _dominators;
 
     private CaptureAvailability(ILBasicBlockGraph graph)
     {
         _graph = graph;
-        _dominators = ComputeDominators(graph);
     }
 
-    public static CaptureAvailability Create(MethodDefinition method)
-        => new(ILBasicBlockGraphBuilder.Build(method));
+    /// <summary>
+    /// 优先复用匹配阶段的图（同一方法且 body 未变）；否则才重建。
+    /// 支配集只在真的需要跨块判断时才计算。
+    /// </summary>
+    public static CaptureAvailability Create(MethodDefinition method, ILBasicBlockGraph? graph)
+    {
+        if (graph is not null && ReferenceEquals(graph.Method, method) && !graph.IsStale)
+            return new CaptureAvailability(graph);
+        return new CaptureAvailability(ILBasicBlockGraphBuilder.Build(method));
+    }
 
     public BasicBlock BlockOf(Instruction instruction)
     {
@@ -1010,7 +1045,7 @@ internal sealed class CaptureAvailability
         var available = ReferenceEquals(captureBlock, anchorBlock)
             ? captureIndex < anchorIndex ||
               (captureIndex == anchorIndex && position == InsertPosition.After)
-            : _dominators.TryGetValue(anchorBlock, out var dominators) &&
+            : (_dominators ??= ComputeDominators(_graph)).TryGetValue(anchorBlock, out var dominators) &&
               dominators.Contains(captureBlock);
 
         if (!available)

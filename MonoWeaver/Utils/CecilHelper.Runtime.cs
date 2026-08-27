@@ -6,13 +6,15 @@ namespace MonoWeaver.Utils;
 
 public static partial class CecilHelper
 {
+    /// <summary>
+    /// 运行时 <see cref="Type"/> 与 Cecil 类型按名字身份比较（<see cref="CecilTypeSystem.TypeSig.SameName"/>）：
+    /// 不比程序集，不 Resolve，不 ImportReference。两边各自缓存一次签名，之后每次比较只是两次查表。
+    /// </summary>
     public static bool TypeMatches(TypeReference? cecilType, Type runtimeType)
     {
-        if (cecilType is null)
+        if (cecilType is null || runtimeType is null)
             return false;
-        if (runtimeType.IsGenericParameter)
-            return cecilType is GenericParameter gp && gp.Position == runtimeType.GenericParameterPosition;
-        return cecilType.IsSameWith(cecilType.Module.ImportReference(runtimeType));
+        return CecilTypeSystem.TypeSig.Create(cecilType).SameName(CecilTypeSystem.TypeSig.Create(runtimeType));
     }
 
     public static bool TypeMatches(TypeReference? candidate, TypeReference? expected)
