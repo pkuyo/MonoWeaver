@@ -651,8 +651,17 @@ internal sealed class MethodModel
         }
 
         //保守 fallback。它保持 stack shape 可用，但不会假装理解当前 pattern DSL 无法表达的 operation。
-        var inputs = new List<TargetExpressionNode>();
         var popCount = SafePopCount(instruction);
+        if (popCount == 0xFF || instruction.OpCode.StackBehaviourPop == StackBehaviour.PopAll)
+        {
+            //leave/endfinally 这类 PopAll 指令只是清空求值栈，既不产生值也不消费表达式。
+            //PopCount 用 0xFF 作哨兵，之前被当成 255 次 pop：每次都分配 unknown 节点并报栈下溢诊断，
+            //一个 try 就让建模慢 8 倍，诊断信息也是错的。
+            stack.Clear();
+            return;
+        }
+
+        var inputs = new List<TargetExpressionNode>();
         for (var i = 0; i < popCount; i++)
             inputs.Insert(0, Pop());
         var pushCount = SafePushCount(instruction);
