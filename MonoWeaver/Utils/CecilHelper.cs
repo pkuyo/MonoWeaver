@@ -28,9 +28,14 @@ public static partial class CecilHelper
         return verifier;
     }
 
-    public static ILMethodVerifier Verify(this Mono.Cecil.Cil.MethodBody body, VerifyOptions options = VerifyOptions.Full, int maxErrCount = 10)
+    /// <summary>
+    /// 用指定的 <paramref name="assemblyResolver"/> 解析元数据引用进行校验；null 表示用模块自己的 resolver。
+    /// 运行时打补丁时传 <see cref="RuntimeAssemblyResolver.Instance"/>。
+    /// </summary>
+    public static ILMethodVerifier Verify(this MethodDefinition method, VerifyOptions options,
+        IAssemblyResolver? assemblyResolver, int maxErrCount = 10)
     {
-        var verifier = new ILMethodVerifier(body.Method, options) { MaxErrorCount = maxErrCount };
+        var verifier = new ILMethodVerifier(method, options, assemblyResolver) { MaxErrorCount = maxErrCount };
         verifier.Verify();
         return verifier;
     }

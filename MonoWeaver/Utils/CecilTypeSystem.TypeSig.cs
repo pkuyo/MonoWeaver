@@ -867,27 +867,9 @@ public static partial class CecilTypeSystem
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static TypeDefinition? TryResolve(TypeReference reference)
-    {
-        try
-        {
-            return reference.Resolve();
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => MetadataResolution.TryResolve(reference);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static MethodDefinition? TryResolve(MethodReference reference)
-    {
-        try
-        {
-            return reference.Resolve();
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => MetadataResolution.TryResolve(reference);
 }

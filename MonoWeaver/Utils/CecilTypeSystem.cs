@@ -1017,7 +1017,8 @@ public static partial class CecilTypeSystem
     {
         if (_arrayDefs.TryGetValue(module, out var array))
             return array;
-        _arrayDefs[module] = array = module.ImportReference(typeof(Array)).Resolve();
+        _arrayDefs[module] = array = MetadataResolution.TryResolve(module.ImportReference(typeof(Array)))
+            ?? throw new InvalidOperationException("System.Array cannot be resolved from module " + module.Name);
         return array;
     }
 

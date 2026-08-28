@@ -179,11 +179,17 @@ public partial class ILMethodVerifier
 
     public bool VerifyAccess => _verifyOptions.HasFlag(VerifyOptions.AccessTest);
 
+
     public MethodDefinition Method => _method;
 
     public bool CecilFault { get; private set; } = false;
 
     public ILMethodVerifier(MethodDefinition method, VerifyOptions verifyOptions = VerifyOptions.Light)
+        : this(method, verifyOptions, (IAssemblyResolver?)null)
+    {
+    }
+
+    public ILMethodVerifier(MethodDefinition method, VerifyOptions verifyOptions, IAssemblyResolver? assemblyResolver)
     {
         if (!method.IsIL)
         {
@@ -192,6 +198,7 @@ public partial class ILMethodVerifier
 
         _verifyOptions = verifyOptions;
         _method = method;
+        _resolver = assemblyResolver is null ? null : new MetadataResolver(assemblyResolver);
     }
 
     internal ILMethodVerifier(MethodDefinition method, VerifyOptions verifyOptions, ILBasicBlockGraph? graph)
@@ -202,8 +209,11 @@ public partial class ILMethodVerifier
 
     private readonly ILBasicBlockGraph? _sharedGraph;
 
+    private readonly IMetadataResolver? _resolver;
+
     public void Verify()
     {
+        using var resolutionScope = MetadataResolution.Enter(_resolver);
         try
         {
             _needInitAnalysis = !_method.Body.InitLocals;
@@ -883,7 +893,7 @@ public partial class ILMethodVerifier
                     }
                 case Code.Stfld: //静态/实例fld判别在前面
                     {
-                        if (inst.Operand is FieldReference fieldRef && fieldRef.Resolve() is FieldDefinition fd)
+                        if (inst.Operand is FieldReference fieldRef && MetadataResolution.TryResolve(fieldRef) is { } fd)
                         {
                             if (fd.Attributes.HasFlag(FieldAttributes.Static))
                             {
@@ -901,7 +911,7 @@ public partial class ILMethodVerifier
                 case Code.Stsfld: //静态/实例fld判别在前面
                 case Code.Ldsflda:
                     {
-                        if (inst.Operand is FieldReference fieldRef && fieldRef.Resolve() is FieldDefinition fd )
+                        if (inst.Operand is FieldReference fieldRef && MetadataResolution.TryResolve(fieldRef) is { } fd)
                         {
                             if (!fd.Attributes.HasFlag(FieldAttributes.Static))
                             {
@@ -929,7 +939,7 @@ public partial class ILMethodVerifier
                     }
                 case Code.Ldvirtftn:
                     {
-                        if (inst.Operand is MethodReference mf && mf.Resolve() is { } md && md.IsStatic)
+                        if (inst.Operand is MethodReference mf && MetadataResolution.TryResolve(mf) is { } md && md.IsStatic)
                         {
                             ReportDiagnostic(CFGDiagnostic.InstructionInvalid(CFGExceptionType.LdvirtftnOnStatic, inst,
                                     DiagnosticSeverity.Error, "Ldvirtftn opcode expect instance-method"));
@@ -1412,7 +1422,7 @@ public partial class ILMethodVerifier
     private void AnalyzeBlocksControlFlow(BasicBlock entryBlock, 
         HashSet<BasicBlock> usedBlocks,  StackType[] buffer, StackType[] funcBuffer)
     {
-        var localStack = new ListStack<StackType>(_method.Body.MaxStackSize);
+        var localStack = new ListStack<StackType>(Math.Min(Math.Max(_method.Body.MaxStackSize, 8), 64));
         var entryStackNode = _root;
         var initLocals = VerifyLocalInit ? new BitArray(_method.Body.Variables.Count) : null;
         entryBlock.initLocals = VerifyLocalInit ? new BitArray(_method.Body.Variables.Count) : null;
@@ -1522,7 +1532,7 @@ public partial class ILMethodVerifier
                         if (inst.OpCode.Code is Code.Ret)
                         {
                             var returnType = _method.ReturnType;
-                            if (_method.IsRuntimeAsync() && returnType.Resolve() is { } td)
+                            if (_method.IsRuntimeAsync() && MetadataResolution.TryResolve(returnType) is { } td)
                             {
                                 var sig = CecilTypeSystem.TypeSig.Create(td);
                                 if (sig == CecilTypeSystem.TypeSig.SystemThreading.Task ||
@@ -1583,7 +1593,7 @@ public partial class ILMethodVerifier
                         {
                             var type = AnalyzeCF_EvalStackPop(localStack, ref node, inst);
 
-                            if (inst.Operand is MethodReference mf && mf.Resolve() is { } md)
+                            if (inst.Operand is MethodReference mf && MetadataResolution.TryResolve(mf) is { } md)
                             {
                                 if (!_initThis
                                     && type.Flags.HasFlag(StackTypeFlags.ThisPtr)

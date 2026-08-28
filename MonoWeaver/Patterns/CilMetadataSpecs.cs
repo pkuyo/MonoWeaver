@@ -788,13 +788,6 @@ public sealed class CilFieldSpec
     {
         if (field is FieldDefinition definition)
             return definition.IsStatic;
-        try
-        {
-            return field.Resolve()?.IsStatic;
-        }
-        catch
-        {
-            return null;
-        }
+        return MetadataResolution.TryResolve(field)?.IsStatic;
     }
 }

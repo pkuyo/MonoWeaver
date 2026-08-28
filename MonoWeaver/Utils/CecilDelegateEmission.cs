@@ -354,6 +354,7 @@ internal sealed class RuntimeCecilDelegateReferenceBag : ICecilDelegateReference
                 using var stream = new MemoryStream();
                 Assembly.Write(stream);
                 _loadedAssembly = System.Reflection.Assembly.Load(stream.ToArray());
+                RuntimeAssemblyResolver.Instance.RegisterInMemory(Assembly);
             }
         }
 

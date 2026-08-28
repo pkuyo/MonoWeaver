@@ -40,7 +40,6 @@ A static delegate is lowered to a **direct call** to that static method — no r
 
 !!! warning "Instance delegates are runtime-only"
     Instance delegates, closures, and multicast delegates capture objects in the current process. They work fine in a runtime hook, but never write them into a patch that gets saved to disk and loaded in another process.
-
 ## Runtime trade-offs
 
 - Runtime methods are usually small. Use `Apply(VerifyOptions.Full)`. Verifying one method costs far less than one failed game load.

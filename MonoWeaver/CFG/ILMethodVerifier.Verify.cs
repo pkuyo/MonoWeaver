@@ -17,17 +17,19 @@ public partial class ILMethodVerifier
 
     private IMemberDefinition? ResolveWithDiagnostic(MemberReference memberReference)
     {
-        if (memberReference.Resolve() is { } re)
+        if (MetadataResolution.TryResolve(memberReference, out var error) is { } re)
             return re;
 
         //对于T[] T[,...]的特殊处理
         if (memberReference is MethodReference methodReference &&
             TryCreateArrayRuntimeMethodDefinition(methodReference, out var arrayRuntimeMethod))
             return arrayRuntimeMethod;
-        var t = memberReference;
         if (!memberReference.ContainsGenericParameter) //有GenericParameter不进行Resolve校验
         {
-            ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference));
+            var message = error is null
+                ? null
+                : $"MemberReference cannot be resolved to MemberDefinition ({error.GetType().Name}: {error.Message})";
+            ReportDiagnostic(CFGDiagnostic.ResolveFailed(memberReference, message: message));
         }
         return null;
     }

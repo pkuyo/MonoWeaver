@@ -90,6 +90,19 @@ public sealed class RewritePlan
         _destination = DefaultDestination(returnType, allowLeaveOnStack);
     }
 
+    /// <summary>plan 是否绑定到当前进程；是则校验时按已加载程序集解析引用（<see cref="RuntimeAssemblyResolver"/>）。</summary>
+    public bool IsBoundToProcess
+    {
+        get
+        {
+            // 回调是运行时委托（仅 CecilDelegateCall 提供 beforeApply）：Get(id) 读进程内静态表，IL 只能在本进程跑
+            if (_beforeApply is not null)
+                return true;
+            // 处于 MonoMod ILContext：回调可能是 MethodReference，没有委托，但 mod 程序集同样不在 DMD resolver 搜索路径里
+            return CecilHelper.FindMonoModLabelOperand(_method.Body) is not null;
+        }
+    }
+
     /// <summary>callback 的返回类型；纯 IL replacement 或内部消费结果的 rewrite 返回 null。</summary>
     public TypeReference? ReturnType => _returnType;
 
@@ -226,6 +239,9 @@ public sealed class RewritePlan
     {
         EnsureNotApplied();
 
+        if (_method.Body.MaxStackSize == 0)
+            _method.Body.MaxStackSize = ushort.MaxValue;
+
         var label = CecilHelper.FindMonoModLabelOperand(_method.Body);
 
         try
@@ -287,13 +303,17 @@ public sealed class RewritePlan
         }
     }
 
-    public RewritePlan Apply(VerifyOptions options)
+    public RewritePlan Apply(VerifyOptions options) => Apply(options, null);
+
+    // 可传入自定义 assembly resolver；null 表示用模块自己的 resolver。运行时打补丁时传 RuntimeAssemblyResolver.Instance。
+    public RewritePlan Apply(VerifyOptions options, IAssemblyResolver? assemblyResolver)
     {
         var snapshot = CaptureBody(_method.Body);
         try
         {
             Apply();
-            _method.Verify(options).ThrowIfHasErrors();
+            var resolver = assemblyResolver ?? (IsBoundToProcess ? RuntimeAssemblyResolver.Instance : null);
+            _method.Verify(options, resolver).ThrowIfHasErrors();
             return this;
         }
         catch

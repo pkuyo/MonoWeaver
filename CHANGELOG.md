@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- `Apply(VerifyOptions.Full)` inside a MonoMod `ILHook` no longer fails with `AssemblyResolutionException`. When a plan is bound to the current process (runtime delegate callback, or a method hosted in an `ILContext`), the verifier resolves references against the assemblies loaded in the process via the new `RuntimeAssemblyResolver`; offline weaving keeps using the module's own resolver. `RewritePlan.Apply` and `Verify` also accept an explicit `IAssemblyResolver`.
+- Unresolvable member references are reported as `ResolveFailed` diagnostics instead of throwing.
+- Method bodies with `MaxStackSize == 0` (in-memory Cecil bodies, MonoMod DMD copies) are normalized to 65535 before rewriting, so verification no longer reports spurious `StackOverflow` errors. Cecil recomputes the value on write.
+
 ## [0.1.1] - 2026-08-26
 
 ### Added
