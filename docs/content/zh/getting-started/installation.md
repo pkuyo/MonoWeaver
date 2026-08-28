@@ -5,13 +5,13 @@ MonoWeaver 发布两个包。它们的 API 完全相同，区别只在编译时�
 | 包 | Mono.Cecil | 目标框架 |
 | --- | --- | --- |
 | `MonoWeaver` | `0.11.2+` | `netstandard2.0` |
-| `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `net46`、`netstandard2.0` |
+| `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `netstandard2.0` |
 
 ## 选哪一个
 
 先看游戏或 Mod Loader 已经加载了哪一代 Cecil，再选包。
 
-- **老 Unity 游戏、MonoMod 19.x** → `MonoWeaver.Cecil10`。它的 `net46` 构建直接对应 Unity 的 .NET 4.x 运行时，不经过 `netstandard.dll` 门面，在老版本 Unity 上更可靠。
+- **老 Unity 游戏、MonoMod 19.x** → `MonoWeaver.Cecil10`。两个包都提供 `netstandard2.0`；Unity 的 .NET 4.x 运行时（2018.1+）自带 `netstandard.dll` 门面，mod 不需要额外附带任何程序集。
 - **其他情况** → `MonoWeaver`。
 
 ```bash

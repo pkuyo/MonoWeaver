@@ -10,6 +10,10 @@ All notable changes to this project are documented in this file.
 - Unresolvable member references are reported as `ResolveFailed` diagnostics instead of throwing.
 - Method bodies with `MaxStackSize == 0` (in-memory Cecil bodies, MonoMod DMD copies) are normalized to 65535 before rewriting, so verification no longer reports spurious `StackOverflow` errors. Cecil recomputes the value on write.
 
+### Changed
+
+- `MonoWeaver.Cecil10` now ships `netstandard2.0` only. The `net46` asset was removed.
+
 ## [0.1.1] - 2026-08-26
 
 ### Added

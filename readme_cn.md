@@ -25,7 +25,7 @@ MonoWeaver 是给 C# Mod 开发者用的代码匹配与改写工具。你只需�
 | 包 | Mono.Cecil | 目标框架 |
 | --- | --- | --- |
 | `MonoWeaver` | `0.11.2+` | `netstandard2.0` |
-| `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `net46`、`netstandard2.0` |
+| `MonoWeaver.Cecil10` | `0.10.0` – `0.10.4` | `netstandard2.0` |
 
 
 

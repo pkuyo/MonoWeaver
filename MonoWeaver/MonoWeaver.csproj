@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks Condition="'$(CecilFlavor)' == 'Cecil10'">net46;netstandard2.0</TargetFrameworks>
+    <TargetFrameworks Condition="'$(CecilFlavor)' == 'Cecil10'">netstandard2.0</TargetFrameworks>
     <TargetFrameworks Condition="'$(CecilFlavor)' == 'Latest'">netstandard2.0</TargetFrameworks>
 
     <LangVersion>12</LangVersion>
@@ -42,15 +42,6 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- 提供 net46 参考程序集，构建不再依赖 runner 上装没装 .NET Framework targeting pack -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-  </ItemGroup>
-
-  <!-- net46 缺 System.ValueTuple；netstandard2.0 内置，无需引入 -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net46'">
-    <PackageReference Include="System.ValueTuple" Version="4.5.0" />
-  </ItemGroup>
 
   <ItemGroup>
     <None Include="../README.md" Pack="true" PackagePath="/" />
