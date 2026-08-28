@@ -42,6 +42,6 @@ A static delegate is lowered to a **direct call** to that static method — no r
     Instance delegates, closures, and multicast delegates capture objects in the current process. They work fine in a runtime hook, but never write them into a patch that gets saved to disk and loaded in another process.
 ## Runtime trade-offs
 
-- Runtime methods are usually small. Use `Apply(VerifyOptions.Full)`. Verifying one method costs far less than one failed game load.
+- Runtime methods are usually small. Use `Apply(VerifyOptions.Mod)`. Verifying one method costs far less than one failed game load.
 - When several mods patch the same method, order affects what matches. Adding pattern context is more reliable than depending on load order.
 - After each rewrite, previously obtained match positions may be stale. To keep editing the same method, `Match` again.

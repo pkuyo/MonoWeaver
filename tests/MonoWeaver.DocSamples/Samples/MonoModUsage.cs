@@ -21,7 +21,7 @@ public static class MonoModSamples
         il.Method.Match(pattern)
           .Single()
           .Transform((Func<int, int>)Hooks.ClampDamage)
-          .Apply(VerifyOptions.Full);
+          .Apply(VerifyOptions.Mod);
     }
     // --8<-- [end:monomod-patch]
 

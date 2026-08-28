@@ -2,7 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.1.2] - 2026-08-28
+
+### Added
+
+- `VerifyOptions.Mod`: `Full` without `AccessTest`, for mods that declare `SkipVerification` and call non-public game members through publicized assemblies.
 
 ### Fixed
 
@@ -37,5 +41,6 @@ All notable changes to this project are documented in this file.
 
 - Initial NuGet release of `MonoWeaver` and `MonoWeaver.Cecil10`.
 
+[0.1.2]: https://github.com/pkuyo/MonoWeaver/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/pkuyo/MonoWeaver/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/pkuyo/MonoWeaver/releases/tag/v0.1.0

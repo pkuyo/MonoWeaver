@@ -63,7 +63,7 @@ public static class DamagePatch
         il.Method.Match(pattern)
           .Single()
           .Transform((Func<int, int>)ModHooks.ClampDamage)
-          .Apply(VerifyOptions.Full);
+          .Apply(VerifyOptions.Mod);
     }
 }
 ```
@@ -120,7 +120,7 @@ For an offline patch, deploy the assembly that contains `ModHooks` with the patc
 | Skip the old code and provide a replacement | `Replace(...)` |
 | Remove a matched no-result action | `Remove()` |
 
-Every operation creates a `RewritePlan`. Nothing changes until you call `Apply()`. For mod code, prefer `Apply(VerifyOptions.Full)`: if the check fails, MonoWeaver restores the method and throws instead of leaving a half-applied edit.
+Every operation creates a `RewritePlan`. Nothing changes until you call `Apply()`. Always verify: if the check fails, MonoWeaver restores the method and throws instead of leaving a half-applied edit. Use `VerifyOptions.Mod` for a runtime hook and `VerifyOptions.Full` for an offline patch.
 
 Values, actions, and conditions have slightly different valid operations. In particular, a branch-based condition has no single `After(...)` point; use `Transform`, `Observe`, `Replace`, or `Before` instead.
 

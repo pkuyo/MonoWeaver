@@ -19,6 +19,7 @@ public enum VerifyOptions
     StackTypes = 1 << 4 | StackBalance,
     AccessTest = 1 << 5,
     Full = Instructions | LocalInit | StackTypes | AccessTest,
+    Mod = Instructions | LocalInit | StackTypes,
     Light = StackBalance | Instructions
 }
 

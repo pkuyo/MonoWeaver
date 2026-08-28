@@ -18,7 +18,7 @@ This will:
 4. keep the edit on success;
 5. restore the original method and throw on failure.
 
-A mod you intend to release should prefer `Apply(VerifyOptions.Full)` over a bare `Apply()`.
+A mod you intend to release should verify with `Mod` or `Full` instead of calling a bare `Apply()`.
 
 ## Light or Full
 
@@ -26,8 +26,11 @@ A mod you intend to release should prefer `Apply(VerifyOptions.Full)` over a bar
 | --- | --- | --- |
 | `VerifyOptions.Light` | Instruction shape, and how many values sit on each execution path | Fast, frequent checks while developing |
 | `VerifyOptions.Full` | Everything in Light plus value types, local initialisation, member access | Before release, in automated tests, on unknown game versions |
+| `VerifyOptions.Mod` | `Full` without member access checks | Mods that declare `SkipVerification` and call non-public game members through publicized assemblies |
 
-Mod methods are usually small, so prefer `Full`. Only reach for `Light` once you have confirmed full verification is a bottleneck.
+- Runtime hook (MonoMod `ILContext`) → `Mod`. Mods usually touch private game members directly, so the extra access check in `Full` would only misfire here.
+- Offline patch → `Full`.
+- Mod methods are small and verify quickly; switch to `Light` only if it actually feels slow.
 
 Individual flags can be combined:
 

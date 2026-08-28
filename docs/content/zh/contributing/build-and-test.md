@@ -19,17 +19,6 @@ dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
 
 两个都要通过。开关定义在仓库根的 `Directory.Build.props`。
 
-## 打包
-
-本地打出两个包到 `artifacts/nupkg/`：
-
-```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1
-```
-
-```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1
-```
 
 ## 仓库里的项目
 

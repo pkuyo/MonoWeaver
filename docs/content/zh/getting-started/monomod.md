@@ -41,20 +41,8 @@ MonoMod 用 `ILLabel` 表示跳转目标，Cecil 用 `Instruction`。`Apply` 会
 !!! warning "实例委托只用于运行时"
     实例委托、闭包和多播委托会引用当前进程里的对象。它们在运行时 Hook 中完全可用，但不要写进要保存到磁盘、之后在另一个进程里加载的补丁。
 
-## 运行时校验怎么解析引用
-
-在 `ILHook` 里，`il.Method` 属于 MonoMod 的 `DynamicMethodDefinition` 模块，它自带的 Cecil resolver 只会搜索磁盘目录：找不到 mod 目录里的 `MonoWeaver.dll`，也找不到 MonoWeaver 在内存里生成的辅助程序集。
-
-所以当 plan 绑定到当前进程时（回调是运行时委托，或方法处于 `ILContext` 下），`Apply(VerifyOptions.Full)` 不会用那个 resolver，而是通过 `RuntimeAssemblyResolver.Instance` 按**当前进程已加载的程序集**解析引用——和 CLR 绑定的范围一致。离线修改器仍然用模块自己的 resolver。
-
-需要强制指定范围时显式传入：
-
-```csharp
-plan.Apply(VerifyOptions.Full, RuntimeAssemblyResolver.Instance);
-```
-
 ## 运行时的取舍
 
-- 运行时方法通常不大，直接用 `Apply(VerifyOptions.Full)`。一个方法的完整检查远比游戏加载一次失败便宜。
+- 运行时方法通常不大，直接用 `Apply(VerifyOptions.Mod)`。一个方法的完整检查远比游戏加载一次失败便宜。
 - 多个 Mod 改同一个方法时，顺序会影响匹配结果。补充 Pattern 上下文比依赖加载顺序可靠。
 - 每次改写完成后，之前拿到的匹配位置就可能过期。要继续改同一个方法，重新 `Match`。

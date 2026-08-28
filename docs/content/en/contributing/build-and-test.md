@@ -19,17 +19,6 @@ dotnet test MonoWeaver.slnx -p:CecilFlavor=Latest
 
 Both have to pass. The switch is defined in `Directory.Build.props` at the repository root.
 
-## Packing
-
-Build both packages locally into `artifacts/nupkg/`:
-
-```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.1
-```
-
-```bash
-dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.1
-```
 
 ## Projects in this repository
 

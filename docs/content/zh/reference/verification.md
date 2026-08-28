@@ -18,7 +18,7 @@ Mod 改写代码后，最麻烦的问题往往不是“效果不对”，而是�
 4. 成功时保留修改；
 5. 失败时恢复原方法并抛出错误。
 
-准备发布的 Mod 应优先使用 `Apply(VerifyOptions.Full)`，而不是只调用 `Apply()`。
+准备发布的 Mod 应该用 `Mod` 或 `Full` 做检查，而不是只调用 `Apply()`。
 
 ## Light 还是 Full
 
@@ -26,8 +26,11 @@ Mod 改写代码后，最麻烦的问题往往不是“效果不对”，而是�
 | --- | --- | --- |
 | `VerifyOptions.Light` | 指令基本格式、每条执行路径上的值数量 | 开发时频繁快速检查 |
 | `VerifyOptions.Full` | Light 的内容，加上值类型、变量初始化、成员访问等 | 发布前、自动测试、未知游戏版本 |
+| `VerifyOptions.Mod` | `Full` 去掉成员访问检查 | 声明了 `SkipVerification`、通过 publicized 程序集访问游戏非公开成员的 Mod |
 
-一般 Mod 方法并不大，优先使用 `Full`。只有确认完整检查成为性能瓶颈时，再考虑 `Light`。
+- 运行时 hook（MonoMod `ILContext`）→ `Mod`。Mod 通常直接访问游戏的私有成员，`Full` 多出来的访问检查在这里只会误报。
+- 离线补丁 → `Full`。
+- Mod 方法一般都很小，检查很快；确实觉得慢再换 `Light`。
 
 也可以组合单项：
 

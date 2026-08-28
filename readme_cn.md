@@ -71,7 +71,7 @@ public static class DamagePatch
         il.Method.Match(pattern)
           .Single()
           .Transform((Func<int, int>)ModHooks.ClampDamage)
-          .Apply(VerifyOptions.Full);
+          .Apply(VerifyOptions.Mod);
     }
 }
 ```
@@ -128,7 +128,7 @@ public static class DamagePatcher
 | 跳过原代码，提供完整替代 | `Replace(...)` |
 | 删除一段不产生结果的行为 | `Remove()` |
 
-这些操作都会先返回一个 `RewritePlan`，调用 `Apply()` 后才真正修改。Mod 代码建议使用 `Apply(VerifyOptions.Full)`：如果检查失败，MonoWeaver 会恢复修改前的方法并抛出错误，避免留下改了一半的结果。
+这些操作都会先返回一个 `RewritePlan`，调用 `Apply()` 后才真正修改。一定要带检查：如果检查失败，MonoWeaver 会恢复修改前的方法并抛出错误，避免留下改了一半的结果。运行时 hook 用 `VerifyOptions.Mod`，离线补丁用 `VerifyOptions.Full`。
 
 值、行为和条件支持的操作略有不同。条件可能有多个出口，因此没有唯一的 `After(...)`；应使用 `Transform`、`Observe`、`Replace` 或 `Before`。
 
@@ -167,7 +167,7 @@ var scorePattern = Cil.Value(
 
 ## 使用建议
 
-- 发布前优先使用 `Apply(VerifyOptions.Full)`。
+- 发布前一定带检查：运行时 hook 用 `Apply(VerifyOptions.Mod)`，离线补丁用 `Apply(VerifyOptions.Full)`。
 - 一个计划提交后，如果还要修改同一个方法，重新匹配一次，避免继续使用过期位置。
 - 游戏更新后，即使 Hook 没有报错，也要重新测试实际玩法。
 - 离线补丁尽量使用静态回调；实例委托、闭包和多播委托仅用于当前运行时。
