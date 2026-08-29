@@ -63,17 +63,17 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Pack version 0.1.2
+      - name: Pack version 0.2.0
         run: |
-          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.1.2 -p:ContinuousIntegrationBuild=true
-          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.1.2 -p:ContinuousIntegrationBuild=true
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Cecil10 -p:Version=0.2.0 -p:ContinuousIntegrationBuild=true
+          dotnet pack MonoWeaver/MonoWeaver.csproj -c Release -p:CecilFlavor=Latest -p:Version=0.2.0 -p:ContinuousIntegrationBuild=true
 
       - name: Verify package files
         shell: pwsh
         run: |
           $expected = @(
-            'artifacts/nupkg/MonoWeaver.Cecil10.0.1.2.nupkg',
-            'artifacts/nupkg/MonoWeaver.0.1.2.nupkg'
+            'artifacts/nupkg/MonoWeaver.Cecil10.0.2.0.nupkg',
+            'artifacts/nupkg/MonoWeaver.0.2.0.nupkg'
           )
           foreach ($path in $expected) {
             if (-not (Test-Path -LiteralPath $path)) {
@@ -83,5 +83,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nupkg-0.1.2
+          name: nupkg-0.2.0
           path: artifacts/nupkg/*
