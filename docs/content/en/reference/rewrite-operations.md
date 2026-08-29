@@ -92,6 +92,8 @@ Check first that a rewrite is possible at all:
 
 A static delegate is lowered to a direct call to that static method. Instance delegates, closures, and multicast delegates are runtime-only.
 
+Pass the method group directly: `damage.Transform(Hooks.ClampDamage)`. Only on C# 9 and below (a `net48` project without `LangVersion` defaults to 7.3) does a callback on a **capture** need an explicit delegate type, e.g. `match.Arg("x").Transform((Func<int, int>)Hooks.ClampDamage)` — method groups had no natural type before C# 10. A root `ValueMatch<T>` never needs it, because `T` is already known.
+
 ## Extra callback arguments
 
 `Transform` and `Observe` put the original value in the first parameter automatically. The rest come from `args => ...`, in order:

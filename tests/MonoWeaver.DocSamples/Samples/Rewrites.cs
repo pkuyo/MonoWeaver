@@ -16,7 +16,7 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:value-transform]
-        damage.Transform((Func<int, int>)Hooks.ClampDamage)
+        damage.Transform(Hooks.ClampDamage)
               .Apply(VerifyOptions.Full);
 
         // static int ClampDamage(int original)
@@ -27,7 +27,7 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:value-observe]
-        damage.Observe((Action<int>)Hooks.LogDamage)
+        damage.Observe(Hooks.LogDamage)
               .Apply(VerifyOptions.Full);
 
         // static void LogDamage(int original)
@@ -38,7 +38,7 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:value-replace]
-        damage.Replace((Func<int>)Hooks.FixedDamage)
+        damage.Replace(Hooks.FixedDamage)
               .Apply(VerifyOptions.Full);
 
         // static int FixedDamage()
@@ -49,10 +49,10 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:value-before-after]
-        damage.Before((Action)Hooks.OnDamageCalculationStarted)
+        damage.Before(Hooks.OnDamageCalculationStarted)
               .Apply(VerifyOptions.Full);
 
-        damage.After((Action)Hooks.OnDamageCalculated)
+        damage.After(Hooks.OnDamageCalculated)
               .Apply(VerifyOptions.Full);
         // --8<-- [end:value-before-after]
     }
@@ -64,13 +64,13 @@ public static class RewriteSamples
         // --8<-- [start:effect-ops]
         var effect = method.Match(soundPattern).Single();
 
-        effect.Before((Action)Hooks.BeforeSound)
+        effect.Before(Hooks.BeforeSound)
               .Apply(VerifyOptions.Full);
 
-        effect.After((Action)Hooks.AfterSound)
+        effect.After(Hooks.AfterSound)
               .Apply(VerifyOptions.Full);
 
-        effect.Replace((Action)Hooks.PlayCustomSound)
+        effect.Replace(Hooks.PlayCustomSound)
               .Apply(VerifyOptions.Full);
 
         effect.Remove()
@@ -87,19 +87,19 @@ public static class RewriteSamples
         // --8<-- [end:condition-match]
 
         // --8<-- [start:condition-transform]
-        condition.Transform((Func<bool, bool>)Hooks.ChangeGate)
+        condition.Transform(Hooks.ChangeGate)
                  .Apply(VerifyOptions.Full);
 
         // static bool ChangeGate(bool original)
         // --8<-- [end:condition-transform]
 
         // --8<-- [start:condition-observe]
-        condition.Observe((Action<bool>)Hooks.LogGate)
+        condition.Observe(Hooks.LogGate)
                  .Apply(VerifyOptions.Full);
         // --8<-- [end:condition-observe]
 
         // --8<-- [start:condition-replace]
-        condition.Replace((Func<bool>)Hooks.CustomGate)
+        condition.Replace(Hooks.CustomGate)
                  .Apply(VerifyOptions.Full);
         // --8<-- [end:condition-replace]
 
@@ -114,7 +114,7 @@ public static class RewriteSamples
         var damage = Damage(method);
         // --8<-- [start:extra-args]
         damage.Transform(
-                  (Func<int, int, int, int>)Hooks.AdjustDamage,
+                  Hooks.AdjustDamage,
                   args => args
                       .Arg(0)
                       .Constant(999))
@@ -126,15 +126,16 @@ public static class RewriteSamples
 
     public static void StoreCallbackResult(MethodDefinition method)
     {
+        var savedLocal = Cil.Local<int>();
         var pattern = Cil.Value((int damage) =>
-            P.Local<int>("saved") + damage);
+            savedLocal + damage);
         var match = method.Match(pattern).Single();
         var damage = (ValueMatch)match;
 
         // --8<-- [start:store-result]
-        var saved = match.Captures.Local("saved");
+        var saved = match[savedLocal];
 
-        damage.Observe((Func<int, int>)Hooks.LogAndNormalize)
+        damage.Observe(Hooks.LogAndNormalize)
               .Store(saved)
               .Apply(VerifyOptions.Full);
         // --8<-- [end:store-result]
@@ -144,7 +145,7 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:store-local]
-        damage.Observe((Func<int, int>)Hooks.RecordAndReturnId)
+        damage.Observe(Hooks.RecordAndReturnId)
               .StoreLocal(logIdLocal)
               .Apply(VerifyOptions.Full);
         // --8<-- [end:store-local]
@@ -154,7 +155,7 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:discard-result]
-        damage.Before((Func<int>)Hooks.CreateTraceId)
+        damage.Before(Hooks.CreateTraceId)
               .Discard()
               .Apply(VerifyOptions.Full);
         // --8<-- [end:discard-result]
@@ -164,7 +165,7 @@ public static class RewriteSamples
     {
         var damage = Damage(method);
         // --8<-- [start:plan]
-        var plan = damage.Transform((Func<int, int>)Hooks.ClampDamage);
+        var plan = damage.Transform(Hooks.ClampDamage);
         // --8<-- [end:plan]
 
         // --8<-- [start:apply-full]

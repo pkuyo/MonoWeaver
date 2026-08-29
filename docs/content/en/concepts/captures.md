@@ -28,23 +28,25 @@ Diagnostics being present does not mean the match failed — they exist to expla
 
 ## Capturing something inside
 
-The root match can be rewritten directly. `P.Mark` is only needed to target something inside it:
+The root match can be rewritten directly. When the target is one of the parameters, the lambda parameter is already the capture — read it back by parameter name:
 
 ```csharp
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:mark-capture"
 ```
 
-`Captures` exposes one entry point per meaning:
+When the target is a compound sub-expression, declare that part as a standalone `Cil.Value`/`Cil.Condition` fragment and use it directly in the expression; use `Cil.Local` for a local variable. These captures are read back by object, and the return type follows the declared object:
 
-| Entry point | What you get |
+| Indexer | What you get |
 | --- | --- |
-| `Value("name")` | A value you can read or rewrite |
-| `Argument("name")` | An explicitly captured parameter |
-| `Local("name")` | An explicitly captured local variable |
-| `Condition("name")` | One sub-condition inside a larger condition |
-| `Effect("name")` | A no-result action |
+| `match.Arg("parameterName")` / `match.This()` | The argument bound to a lambda parameter (`ArgumentCapture`) |
+| `match.Local("parameterName")` | A `CilLocal<T>`-typed lambda parameter (`LocalCapture`) |
+| `match[a Cil.Any<T>() object]` | A value you can read or rewrite (`ValueCapture`) |
+| `match[a Cil.Arg<T>() / Cil.This<T>() object]` | The captured parameter (`ArgumentCapture`) |
+| `match[a Cil.Local<T>() object]` | The captured local variable (`LocalCapture`) |
+| `match[an embedded ValuePattern]` | The selected value fragment (`ValueCapture`) |
+| `match[an embedded ConditionPattern]` | One sub-condition inside a larger condition (`ConditionCapture`) |
 
-Using the wrong entry point fails immediately — reading an argument capture as a condition, for example. That is deliberate: a wrong type assumption is much harder to track down once it reaches the rewrite stage.
+Indexing with an unrelated object throws `KeyNotFoundException` immediately — the capture identity is the object identity, so there is no string name to misspell.
 
 ## Compiler temporaries { #temporaries }
 
@@ -68,7 +70,7 @@ It stays conservative. If a load could come from more than one store, or the var
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:local-defined-by"
 ```
 
-This says: the `tmp` in `tmp * 2` must come from `damage + 1`.
+This says: the `tmp` in `tmp * 2` must come from `damage + 1`. The `tmp` object can then be reused across patterns with the same meaning.
 
 ### Turn following off entirely
 
@@ -77,6 +79,16 @@ This says: the `tmp` in `tmp * 2` must come from `damage + 1`.
 ```
 
 Now the local read itself is what gets matched. Local variable indices shift between game versions and build configurations, so writing out the surrounding calculation is usually more stable.
+
+## Matching after a position
+
+A result set can be filtered by IL position: `After(x)` keeps matches that start after x, `Before(x)` keeps those that end before x, and `Between(a, b)` requires both. x is an instruction, or an earlier match or capture (its whole range is the boundary):
+
+```csharp
+--8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:match-after"
+```
+
+This is the counterpart of ILCursor's "find the next one from here", except that `Single()` still requires the filtered set to be unique instead of silently taking the first. Positions compare in IL order, not control-flow order; the anchor must be in the current method body — after a rewrite, an anchor whose instructions were removed throws, so match again.
 
 ## Advanced: match positions
 

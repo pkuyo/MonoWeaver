@@ -25,7 +25,7 @@ public static class QuickStart
 
         var damage = method.Match(damagePattern).Single();
 
-        damage.Transform((Func<int, int>)Hooks.ClampDamage)
+        damage.Transform(Hooks.ClampDamage)
               .Apply(VerifyOptions.Full);
 
         module.Write("Game.Patched.dll");

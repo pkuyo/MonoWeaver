@@ -8,7 +8,7 @@ When matching fails, the result set carries an explanation:
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:explain-failure"
 ```
 
-It reports which IL in the method could not be modelled, which temporary-local passthrough was rejected, and why a `LocalDefinedBy` was not satisfied. Read it before changing the pattern.
+It reports which IL in the method could not be modelled, which temporary-local passthrough was rejected, and why a local definition constraint (`Cil.Local(definedBy)`) was not satisfied. Read it before changing the pattern.
 
 ## Nothing matched
 
@@ -21,7 +21,7 @@ Check in this order:
 5. **Right constants and overloads?** `Select("rare")` will not match `Select(1)`; `1` and `1L` are different constants.
 6. **Right operand order?** `a - b` is not `b - a`, and the same goes for comparisons.
 7. **Did you capture a runtime object in the lambda?** An outer variable becomes a closure field read and will never match a game value. Use a pattern-lambda parameter, a DSL placeholder, a literal, or a static field.
-8. **Is a temporary in the way?** Temporaries with an unambiguous definition are followed by default, but an ambiguous origin is never guessed. Pin the origin with `LocalDefinedBy` — see [compiler temporaries](../concepts/captures.md#temporaries).
+8. **Is a temporary in the way?** Temporaries with an unambiguous definition are followed by default, but an ambiguous origin is never guessed. Pin the origin with `Cil.Local(definedBy)` — see [compiler temporaries](../concepts/captures.md#temporaries).
 
 ## Too many matched
 
@@ -30,9 +30,9 @@ Multiple matches are more dangerous than none: the pattern is not describing a u
 Do not take the first one. Add context instead:
 
 - fold in the **enclosing call**: look for `GetScore() + 10`, not just `GetScore()`;
-- fold in **constants**: `Level * 100` is more specific than `Level * P.Any<int>("x")`;
+- fold in **constants**: `Level * 100` is more specific than `Level * x` (where `x` is a `Cil.Any<int>()`);
 - fold in a **field or property**;
-- use `P.Mark` for the small part you actually want to change, and let the outer expression do the locating.
+- declare the small part you actually want to change as an embedded fragment, and let the outer expression do the locating.
 
 ```csharp
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Cookbook.cs:pattern-inner-call"
@@ -67,7 +67,7 @@ Once a method is rewritten, previously obtained positions may no longer be valid
 | Symptom | Check first |
 | --- | --- |
 | `No matching expression was found` | The method, whether the game updated, constants and overloads |
-| More than one result | Add enclosing calls, fields, constants, or a `P.Mark` context |
+| More than one result | Add enclosing calls, fields, constants, or an embedded-fragment context |
 | Wrong callback argument count | `Transform`/`Observe` already supply the original value as the first argument |
 | Wrong callback return type | `Transform` must return something that can replace the original value; a condition must return `bool` |
 | `match is stale` | Another edit changed the method — `Match` again |

@@ -70,7 +70,7 @@ public static class DamagePatch
 
         il.Method.Match(pattern)
           .Single()
-          .Transform((Func<int, int>)ModHooks.ClampDamage)
+          .Transform(ModHooks.ClampDamage)
           .Apply(VerifyOptions.Mod);
     }
 }
@@ -105,7 +105,7 @@ public static class DamagePatcher
 
         method.Match(pattern)
               .Single()
-              .Transform((Func<int, int>)ModHooks.ClampDamage)
+              .Transform(ModHooks.ClampDamage)
               .Apply(VerifyOptions.Full);
 
         module.Write(outputPath);
@@ -134,18 +134,18 @@ public static class DamagePatcher
 
 ## 只修改大表达式中的一部分
 
-完整匹配结果可以直接修改。只有需要选中内部某一段时，才使用 `P.Mark`：
+完整匹配结果可以直接修改。要改的只是其中一个参数时，lambda 参数本身就是捕获，按参数名取回即可：
 
 ```csharp
-var pattern = Cil.Value((int baseDamage, int bonus) =>
-    P.Mark("baseDamage", baseDamage) + bonus);
+var pattern = Cil.Value((int baseDamage, int bonus) => baseDamage + bonus);
 
 var match = method.Match(pattern).Single();
-var baseDamage = match.Captures.Value("baseDamage");
 
-baseDamage.Transform((Func<int, int>)ModHooks.ClampDamage)
-          .Apply(VerifyOptions.Full);
+match.Arg("baseDamage").Transform(ModHooks.ClampDamage)
+                       .Apply(VerifyOptions.Full);
 ```
+
+要改的是一段复合子表达式时，把那一段声明成独立的 `Cil.Value` 片段直接写进表达式，匹配后用同一个对象取回（`match[fragment]`）。
 
 MonoWeaver 默认会跟随来源唯一的编译器临时变量。如果同一个读取位置可能来自多次赋值，它会停止匹配，不会猜测。
 
@@ -171,7 +171,7 @@ var scorePattern = Cil.Value(
 - 一个计划提交后，如果还要修改同一个方法，重新匹配一次，避免继续使用过期位置。
 - 游戏更新后，即使 Hook 没有报错，也要重新测试实际玩法。
 - 离线补丁尽量使用静态回调；实例委托、闭包和多播委托仅用于当前运行时。
-- 多匹配时补充外层调用、常量、字段或 `P.Mark` 上下文，不要固定取第一个。
+- 多匹配时补充外层调用、常量、字段或内嵌片段上下文，不要固定取第一个。
 
 ## 详细文档
 

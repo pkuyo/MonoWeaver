@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking**: pattern captures are objects, not string names. Declare `Cil.Local<T>()` / `Cil.Arg<T>()` / `Cil.This<T>()` / `Cil.Any<T>()` (or the `CilTypeSpec` overloads), use the object directly in the pattern, and read it back with `match[obj]`.
+- Lambda parameters are captures: `match.Arg("name")`, `match.This()`, `match.Local("name")`.
+- `Cil.Local(definedBy)` replaces `LocalDefinedBy`; embedding a `Cil.Value` / `Cil.Condition` fragment in another pattern replaces `P.Mark`.
+- A repeated local/argument/this object means the same target; repeating a `Cil.Any` or a fragment throws at construction.
+- `CilMatchSet.After` / `Before` / `Between` filter results by IL position.
+
+### Removed
+
+- **Breaking**: `LocalDefinedBy`, the string-capture overloads of `P.This`/`P.Arg`/`P.Local`, `P.Any`, `P.Mark`, `CilExpr.Mark`, the string lookups on `Captures`, `EffectCapture`, `LocalDefinitionConstraint`, `PatternNode.IsRoot`, and `MatchCapture.Name` (use `MatchCapture.Source`).
+
+### Fixed
+
+- A `CilExpr` node shared by two patterns is no longer treated as a root inside the second pattern.
+
 ## [0.1.2] - 2026-08-28
 
 ### Added

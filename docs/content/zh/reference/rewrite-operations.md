@@ -92,6 +92,8 @@
 
 静态委托会降级成对该静态方法的直接调用。实例委托、闭包和多播委托只用于运行时 Hook。
 
+传方法组即可：`damage.Transform(Hooks.ClampDamage)`。只有 C# 9 及以下（`net48` 项目未设置 `LangVersion` 时默认是 7.3）对**捕获**调用时需要写出委托类型，如 `match.Arg("x").Transform((Func<int, int>)Hooks.ClampDamage)`——那时方法组还没有自然类型；根匹配 `ValueMatch<T>` 因为 `T` 已知，任何版本都不需要。
+
 ## 给回调补充参数
 
 `Transform` 和 `Observe` 自动把原值放在第一个参数。其余参数由 `args => ...` 按顺序提供：

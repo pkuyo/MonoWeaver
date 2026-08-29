@@ -23,27 +23,22 @@ public static class CookbookSamples
     public static void CallInsideLargerCalculation(MethodDefinition method)
     {
         // --8<-- [start:pattern-inner-call]
-        var pattern = Cil.Value((Player player) =>
-            P.Mark(
-                "score",
-                player.GetScore())
-            + 10);
+        var score = Cil.Value((Player player) => player.GetScore());
+
+        var pattern = Cil.Value(() => score + 10);
         // --8<-- [end:pattern-inner-call]
 
         // --8<-- [start:pattern-inner-call-capture]
-        var score = method.Match(pattern)
-            .Single()
-            .Captures.Value("score");
+        var scoreCapture = method.Match(pattern).Single()[score];
         // --8<-- [end:pattern-inner-call-capture]
-        _ = score;
+        _ = scoreCapture;
     }
 
     public static void EffectCall()
     {
         // --8<-- [start:pattern-effect-call]
         var pattern = Cil.Effect((Player player) =>
-            GameAudio.Play(
-                player.HitSound));
+            GameAudio.Play(player.HitSound));
         // --8<-- [end:pattern-effect-call]
         _ = pattern;
     }
@@ -61,12 +56,9 @@ public static class CookbookSamples
     public static void ConstructorConstantProperty()
     {
         // --8<-- [start:pattern-constructor]
-        var pattern = Cil.Value((Player player) =>
-            new Reward(
-                "rare",
-                P.Mark(
-                    "amount",
-                    player.Level * 100)));
+        var amount = Cil.Value((Player player) => player.Level * 100);
+
+        var pattern = Cil.Value(() => new Reward("rare", amount));
         // --8<-- [end:pattern-constructor]
         _ = pattern;
     }
@@ -74,11 +66,9 @@ public static class CookbookSamples
     public static void AcrossLocal()
     {
         // --8<-- [start:pattern-across-local]
-        var pattern = Cil.Value((int damage) =>
-            P.Mark(
-                "adjusted",
-                damage + 1)
-            * 2);
+        var adjusted = Cil.Value((int damage) => damage + 1);
+
+        var pattern = Cil.Value(() => adjusted * 2);
         // --8<-- [end:pattern-across-local]
         _ = pattern;
     }
@@ -103,10 +93,10 @@ public static class CookbookSamples
         // --8<-- [end:pattern-symbols-decl]
 
         // --8<-- [start:pattern-symbols]
-        var pattern = Cil.Value(
-            P.Arg(0, player.Assignable(), "player")
-             .Call(getScore)
-             .Mark("score"));
+        var playerArg = Cil.Arg(player.Assignable(), 0);
+        var score = Cil.Value(playerArg.Expr.Call(getScore));
+
+        var pattern = Cil.Value(score.Expr);
         // --8<-- [end:pattern-symbols]
         _ = pattern;
     }
@@ -114,10 +104,9 @@ public static class CookbookSamples
     public static void WithGameReference()
     {
         // --8<-- [start:pattern-lambda-equivalent]
-        var pattern = Cil.Value((Player player) =>
-            P.Mark(
-                "score",
-                player.GetScore()));
+        var score = Cil.Value((Player player) => player.GetScore());
+
+        var pattern = Cil.Value(() => score.Value);
         // --8<-- [end:pattern-lambda-equivalent]
         _ = pattern;
     }

@@ -35,7 +35,7 @@ public static class PatternSamples
         // --8<-- [start:single]
         var damage = method.Match(damagePattern).Single();
 
-        damage.Transform((Func<int, int>)Hooks.ClampDamage)
+        damage.Transform(Hooks.ClampDamage)
               .Apply(VerifyOptions.Full);
         // --8<-- [end:single]
     }
@@ -64,30 +64,40 @@ public static class PatternSamples
         // --8<-- [end:explain-failure]
     }
 
-    public static void MarkAndCapture(MethodDefinition method)
+    public static void CaptureArgument(MethodDefinition method)
     {
         // --8<-- [start:mark-capture]
-        var pattern = Cil.Value((int baseDamage, int bonus) =>
-            P.Mark("baseDamage", baseDamage) + bonus);
+        var pattern = Cil.Value((int baseDamage, int bonus) => baseDamage + bonus);
 
         var match = method.Match(pattern).Single();
-        var baseDamage = match.Captures.Value("baseDamage");
 
-        baseDamage.Transform((Func<int, int>)Hooks.ClampBaseDamage)
-                  .Apply(VerifyOptions.Full);
+        match.Arg("baseDamage").Transform(Hooks.ClampBaseDamage)
+                               .Apply(VerifyOptions.Full);
         // --8<-- [end:mark-capture]
     }
 
-    public static void LocalDefinedBy()
+    public static void MatchAfterAnotherMatch(MethodDefinition method)
+    {
+        // --8<-- [start:match-after]
+        var sound = method.Match(Cil.Effect((Player player) => GameAudio.Play(player.HitSound))).Single();
+
+        // 只在播放音效之后找伤害计算；仍然要求唯一
+        var damage = method.Match(Cil.Value((int baseDamage, int bonus) => baseDamage + bonus))
+            .After(sound)
+            .Single();
+        // --8<-- [end:match-after]
+        _ = damage;
+    }
+
+    public static void LocalDefinedBy(MethodDefinition method)
     {
         // --8<-- [start:local-defined-by]
-        var pattern = Cil.Value(() =>
-                P.Local<int>("tmp") * 2)
-            .LocalDefinedBy(
-                "tmp",
-                Cil.Value((int damage) => damage + 1));
+        var tmp = Cil.Local(Cil.Value((int damage) => damage + 1));
+        var pattern = Cil.Value(() => tmp * 2);
+
+        var local = method.Match(pattern).Single()[tmp];
         // --8<-- [end:local-defined-by]
-        _ = pattern;
+        _ = (pattern, local);
     }
 
     public static void DisableTemporaryFollowing()
@@ -125,10 +135,10 @@ public static class PatternSamples
             CilType.Int32,
             enemy);
 
-        var pattern = Cil.Value(
-            P.Arg(0, player.Assignable(), "player")
-             .Call(getDamage, P.Arg(1, enemy.Assignable()))
-             .Mark("damage"));
+        var playerArg = Cil.Arg(player.Assignable(), 0);
+        var damage = Cil.Value(
+            playerArg.Expr.Call(getDamage, P.Arg(1, enemy.Assignable())));
+        var pattern = Cil.Value(damage.Expr);
         // --8<-- [end:symbol-form]
         _ = pattern;
     }

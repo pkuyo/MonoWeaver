@@ -82,7 +82,7 @@ MonoWeaver 的入口是 Mono.Cecil 的 `MethodDefinition`。
 
 ## 只改大表达式中的一部分
 
-根匹配可以直接改写。只有需要选中内部某一段时，才用 `P.Mark`：
+根匹配可以直接改写。要改的只是某个参数时，lambda 参数本身就是捕获，按参数名取回（复合子表达式则声明成独立的 `Cil.Value` 片段写进表达式，用同一个对象取回）：
 
 ```csharp
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:mark-capture"

@@ -82,7 +82,7 @@ Instance delegates, closures, and multicast delegates refer to objects in the cu
 
 ## Targeting one part of a larger expression
 
-The root match can be rewritten directly. Use `P.Mark` only when the hook should target something inside it:
+The root match can be rewritten directly. When the hook should target one of the parameters, the lambda parameter is already the capture — read it back by parameter name (a compound sub-expression is declared as a standalone `Cil.Value` fragment used directly in the expression and read back through the same object):
 
 ```csharp
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:mark-capture"

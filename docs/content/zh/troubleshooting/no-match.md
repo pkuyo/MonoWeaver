@@ -8,7 +8,7 @@
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:explain-failure"
 ```
 
-诊断会说明方法中哪些 IL 无法表达、哪次临时变量穿透被拒绝、`LocalDefinedBy` 为什么没满足。先读它，再改 Pattern。
+诊断会说明方法中哪些 IL 无法表达、哪次临时变量穿透被拒绝、局部变量定义约束（`Cil.Local(definedBy)`）为什么没满足。先读它，再改 Pattern。
 
 ## 匹配不到
 
@@ -21,7 +21,7 @@
 5. **常量和重载对吗**：`Select("rare")` 不会命中 `Select(1)`；`1` 和 `1L` 是不同的常量。
 6. **左右顺序对吗**：`a - b` 和 `b - a` 不同；比较运算同理。
 7. **有没有把运行时对象捕获进 lambda**：外部变量会变成闭包字段读取，匹配不到游戏里的值。请改用 pattern lambda 参数、DSL 占位符、字面常量或静态字段。
-8. **是不是被临时变量挡住了**：默认会跟随来源唯一的临时变量，但来源有歧义时不会猜。用 `LocalDefinedBy` 明确来源，见 [编译器临时变量](../concepts/captures.md#temporaries)。
+8. **是不是被临时变量挡住了**：默认会跟随来源唯一的临时变量，但来源有歧义时不会猜。用 `Cil.Local(definedBy)` 明确来源，见 [编译器临时变量](../concepts/captures.md#temporaries)。
 
 ## 匹配过多
 
@@ -30,9 +30,9 @@
 不要取第一个，而是给 Pattern 增加上下文：
 
 - 把**外层调用**写进去：不是找 `GetScore()`，而是找 `GetScore() + 10`；
-- 把**常量**写进去：`Level * 100` 比 `Level * P.Any<int>("x")` 具体；
+- 把**常量**写进去：`Level * 100` 比 `Level * x`（`x` 是 `Cil.Any<int>()`）具体；
 - 把**字段或属性**写进去；
-- 用 `P.Mark` 标记真正要改的那一小段，外层负责定位。
+- 把真正要改的那一小段声明成片段并内嵌，外层负责定位。
 
 ```csharp
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Cookbook.cs:pattern-inner-call"
@@ -67,7 +67,7 @@
 | 现象 | 优先检查 |
 | --- | --- |
 | `No matching expression was found` | 方法是否选对、游戏是否更新、常量和重载是否写对 |
-| 找到多个结果 | 给 Pattern 增加外层调用、字段、常量或 `P.Mark` 上下文 |
+| 找到多个结果 | 给 Pattern 增加外层调用、字段、常量或内嵌片段上下文 |
 | 回调参数数量错误 | `Transform`/`Observe` 已自动提供第一个原值参数 |
 | 回调返回类型错误 | `Transform` 必须返回能替代原值的类型，条件必须返回 `bool` |
 | `match is stale` | 方法已被其他修改改变，重新 `Match` |

@@ -62,7 +62,7 @@ public static class DamagePatch
 
         il.Method.Match(pattern)
           .Single()
-          .Transform((Func<int, int>)ModHooks.ClampDamage)
+          .Transform(ModHooks.ClampDamage)
           .Apply(VerifyOptions.Mod);
     }
 }
@@ -97,7 +97,7 @@ public static class DamagePatcher
 
         method.Match(pattern)
               .Single()
-              .Transform((Func<int, int>)ModHooks.ClampDamage)
+              .Transform(ModHooks.ClampDamage)
               .Apply(VerifyOptions.Full);
 
         module.Write(outputPath);
@@ -126,18 +126,18 @@ Values, actions, and conditions have slightly different valid operations. In par
 
 ## Capturing one part of a larger match
 
-The root match can be edited directly. Use `P.Mark` only when the hook should target an inner value:
+The root match can be edited directly. When the hook should target one of the parameters, the lambda parameter is already the capture — read it back by parameter name:
 
 ```csharp
-var pattern = Cil.Value((int baseDamage, int bonus) =>
-    P.Mark("baseDamage", baseDamage) + bonus);
+var pattern = Cil.Value((int baseDamage, int bonus) => baseDamage + bonus);
 
 var match = method.Match(pattern).Single();
-var baseDamage = match.Captures.Value("baseDamage");
 
-baseDamage.Transform((Func<int, int>)ModHooks.ClampDamage)
-          .Apply(VerifyOptions.Full);
+match.Arg("baseDamage").Transform(ModHooks.ClampDamage)
+                       .Apply(VerifyOptions.Full);
 ```
+
+When the target is a compound sub-expression, declare that part as a standalone `Cil.Value` fragment, use it directly in the expression, and read it back through the same object (`match[fragment]`).
 
 The matcher follows an unambiguous compiler-generated temporary by default. If several assignments could reach the same local read, it refuses to guess.
 

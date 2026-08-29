@@ -28,23 +28,25 @@
 
 ## 捕获内部的一段
 
-根匹配可以直接改写。只有要选中内部某一段时，才需要 `P.Mark`：
+根匹配可以直接改写。要改的是某个参数时，lambda 参数本身就是捕获，按参数名取回：
 
 ```csharp
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:mark-capture"
 ```
 
-`Captures` 按用途提供几个入口：
+要改的是复合子表达式时，把那一段声明成独立的 `Cil.Value`/`Cil.Condition` 片段直接写进表达式；局部变量用 `Cil.Local`。这些捕获按对象取回，返回类型由声明的对象决定：
 
-| 入口 | 得到的内容 |
+| 索引 | 得到的内容 |
 | --- | --- |
-| `Value("name")` | 一个可读取或改写的值 |
-| `Argument("name")` | 明确捕获的参数 |
-| `Local("name")` | 明确捕获的局部变量 |
-| `Condition("name")` | 大条件中的一个子条件 |
-| `Effect("name")` | 一个无结果的行为 |
+| `match.Arg("参数名")` / `match.This()` | lambda 参数对应的实参（`ArgumentCapture`） |
+| `match.Local("参数名")` | `CilLocal<T>` 类型的 lambda 参数（`LocalCapture`） |
+| `match[Cil.Any<T>() 对象]` | 一个可读取或改写的值（`ValueCapture`） |
+| `match[Cil.Arg<T>() / Cil.This<T>() 对象]` | 捕获的参数（`ArgumentCapture`） |
+| `match[Cil.Local<T>() 对象]` | 捕获的局部变量（`LocalCapture`） |
+| `match[内嵌的 ValuePattern]` | 被选中的值片段（`ValueCapture`） |
+| `match[内嵌的 ConditionPattern]` | 大条件中的一个子条件（`ConditionCapture`） |
 
-用错入口会立即报错——例如把参数捕获当成条件读取。这是刻意的：错误的类型假设在改写阶段才暴露会难查得多。
+拿错对象会立即抛 `KeyNotFoundException`——捕获身份就是对象身份，没有字符串名可写错。
 
 ## 编译器临时变量 { #temporaries }
 
@@ -68,7 +70,7 @@ MonoWeaver 默认会**跟随来源唯一的临时变量**，因此同一个 Patt
 --8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:local-defined-by"
 ```
 
-这表示 `tmp * 2` 中的 `tmp` 必须来自 `damage + 1`。
+这表示 `tmp * 2` 中的 `tmp` 必须来自 `damage + 1`；`tmp` 对象之后可以在多个 pattern 里复用，含义不变。
 
 ### 完全关闭跟随
 
@@ -77,6 +79,16 @@ MonoWeaver 默认会**跟随来源唯一的临时变量**，因此同一个 Patt
 ```
 
 关闭后按局部变量读取本身来匹配。局部变量序号会随游戏版本和编译方式改变，一般不如写出它周围的计算稳定。
+
+## 在某处之后匹配
+
+结果集可以按 IL 位置筛选：`After(x)` 只留起点在 x 之后的匹配，`Before(x)` 只留终点在 x 之前的，`Between(a, b)` 两者都要。x 可以是一条指令，也可以是之前的匹配或捕获（以它覆盖的整段为界）：
+
+```csharp
+--8<-- "tests/MonoWeaver.DocSamples/Samples/Patterns.cs:match-after"
+```
+
+这是 ILCursor "从这里往后找下一个"的对应写法，区别是 `Single()` 仍然要求筛选后唯一，不会静默取第一个。位置按 IL 顺序比较，不考虑控制流；锚点必须在当前方法体里——方法改写后旧锚点若已被删除会直接报错，重新匹配即可。
 
 ## 进阶：匹配位置
 
