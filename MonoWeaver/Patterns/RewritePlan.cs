@@ -684,7 +684,7 @@ public sealed class CallArguments
     }
 
     private static string CaptureName(ValueTarget value)
-        => string.IsNullOrWhiteSpace(value.Name) ? "<root>" : value.Name!;
+        => value.Source?.ToString() ?? "<root>";
 
     public CallArguments This()
     {
@@ -1070,7 +1070,7 @@ internal sealed class CaptureAvailability
 
         if (!available)
         {
-            var name = string.IsNullOrWhiteSpace(value.Name) ? "<root>" : value.Name;
+            var name = value.Source?.ToString() ?? "<root>";
             throw new NotSupportedException(
                 $"{operation} cannot load capture '{name}' because it is not produced on every " +
                 "control-flow path before the callback. Capture an earlier dominating value, " +

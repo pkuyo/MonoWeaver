@@ -46,9 +46,6 @@ public sealed class CilExpr
         return new CilExpr(new FieldPatternNode(field, Node));
     }
 
-    public CilExpr Mark(string captureName)
-        => P.Mark(captureName, this);
-
     public CilExpr ConvertTo(CilTypeSpec resultType, bool @checked = false)
         => new(new UnaryPatternNode(@checked ? ExpressionType.ConvertChecked : ExpressionType.Convert,
             Node, method: null, resultType ?? throw new ArgumentNullException(nameof(resultType))));

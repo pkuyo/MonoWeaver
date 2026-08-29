@@ -16,6 +16,7 @@ public sealed class CilPatternMatchException : Exception
 
 /// <summary>某一种强类型 match 的结果集合。</summary>
 public sealed class CilMatchSet<TMatch> : IReadOnlyList<TMatch>
+    where TMatch : MatchCapture
 {
     private const int MaxDiagnosticsInExceptionMessage = 5;
 
@@ -39,7 +40,7 @@ public sealed class CilMatchSet<TMatch> : IReadOnlyList<TMatch>
     public TMatch this[int index] => _matches[index];
 
     /// <summary>
-    /// 本次匹配收集到的诊断：方法中不可表达的 IL、被拒绝的临时变量穿透、LocalDefinedBy 失败原因。
+    /// 本次匹配收集到的诊断：方法中不可表达的 IL、被拒绝的临时变量穿透、local 定义约束失败原因。
     /// 诊断的存在不代表匹配失败，只在结果不符合预期时用于解释原因。
     /// </summary>
     public IReadOnlyList<MatchDiagnostic> Diagnostics { get; }
@@ -55,7 +56,7 @@ public sealed class CilMatchSet<TMatch> : IReadOnlyList<TMatch>
             : $"{_matches.Count} matching expressions were found at: " +
               string.Join(", ", _matches.Select(match => $"IL_{_location(match).Offset:X4}"));
         var message = details +
-            " Add surrounding expression context, a Mark, or a local-definition constraint.";
+            " Add surrounding expression context, an embedded fragment, or a local definition constraint.";
         if (_matches.Count == 0 && Diagnostics.Count != 0)
             message += Environment.NewLine + FormatDiagnostics(MaxDiagnosticsInExceptionMessage);
         throw new CilPatternMatchException(message);
@@ -83,57 +84,106 @@ public sealed class CilMatchSet<TMatch> : IReadOnlyList<TMatch>
         return text;
     }
 
+    /// <summary>只保留起点在 <paramref name="anchor"/> 之后（IL 顺序）的匹配。</summary>
+    public CilMatchSet<TMatch> After(Instruction anchor)
+        => Filter(match => IndexOf(match.RangeStart) > RequireIndex(anchor));
+
+    /// <summary>只保留起点在 <paramref name="anchor"/> 整段之后的匹配；锚点可以是之前的匹配或捕获。</summary>
+    public CilMatchSet<TMatch> After(MatchCapture anchor)
+        => After(RequireSameMethod(anchor).RangeEnd);
+
+    /// <summary>只保留终点在 <paramref name="anchor"/> 之前（IL 顺序）的匹配。</summary>
+    public CilMatchSet<TMatch> Before(Instruction anchor)
+        => Filter(match => IndexOf(match.RangeEnd) < RequireIndex(anchor));
+
+    /// <summary>只保留终点在 <paramref name="anchor"/> 整段之前的匹配；锚点可以是之前的匹配或捕获。</summary>
+    public CilMatchSet<TMatch> Before(MatchCapture anchor)
+        => Before(RequireSameMethod(anchor).RangeStart);
+
+    /// <summary>只保留完全落在两条指令之间（不含）的匹配。</summary>
+    public CilMatchSet<TMatch> Between(Instruction after, Instruction before)
+        => After(after).Before(before);
+
+    /// <summary>只保留完全落在两段匹配之间的匹配。</summary>
+    public CilMatchSet<TMatch> Between(MatchCapture after, MatchCapture before)
+        => After(after).Before(before);
+
+    private CilMatchSet<TMatch> Filter(Func<TMatch, bool> keep)
+        => new(Method, Pattern, _matches.Where(keep).ToArray(), _location, Diagnostics);
+
+    //位置按 IL 顺序比较，与 ILCursor 一致；不考虑控制流先后。
+    private int IndexOf(Instruction instruction)
+        => Method.Body.Instructions.IndexOf(instruction);
+
+    private int RequireIndex(Instruction anchor)
+    {
+        if (anchor is null)
+            throw new ArgumentNullException(nameof(anchor));
+        var index = IndexOf(anchor);
+        if (index < 0)
+        {
+            throw new InvalidOperationException(
+                $"The anchor instruction '{anchor}' is not in the body of {Method.FullName}. " +
+                "If the method was rewritten since the anchor was obtained, match again.");
+        }
+        return index;
+    }
+
+    private MatchCapture RequireSameMethod(MatchCapture anchor)
+    {
+        if (anchor is null)
+            throw new ArgumentNullException(nameof(anchor));
+        if (!ReferenceEquals(anchor.Method, Method))
+            throw new InvalidOperationException($"The anchor belongs to {anchor.Method.FullName}, not {Method.FullName}.");
+        return anchor;
+    }
+
     public IEnumerator<TMatch> GetEnumerator() => _matches.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
-/// <summary>一个命名 capture。根 match 不需要再转换成 capture 才能改写。</summary>
+/// <summary>一次匹配得到的目标（根 match 或某个 pattern 对象的捕获）。根 match 不需要再转换成 capture 才能改写。</summary>
 public abstract class MatchCapture
 {
-    private protected MatchCapture(MethodDefinition method, string? name)
+    private protected MatchCapture(MethodDefinition method, ExpressionPattern? source)
     {
         Method = method ?? throw new ArgumentNullException(nameof(method));
-        Name = name;
+        Source = source;
     }
 
     public MethodDefinition Method { get; }
-    public string? Name { get; }
+
+    /// <summary>以哪个 pattern 对象的身份捕获；根 match 为 null。</summary>
+    public ExpressionPattern? Source { get; }
     internal ILBasicBlockGraph? Graph { get; set; }
+
+    /// <summary>此匹配覆盖的 IL 段起点，供按位置筛选（After/Before）使用。</summary>
+    internal abstract Instruction RangeStart { get; }
+
+    /// <summary>此匹配覆盖的 IL 段终点，供按位置筛选（After/Before）使用。</summary>
+    internal abstract Instruction RangeEnd { get; }
 }
 
-/// <summary>命名 capture 的只读集合，并提供按语义类型读取的入口。</summary>
-public sealed class MatchCaptureCollection : IReadOnlyDictionary<string, MatchCapture>
+/// <summary>capture 的内部存储，以 pattern 对象为 key（引用相等）。</summary>
+internal sealed class MatchCaptureCollection
 {
-    private readonly IReadOnlyDictionary<string, MatchCapture> _captures;
+    private readonly IReadOnlyDictionary<ExpressionPattern, MatchCapture> _captures;
 
-    internal MatchCaptureCollection(IReadOnlyDictionary<string, MatchCapture> captures)
+    internal MatchCaptureCollection(IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
         => _captures = captures ?? throw new ArgumentNullException(nameof(captures));
 
-    public MatchCapture this[string key] => _captures[key];
-    public IEnumerable<string> Keys => _captures.Keys;
-    public IEnumerable<MatchCapture> Values => _captures.Values;
     public int Count => _captures.Count;
-    public bool ContainsKey(string key) => _captures.ContainsKey(key);
-    public bool TryGetValue(string key, out MatchCapture value) => _captures.TryGetValue(key, out value!);
-    public IEnumerator<KeyValuePair<string, MatchCapture>> GetEnumerator() => _captures.GetEnumerator();
-    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    public ValueCapture Value(string name) => Require<ValueCapture>(name);
-    public EffectCapture Effect(string name) => Require<EffectCapture>(name);
-    public ConditionCapture Condition(string name) => Require<ConditionCapture>(name);
-    public ArgumentCapture Argument(string name) => Require<ArgumentCapture>(name);
-    public LocalCapture Local(string name) => Require<LocalCapture>(name);
-
-    private TCapture Require<TCapture>(string name) where TCapture : MatchCapture
+    public TCapture Require<TCapture>(ExpressionPattern pattern) where TCapture : MatchCapture
     {
-        if (string.IsNullOrWhiteSpace(name))
-            throw new ArgumentException("A capture name is required.", nameof(name));
-        if (!_captures.TryGetValue(name, out var capture))
-            throw new KeyNotFoundException($"The pattern did not produce a capture named '{name}'.");
+        if (pattern is null)
+            throw new ArgumentNullException(nameof(pattern));
+        if (!_captures.TryGetValue(pattern, out var capture))
+            throw new KeyNotFoundException($"The match does not contain a capture for pattern '{pattern}'.");
         if (capture is not TCapture typed)
         {
             throw new InvalidOperationException(
-                $"Capture '{name}' is {capture.GetType().Name}, not {typeof(TCapture).Name}.");
+                $"Capture for pattern '{pattern}' is {capture.GetType().Name}, not {typeof(TCapture).Name}.");
         }
         return typed;
     }
@@ -145,10 +195,10 @@ public sealed class MatchCaptureCollection : IReadOnlyDictionary<string, MatchCa
 /// </summary>
 public abstract class ValueTarget : MatchCapture
 {
-    private protected ValueTarget(MethodDefinition method, string? name, TypeReference valueType,
+    private protected ValueTarget(MethodDefinition method, ExpressionPattern? source, TypeReference valueType,
         Instruction definitionFirstInstruction, Instruction definitionInstruction,
         Instruction occurrenceInstruction, Instruction? consumerInstruction)
-        : base(method, name)
+        : base(method, source)
     {
         ValueType = valueType ?? throw new ArgumentNullException(nameof(valueType));
         DefinitionFirstInstruction = definitionFirstInstruction ??
@@ -174,6 +224,9 @@ public abstract class ValueTarget : MatchCapture
     /// 此时栈上是 managed pointer 而非值本身，占位改写（After/Transform/Observe/Replace）不安全。
     /// </summary>
     public bool IsAddressBacked { get; internal init; }
+
+    internal override Instruction RangeStart => FirstInstruction;
+    internal override Instruction RangeEnd => ConsumerInstruction ?? ResultInstruction;
 }
 
 /// <summary>value pattern 的根匹配；它本身就是唯一的根 value 改写入口。</summary>
@@ -182,8 +235,8 @@ public class ValueMatch : ValueTarget
     internal ValueMatch(MethodDefinition method, ValuePattern pattern,
         TypeReference valueType, Instruction definitionFirstInstruction,
         Instruction definitionInstruction, Instruction occurrenceInstruction,
-        Instruction? consumerInstruction, IReadOnlyDictionary<string, MatchCapture> captures)
-        : base(method, name: null, valueType, definitionFirstInstruction, definitionInstruction,
+        Instruction? consumerInstruction, IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
+        : base(method, source: null, valueType, definitionFirstInstruction, definitionInstruction,
             occurrenceInstruction, consumerInstruction)
     {
         Pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
@@ -191,7 +244,25 @@ public class ValueMatch : ValueTarget
     }
 
     public ValuePattern Pattern { get; }
-    public MatchCaptureCollection Captures { get; }
+    internal MatchCaptureCollection Captures { get; }
+
+    public LocalCapture this[CilLocal local] => Captures.Require<LocalCapture>(local);
+    public ArgumentCapture this[CilArg argument] => Captures.Require<ArgumentCapture>(argument);
+    public ArgumentCapture this[CilThis thisArg] => Captures.Require<ArgumentCapture>(thisArg);
+    public ValueCapture this[ValuePattern fragment] => Captures.Require<ValueCapture>(fragment);
+    public ConditionCapture this[ConditionPattern fragment] => Captures.Require<ConditionCapture>(fragment);
+
+    /// <summary>按 lambda 参数名取回参数捕获（普通类型的 lambda 参数、<c>CilArg&lt;T&gt;</c>/<c>CilThis&lt;T&gt;</c> 参数）。</summary>
+    public ArgumentCapture Arg(string parameterName)
+        => Captures.Require<ArgumentCapture>(Pattern.Parameter(parameterName));
+
+    /// <summary>取回 <c>__this</c> 参数（或 <c>CilThis&lt;T&gt;</c> 类型的 lambda 参数）的捕获。</summary>
+    public ArgumentCapture This()
+        => Captures.Require<ArgumentCapture>(LambdaParameterLookup.This(Pattern));
+
+    /// <summary>按 lambda 参数名取回 <c>CilLocal&lt;T&gt;</c> 类型参数的捕获。</summary>
+    public LocalCapture Local(string parameterName)
+        => Captures.Require<LocalCapture>(Pattern.Parameter(parameterName));
 }
 
 /// <summary>由 <see cref="ValuePattern{T}"/> 得到的强类型根匹配。</summary>
@@ -200,7 +271,7 @@ public sealed class ValueMatch<T> : ValueMatch
     internal ValueMatch(MethodDefinition method, ValuePattern<T> pattern,
         TypeReference valueType, Instruction definitionFirstInstruction,
         Instruction definitionInstruction, Instruction occurrenceInstruction,
-        Instruction? consumerInstruction, IReadOnlyDictionary<string, MatchCapture> captures)
+        Instruction? consumerInstruction, IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
         : base(method, pattern, valueType, definitionFirstInstruction, definitionInstruction,
             occurrenceInstruction, consumerInstruction, captures) { }
 
@@ -210,21 +281,21 @@ public sealed class ValueMatch<T> : ValueMatch
 /// <summary>一个命名 value capture。</summary>
 public class ValueCapture : ValueTarget
 {
-    internal ValueCapture(MethodDefinition method, string name, TypeReference valueType,
+    internal ValueCapture(MethodDefinition method, ExpressionPattern source, TypeReference valueType,
         Instruction definitionFirstInstruction, Instruction definitionInstruction,
         Instruction occurrenceInstruction, Instruction? consumerInstruction)
-        : base(method, name, valueType, definitionFirstInstruction, definitionInstruction,
+        : base(method, source, valueType, definitionFirstInstruction, definitionInstruction,
             occurrenceInstruction, consumerInstruction) { }
 }
 
 /// <summary>捕获到的显式 argument 或 this value。</summary>
 public sealed class ArgumentCapture : ValueCapture
 {
-    internal ArgumentCapture(MethodDefinition method, string name, TypeReference valueType,
+    internal ArgumentCapture(MethodDefinition method, ExpressionPattern source, TypeReference valueType,
         Instruction definitionFirstInstruction, Instruction definitionInstruction,
         Instruction occurrenceInstruction, Instruction? consumerInstruction,
         bool isThis, int parameterIndex, ParameterDefinition? parameter)
-        : base(method, name, valueType, definitionFirstInstruction, definitionInstruction,
+        : base(method, source, valueType, definitionFirstInstruction, definitionInstruction,
             occurrenceInstruction, consumerInstruction)
     {
         IsThis = isThis;
@@ -240,10 +311,10 @@ public sealed class ArgumentCapture : ValueCapture
 /// <summary>捕获到的 local load。</summary>
 public sealed class LocalCapture : ValueCapture
 {
-    internal LocalCapture(MethodDefinition method, string name, VariableDefinition variable,
+    internal LocalCapture(MethodDefinition method, ExpressionPattern source, VariableDefinition variable,
         Instruction definitionFirstInstruction, Instruction definitionInstruction,
         Instruction occurrenceInstruction, Instruction? consumerInstruction)
-        : base(method, name, variable?.VariableType ?? throw new ArgumentNullException(nameof(variable)),
+        : base(method, source, variable?.VariableType ?? throw new ArgumentNullException(nameof(variable)),
             definitionFirstInstruction, definitionInstruction, occurrenceInstruction, consumerInstruction)
     {
         Variable = variable;
@@ -255,9 +326,9 @@ public sealed class LocalCapture : ValueCapture
 /// <summary>一个完整的无结果 effect，可直接 Before/After/Replace。</summary>
 public abstract class EffectTarget : MatchCapture
 {
-    private protected EffectTarget(MethodDefinition method, string? name,
+    private protected EffectTarget(MethodDefinition method, ExpressionPattern? source,
         Instruction firstInstruction, Instruction lastInstruction)
-        : base(method, name)
+        : base(method, source)
     {
         FirstInstruction = firstInstruction ?? throw new ArgumentNullException(nameof(firstInstruction));
         LastInstruction = lastInstruction ?? throw new ArgumentNullException(nameof(lastInstruction));
@@ -265,6 +336,9 @@ public abstract class EffectTarget : MatchCapture
 
     public Instruction FirstInstruction { get; }
     public Instruction LastInstruction { get; }
+
+    internal override Instruction RangeStart => FirstInstruction;
+    internal override Instruction RangeEnd => LastInstruction;
 }
 
 /// <summary>effect pattern 的根匹配。</summary>
@@ -272,31 +346,41 @@ public sealed class EffectMatch : EffectTarget
 {
     internal EffectMatch(MethodDefinition method, EffectPattern pattern,
         Instruction firstInstruction, Instruction lastInstruction,
-        IReadOnlyDictionary<string, MatchCapture> captures)
-        : base(method, name: null, firstInstruction, lastInstruction)
+        IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
+        : base(method, source: null, firstInstruction, lastInstruction)
     {
         Pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
         Captures = new MatchCaptureCollection(captures);
     }
 
     public EffectPattern Pattern { get; }
-    public MatchCaptureCollection Captures { get; }
-}
+    internal MatchCaptureCollection Captures { get; }
 
-/// <summary>命名的 void/effect capture。</summary>
-public sealed class EffectCapture : EffectTarget
-{
-    internal EffectCapture(MethodDefinition method, string name,
-        Instruction firstInstruction, Instruction lastInstruction)
-        : base(method, name, firstInstruction, lastInstruction) { }
+    public LocalCapture this[CilLocal local] => Captures.Require<LocalCapture>(local);
+    public ArgumentCapture this[CilArg argument] => Captures.Require<ArgumentCapture>(argument);
+    public ArgumentCapture this[CilThis thisArg] => Captures.Require<ArgumentCapture>(thisArg);
+    public ValueCapture this[ValuePattern fragment] => Captures.Require<ValueCapture>(fragment);
+    public ConditionCapture this[ConditionPattern fragment] => Captures.Require<ConditionCapture>(fragment);
+
+    /// <summary>按 lambda 参数名取回参数捕获（普通类型的 lambda 参数、<c>CilArg&lt;T&gt;</c>/<c>CilThis&lt;T&gt;</c> 参数）。</summary>
+    public ArgumentCapture Arg(string parameterName)
+        => Captures.Require<ArgumentCapture>(Pattern.Parameter(parameterName));
+
+    /// <summary>取回 <c>__this</c> 参数（或 <c>CilThis&lt;T&gt;</c> 类型的 lambda 参数）的捕获。</summary>
+    public ArgumentCapture This()
+        => Captures.Require<ArgumentCapture>(LambdaParameterLookup.This(Pattern));
+
+    /// <summary>按 lambda 参数名取回 <c>CilLocal&lt;T&gt;</c> 类型参数的捕获。</summary>
+    public LocalCapture Local(string parameterName)
+        => Captures.Require<LocalCapture>(Pattern.Parameter(parameterName));
 }
 
 /// <summary>一个短路 condition decision；内部可能包含多个 branch，但公开为单一语义目标。</summary>
 public abstract class ConditionTarget : MatchCapture
 {
-    private protected ConditionTarget(MethodDefinition method, string? name,
+    private protected ConditionTarget(MethodDefinition method, ExpressionPattern? source,
         ConditionFragment fragment)
-        : base(method, name)
+        : base(method, source)
     {
         Fragment = fragment ?? throw new ArgumentNullException(nameof(fragment));
         FirstInstruction = fragment.Entry.Leader;
@@ -313,26 +397,67 @@ public abstract class ConditionTarget : MatchCapture
     public Instruction LastInstruction { get; }
     public bool CanRewrite { get; }
     public string? RewriteFailureReason { get; }
+
+    internal override Instruction RangeStart => FirstInstruction;
+    internal override Instruction RangeEnd => LastInstruction;
 }
 
 /// <summary>condition pattern 的根匹配。</summary>
 public sealed class ConditionMatch : ConditionTarget
 {
     internal ConditionMatch(MethodDefinition method, ConditionPattern pattern,
-        ConditionFragment fragment, IReadOnlyDictionary<string, MatchCapture> captures)
-        : base(method, name: null, fragment)
+        ConditionFragment fragment, IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
+        : base(method, source: null, fragment)
     {
         Pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
         Captures = new MatchCaptureCollection(captures);
     }
 
     public ConditionPattern Pattern { get; }
-    public MatchCaptureCollection Captures { get; }
+    internal MatchCaptureCollection Captures { get; }
+
+    public LocalCapture this[CilLocal local] => Captures.Require<LocalCapture>(local);
+    public ArgumentCapture this[CilArg argument] => Captures.Require<ArgumentCapture>(argument);
+    public ArgumentCapture this[CilThis thisArg] => Captures.Require<ArgumentCapture>(thisArg);
+    public ValueCapture this[ValuePattern fragment] => Captures.Require<ValueCapture>(fragment);
+    public ConditionCapture this[ConditionPattern fragment] => Captures.Require<ConditionCapture>(fragment);
+
+    /// <summary>按 lambda 参数名取回参数捕获（普通类型的 lambda 参数、<c>CilArg&lt;T&gt;</c>/<c>CilThis&lt;T&gt;</c> 参数）。</summary>
+    public ArgumentCapture Arg(string parameterName)
+        => Captures.Require<ArgumentCapture>(Pattern.Parameter(parameterName));
+
+    /// <summary>取回 <c>__this</c> 参数（或 <c>CilThis&lt;T&gt;</c> 类型的 lambda 参数）的捕获。</summary>
+    public ArgumentCapture This()
+        => Captures.Require<ArgumentCapture>(LambdaParameterLookup.This(Pattern));
+
+    /// <summary>按 lambda 参数名取回 <c>CilLocal&lt;T&gt;</c> 类型参数的捕获。</summary>
+    public LocalCapture Local(string parameterName)
+        => Captures.Require<LocalCapture>(Pattern.Parameter(parameterName));
 }
 
 /// <summary>由 Mark 捕获的 condition 子片段。</summary>
 public sealed class ConditionCapture : ConditionTarget
 {
-    internal ConditionCapture(MethodDefinition method, string name, ConditionFragment fragment)
-        : base(method, name, fragment) { }
+    internal ConditionCapture(MethodDefinition method, ExpressionPattern source, ConditionFragment fragment)
+        : base(method, source, fragment) { }
+}
+
+internal static class LambdaParameterLookup
+{
+    public static ExpressionPattern This(ExpressionPattern pattern)
+    {
+        if (pattern.Parameters.TryGetValue(PatternExpressionParser.ThisParameterName, out var named))
+            return named;
+        ExpressionPattern? found = null;
+        foreach (var leaf in pattern.Parameters.Values)
+        {
+            if (leaf is not CilThis)
+                continue;
+            if (found is not null)
+                throw new InvalidOperationException($"Pattern '{pattern}' declares more than one this parameter.");
+            found = leaf;
+        }
+        return found ?? throw new KeyNotFoundException(
+            $"Pattern '{pattern}' has no this parameter. Declare a lambda parameter named '__this' or of type CilThis<T>.");
+    }
 }

@@ -100,7 +100,7 @@ public sealed class PatternMatcher
 
     private IReadOnlyList<TMatch> FindValues<TMatch>(ValuePattern pattern,
         MatchDiagnosticCollector diagnostics,
-        Func<TargetOccurrence, IReadOnlyDictionary<string, MatchCapture>, TMatch> create)
+        Func<TargetOccurrence, IReadOnlyDictionary<ExpressionPattern, MatchCapture>, TMatch> create)
         where TMatch : MatchCapture
     {
         var result = new List<TMatch>();
@@ -111,9 +111,7 @@ public sealed class PatternMatcher
         {
             var occurrence = TargetOccurrence.Direct(candidate, consumer: null);
             var context = new MatchContext();
-            if (!matcher.TryMatch(pattern.Root, occurrence, context, out var matched))
-                continue;
-            if (!ApplyLocalConstraints(pattern, context, matcher, diagnostics))
+            if (!matcher.TryMatchRoot(pattern.Root, occurrence, context, out var matched))
                 continue;
             if (!seen.Add((matched.Node.ProducerInstruction, matched.UseAnchor)))
                 continue;
@@ -137,9 +135,7 @@ public sealed class PatternMatcher
         {
             var occurrence = TargetOccurrence.Direct(candidate.Expression, candidate.TerminalInstruction);
             var context = new MatchContext();
-            if (!matcher.TryMatch(pattern.Root, occurrence, context, out var matched))
-                continue;
-            if (!ApplyLocalConstraints(pattern, context, matcher, diagnostics))
+            if (!matcher.TryMatchRoot(pattern.Root, occurrence, context, out var matched))
                 continue;
             if (!seen.Add(candidate.TerminalInstruction))
                 continue;
@@ -165,9 +161,7 @@ public sealed class PatternMatcher
                 continue;
 
             var context = new MatchContext();
-            if (!conditionMatcher.TryMatch(pattern.Root, block, context, out var fragment))
-                continue;
-            if (!ApplyLocalConstraints(pattern, context, conditionMatcher.ExpressionMatcher, diagnostics))
+            if (!conditionMatcher.TryMatchRoot(pattern.Root, block, context, out var fragment))
                 continue;
 
             fragment.AnalyzeRewriteSafety();
@@ -183,7 +177,7 @@ public sealed class PatternMatcher
     }
 
     private ValueMatch CreateValueMatch(ValuePattern pattern, TargetOccurrence matched,
-        IReadOnlyDictionary<string, MatchCapture> captures)
+        IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
     {
         var valueType = matched.Node.ResultType
                         ?? throw new InvalidOperationException("A value match produced no value type.");
@@ -192,7 +186,7 @@ public sealed class PatternMatcher
     }
 
     private ValueMatch<T> CreateValueMatch<T>(ValuePattern<T> pattern, TargetOccurrence matched,
-        IReadOnlyDictionary<string, MatchCapture> captures)
+        IReadOnlyDictionary<ExpressionPattern, MatchCapture> captures)
     {
         var valueType = matched.Node.ResultType
                         ?? throw new InvalidOperationException("A value match produced no value type.");
@@ -200,9 +194,9 @@ public sealed class PatternMatcher
             matched.Node.ProducerInstruction, matched.UseAnchor, matched.Consumer, captures);
     }
 
-    private IReadOnlyDictionary<string, MatchCapture> MaterializeCaptures(MatchContext context)
+    private IReadOnlyDictionary<ExpressionPattern, MatchCapture> MaterializeCaptures(MatchContext context)
     {
-        var result = new Dictionary<string, MatchCapture>(StringComparer.Ordinal);
+        var result = new Dictionary<ExpressionPattern, MatchCapture>();
         foreach (var pair in context.Captures)
         {
             var capture = pair.Value.ToPublic(Method);
@@ -210,46 +204,6 @@ public sealed class PatternMatcher
             result[pair.Key] = capture;
         }
         return result;
-    }
-
-    private bool ApplyLocalConstraints(ExpressionPattern pattern, MatchContext context,
-        ExpressionNodeMatcher matcher, MatchDiagnosticCollector? diagnostics)
-    {
-        foreach (var constraint in pattern.LocalDefinitionConstraints)
-        {
-            if (!context.Captures.TryGetValue(constraint.CaptureName, out var capture)
-                || capture is not ValueInternalCapture { Occurrence.Node: TargetLocalReadNode localRead })
-            {
-                diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed, null,
-                    $"LocalDefinedBy('{constraint.CaptureName}') failed: the pattern did not capture '{constraint.CaptureName}' as a local variable read.");
-                return false;
-            }
-
-            if (!_model.LocalDefinitions.TryGetUniqueDefinition(localRead,
-                    out var store, out var storedValue, out var failure))
-            {
-                //失败原因此前被计算后丢弃；记录下来供匹配失败时诊断。
-                diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed,
-                    localRead.ProducerInstruction,
-                    $"LocalDefinedBy('{constraint.CaptureName}') failed: {failure}");
-                return false;
-            }
-
-            var definitionContext = new MatchContext();
-            var definitionOccurrence = new TargetOccurrence(storedValue, store, store);
-            if (!matcher.TryMatch(constraint.Definition.Root, definitionOccurrence,
-                    definitionContext, out _))
-            {
-                diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed, store,
-                    $"LocalDefinedBy('{constraint.CaptureName}') failed: the defining expression stored at IL_{store.Offset:X4} did not match the required definition pattern.");
-                return false;
-            }
-
-            if (!ApplyLocalConstraints(constraint.Definition, definitionContext, matcher, diagnostics))
-                return false;
-        }
-
-        return true;
     }
 }
 
@@ -275,27 +229,30 @@ internal readonly struct TargetOccurrence
 
 internal abstract class InternalCapture
 {
-    protected InternalCapture(string? name) => Name = name;
-    public string? Name { get; }
+    protected InternalCapture(ExpressionPattern key) => Key = key ?? throw new ArgumentNullException(nameof(key));
+
+    /// <summary>以哪个 pattern 对象的身份捕获。</summary>
+    public ExpressionPattern Key { get; }
+
     public abstract MatchCapture ToPublic(MethodDefinition method);
 }
 
 internal sealed class ValueInternalCapture : InternalCapture
 {
-    public ValueInternalCapture(string? name, TargetOccurrence occurrence) : base(name)
+    public ValueInternalCapture(ExpressionPattern key, TargetOccurrence occurrence) : base(key)
         => Occurrence = occurrence;
 
     public TargetOccurrence Occurrence { get; }
 
     public override MatchCapture ToPublic(MethodDefinition method)
     {
-        var name = Name ?? throw new InvalidOperationException("Only named captures can be materialized.");
         var node = Occurrence.Node;
 
         if (node.ResultType is null || node.ResultType.MetadataType == MetadataType.Void)
         {
-            return new EffectCapture(method, name, node.FirstInstruction,
-                Occurrence.Consumer ?? Occurrence.UseAnchor);
+            //void 节点只可能是 effect pattern 的根，而根捕获与 EffectMatch 本身重复；
+            //leaf 工厂拒绝 Void 类型，正常路径到不了这里。
+            throw new InvalidOperationException("A void expression cannot be captured.");
         }
 
         //经由取地址指令匹配到的值：栈上实际是 managed pointer，占位改写不安全
@@ -303,7 +260,7 @@ internal sealed class ValueInternalCapture : InternalCapture
 
         if (node is TargetArgumentNode argument)
         {
-            return new ArgumentCapture(method, name, node.ResultType, node.FirstInstruction,
+            return new ArgumentCapture(method, Key, node.ResultType, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer,
                 argument.IsThis, argument.ParameterIndex, argument.Parameter)
             {
@@ -313,14 +270,14 @@ internal sealed class ValueInternalCapture : InternalCapture
 
         if (node is TargetLocalReadNode local)
         {
-            return new LocalCapture(method, name, local.Variable, node.FirstInstruction,
+            return new LocalCapture(method, Key, local.Variable, node.FirstInstruction,
                 node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer)
             {
                 IsAddressBacked = isAddressBacked,
             };
         }
 
-        return new ValueCapture(method, name, node.ResultType, node.FirstInstruction,
+        return new ValueCapture(method, Key, node.ResultType, node.FirstInstruction,
             node.ProducerInstruction, Occurrence.UseAnchor, Occurrence.Consumer)
         {
             IsAddressBacked = isAddressBacked,
@@ -333,40 +290,36 @@ internal sealed class ValueInternalCapture : InternalCapture
 
 internal sealed class ConditionInternalCapture : InternalCapture
 {
-    public ConditionInternalCapture(string? name, ConditionFragment fragment) : base(name)
+    public ConditionInternalCapture(ExpressionPattern key, ConditionFragment fragment) : base(key)
         => Fragment = fragment;
 
     public ConditionFragment Fragment { get; }
 
     public override MatchCapture ToPublic(MethodDefinition method)
-    {
-        var name = Name ?? throw new InvalidOperationException("Only named captures can be materialized.");
-        return new ConditionCapture(method, name, Fragment);
-    }
+        => new ConditionCapture(method, Key, Fragment);
 }
 
+/// <summary>一次匹配过程中的捕获表，以 pattern 对象为 key（引用相等）。</summary>
 internal sealed class MatchContext
 {
-    private Dictionary<string, InternalCapture> _captures = new(StringComparer.Ordinal);
-    public IReadOnlyDictionary<string, InternalCapture> Captures => _captures;
+    private Dictionary<ExpressionPattern, InternalCapture> _captures = new();
+    public IReadOnlyDictionary<ExpressionPattern, InternalCapture> Captures => _captures;
 
     public MatchContext Clone()
     {
         var clone = new MatchContext();
-        clone._captures = new Dictionary<string, InternalCapture>(_captures, StringComparer.Ordinal);
+        clone._captures = new Dictionary<ExpressionPattern, InternalCapture>(_captures);
         return clone;
     }
 
     public void CopyFrom(MatchContext other)
-        => _captures = new Dictionary<string, InternalCapture>(other._captures, StringComparer.Ordinal);
+        => _captures = new Dictionary<ExpressionPattern, InternalCapture>(other._captures);
 
-    public bool TryAdd(string name, InternalCapture capture)
+    public bool TryAdd(ExpressionPattern key, InternalCapture capture)
     {
-        if (string.IsNullOrWhiteSpace(name))
+        if (_captures.ContainsKey(key))
             return false;
-        if (_captures.ContainsKey(name))
-            return false;
-        _captures.Add(name, capture);
+        _captures.Add(key, capture);
         return true;
     }
 }
@@ -378,12 +331,40 @@ internal sealed class ExpressionNodeMatcher
     private readonly MatchDiagnosticCollector? _diagnostics;
     private readonly HashSet<(Instruction load, Instruction definition)> _activeLocalExpansion = new();
 
+    private PatternNode? _currentRoot;
+
+    /// <summary>当前这次匹配的根节点；"根"是相对一次匹配而言的。</summary>
+    internal PatternNode? CurrentRoot
+    {
+        get => _currentRoot;
+        set => _currentRoot = value;
+    }
+
     public ExpressionNodeMatcher(MethodModel model, PatternOptions options,
         MatchDiagnosticCollector? diagnostics = null)
     {
         _model = model;
         _options = options;
         _diagnostics = diagnostics;
+    }
+
+    /// <summary>
+    /// 以 <paramref name="root"/> 为本次匹配的根做整棵匹配。"根"是相对一次匹配而言的：
+    /// 同一个节点被嵌进别的 pattern 时不是根，独立匹配时是根。
+    /// </summary>
+    public bool TryMatchRoot(PatternNode root, TargetOccurrence target,
+        MatchContext context, out TargetOccurrence matched)
+    {
+        var previousRoot = _currentRoot;
+        _currentRoot = root;
+        try
+        {
+            return TryMatch(root, target, context, out matched);
+        }
+        finally
+        {
+            _currentRoot = previousRoot;
+        }
     }
 
     public bool TryMatch(PatternNode pattern, TargetOccurrence target,
@@ -407,7 +388,7 @@ internal sealed class ExpressionNodeMatcher
         {
             if (!TryMatch(mark.Inner, target, context, out matched))
                 return false;
-            return context.TryAdd(mark.CaptureName, new ValueInternalCapture(mark.CaptureName, matched));
+            return context.TryAdd(mark.Capture, new ValueInternalCapture(mark.Capture, matched));
         }
 
         //地址节点（ldloca/ldarga/ldelema）对 C# 层不可见：struct 接收者与 ref/out 实参
@@ -422,7 +403,7 @@ internal sealed class ExpressionNodeMatcher
         // 同时匹配到原始位置和 ldloc位置
         if (pattern is not LocalPatternNode && target.Node is TargetLocalReadNode localRead
             && _options.TemporaryNormalization == TemporaryNormalization.UniqueDefinitions
-            && !pattern.IsRoot)
+            && !ReferenceEquals(pattern, _currentRoot))
         {
             if (_model.LocalDefinitions.TryGetUniqueDefinition(localRead,
                     out var store, out var storedValue, out var expansionFailure))
@@ -456,37 +437,44 @@ internal sealed class ExpressionNodeMatcher
                 if (!TypeMatches(target.Node, any.ResultType))
                     break;
                 matched = target;
-                return context.TryAdd(any.CaptureName, new ValueInternalCapture(any.CaptureName, matched));
+                return any.Capture is null
+                       || context.TryAdd(any.Capture, new ValueInternalCapture(any.Capture, matched));
 
             case ArgumentPatternNode argumentPattern when target.Node is TargetArgumentNode argument:
                 if (!TypeMatches(argument, argumentPattern.ResultType)
                     || argument.IsThis != argumentPattern.IsThis
-                    || (argumentPattern.Index.HasValue && argument.ParameterIndex != argumentPattern.Index.Value))
+                    || (argumentPattern.Index.HasValue && argument.ParameterIndex != argumentPattern.Index.Value)
+                    || (argumentPattern.ParameterName is not null
+                        && !string.Equals(argument.Parameter?.Name, argumentPattern.ParameterName, StringComparison.Ordinal)))
                     break;
                 matched = target;
-                return argumentPattern.CaptureName is null
-                       || context.TryAdd(argumentPattern.CaptureName,
-                           new ValueInternalCapture(argumentPattern.CaptureName, matched));
-
-            case LambdaParameterPatternNode parameterPattern when target.Node is TargetArgumentNode argument:
-                if (!TypeMatches(argument, parameterPattern.ResultType)
-                    || (parameterPattern.ParameterName == "__this"
-                        ? !argument.IsThis
-                        : argument.IsThis
-                          || !string.Equals(argument.Parameter?.Name,
-                              parameterPattern.ParameterName, StringComparison.Ordinal)))
-                    break;
-                matched = target;
-                return true;
+                if (argumentPattern.Capture is null
+                    || context.TryAdd(argumentPattern.Capture,
+                        new ValueInternalCapture(argumentPattern.Capture, matched)))
+                    return true;
+                //绑定类 pattern 重复出现（合一）：已绑定到同一个 argument 才算命中。
+                return context.Captures[argumentPattern.Capture] is ValueInternalCapture
+                       { Occurrence.Node: TargetArgumentNode previousArgument }
+                       && previousArgument.IsThis == argument.IsThis
+                       && previousArgument.ParameterIndex == argument.ParameterIndex;
 
             case LocalPatternNode localPattern when target.Node is TargetLocalReadNode local:
                 if (!TypeMatches(local, localPattern.ResultType)
                     || (localPattern.Index.HasValue && local.Variable.Index != localPattern.Index.Value))
                     break;
                 matched = target;
-                return localPattern.CaptureName is null
-                       || context.TryAdd(localPattern.CaptureName,
-                           new ValueInternalCapture(localPattern.CaptureName, matched));
+                if (localPattern.Capture is null)
+                    return localPattern.Definition is null || SatisfiesDefinition(localPattern, local);
+                if (context.TryAdd(localPattern.Capture,
+                        new ValueInternalCapture(localPattern.Capture, matched)))
+                {
+                    //首次绑定：定义约束就地验证。合一命中的后续出现读的是同一个变量，不再重验。
+                    return localPattern.Definition is null || SatisfiesDefinition(localPattern, local);
+                }
+                //绑定类 pattern 重复出现（合一）：已绑定到同一个 VariableDefinition 才算命中。
+                return context.Captures[localPattern.Capture] is ValueInternalCapture
+                       { Occurrence.Node: TargetLocalReadNode previousLocal }
+                       && ReferenceEquals(previousLocal.Variable, local.Variable);
 
             case ConstantPatternNode constant when target.Node is TargetConstantNode targetConstant:
                 if (!TypeMatches(targetConstant, constant.ResultType)
@@ -629,6 +617,36 @@ internal sealed class ExpressionNodeMatcher
 
         matched = default;
         return false;
+    }
+
+    /// <summary>
+    /// Cil.Local(definedBy) 的定义约束：该 ldloc 必须恰好有一个能到达的 stloc（且变量未被取地址），
+    /// 存入的表达式要匹配 definedBy。definedBy 在另一处 IL 上独立匹配，用新的上下文，不与外层捕获合一。
+    /// </summary>
+    private bool SatisfiesDefinition(LocalPatternNode localPattern, TargetLocalReadNode local)
+    {
+        var definition = localPattern.Definition!;
+        var label = localPattern.Capture?.ToString() ?? "local";
+
+        if (!_model.LocalDefinitions.TryGetUniqueDefinition(local,
+                out var store, out var storedValue, out var failure))
+        {
+            //失败原因此前被计算后丢弃；记录下来供匹配失败时诊断。
+            _diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed,
+                local.ProducerInstruction,
+                $"Local definition constraint '{label}' failed: {failure}");
+            return false;
+        }
+
+        var definitionOccurrence = new TargetOccurrence(storedValue, store, store);
+        if (!TryMatchRoot(definition.Root, definitionOccurrence, new MatchContext(), out _))
+        {
+            _diagnostics?.Report(MatchDiagnosticKind.LocalConstraintFailed, store,
+                $"Local definition constraint '{label}' failed: the defining expression stored at IL_{store.Offset:X4} did not match the required definition pattern.");
+            return false;
+        }
+
+        return true;
     }
 
     private bool MatchOptionalChild(PatternNode? pattern, TargetExpressionNode? target,
@@ -861,6 +879,23 @@ internal sealed class ConditionPatternMatcher
 
     public ExpressionNodeMatcher ExpressionMatcher { get; }
 
+    /// <summary>以 root 为本次匹配的根匹配条件；叶子表达式交给 ExpressionMatcher 时沿用同一个根。</summary>
+    public bool TryMatchRoot(PatternNode root, BasicBlock entry, MatchContext context,
+        out ConditionFragment fragment)
+    {
+        //条件树被拆成叶子后交给 ExpressionMatcher 时，仍以整棵条件 pattern 的根判定根位置。
+        var previousRoot = ExpressionMatcher.CurrentRoot;
+        ExpressionMatcher.CurrentRoot = root;
+        try
+        {
+            return TryMatch(root, entry, context, out fragment);
+        }
+        finally
+        {
+            ExpressionMatcher.CurrentRoot = previousRoot;
+        }
+    }
+
     public bool TryMatch(PatternNode pattern, BasicBlock entry, MatchContext context,
         out ConditionFragment fragment)
     {
@@ -882,8 +917,8 @@ internal sealed class ConditionPatternMatcher
         {
             if (!TryMatch(mark.Inner, entry, context, out fragment))
                 return false;
-            return context.TryAdd(mark.CaptureName,
-                new ConditionInternalCapture(mark.CaptureName, fragment));
+            return context.TryAdd(mark.Capture,
+                new ConditionInternalCapture(mark.Capture, fragment));
         }
 
         if (pattern is UnaryPatternNode { Operation: ExpressionType.Not } not)
