@@ -119,15 +119,15 @@ public sealed class ConditionPatternTests
         var callB = RuntimeSymbols.Method<B>(nameof(B.CallB));
         var callC = RuntimeSymbols.Method<Ops>(nameof(Ops.CallC));
         var callD = RuntimeSymbols.Method<Ops>(nameof(Ops.CallD));
+        var abFragment = DualPattern.Condition(dsl,
+            () => Ops.CallA() && P.Arg<B>(0).CallB(),
+            () => P.Call(callA).AndAlso(P.Arg(0, bType).Call(callB)));
         var pattern = DualPattern.Condition(dsl,
-            () => P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB())
-                  && (Ops.CallC() || Ops.CallD()),
-            () => P.Mark("ab",
-                    P.Call(callA).AndAlso(P.Arg(0, bType).Call(callB)))
-                .AndAlso(P.Call(callC).OrElse(P.Call(callD))));
+            () => abFragment && (Ops.CallC() || Ops.CallD()),
+            () => abFragment.Expr.AndAlso(P.Call(callC).OrElse(P.Call(callD))));
 
         var match = method.Match(pattern).Single();
-        var ab = match.Captures.Condition("ab");
+        var ab = match[abFragment];
 
         Assert.Single(ab.Fragment.TrueExits);
         Assert.Equal(2, ab.Fragment.FalseExits.Count);

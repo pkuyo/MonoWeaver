@@ -19,11 +19,14 @@ public sealed class CallsAndMembersPatternTests
         var aType = RuntimeSymbols.Type<A>(assignable: true);
         var callB = RuntimeSymbols.Method<A>(nameof(A.B));
         var callC = RuntimeSymbols.Method<B>(nameof(B.C));
+        var hookFragment = DualPattern.Value(dsl,
+            () => P.Arg<A>(0).B(),
+            () => P.Arg(0, aType).Call(callB));
         var pattern = DualPattern.Value(dsl,
-            () => P.Mark("hook", P.Arg<A>(0).B()).C(),
-            () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callC));
+            () => hookFragment.Value.C(),
+            () => hookFragment.Expr.Call(callC));
 
-        var hook = method.Match(pattern).Single().Captures.Value("hook");
+        var hook = method.Match(pattern).Single()[hookFragment];
 
         PatternTestSupport.AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         PatternTestSupport.AssertCallTo(hook.ConsumerInstruction, nameof(B.C));
@@ -38,13 +41,16 @@ public sealed class CallsAndMembersPatternTests
         var aType = RuntimeSymbols.Type<A>(assignable: true);
         var callB = RuntimeSymbols.Method<A>(nameof(A.B));
         var callC = RuntimeSymbols.Method<B>(nameof(B.C));
+        var hookFragment = DualPattern.Value(dsl,
+            () => P.Arg<A>(0).B(),
+            () => P.Arg(0, aType).Call(callB));
         var pattern = DualPattern.Value(dsl,
-            () => P.Mark("hook", P.Arg<A>(0).B()).C(),
-            () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callC));
+            () => hookFragment.Value.C(),
+            () => hookFragment.Expr.Call(callC));
 
         var match = Assert.Single(method.Match(pattern).Where(candidate =>
             ReferenceEquals(candidate.DefinitionInstruction, candidate.ResultInstruction)));
-        var hook = match.Captures.Value("hook");
+        var hook = match[hookFragment];
 
         PatternTestSupport.AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         Assert.True(hook.ResultInstruction.OpCode.Code is Code.Ldloc or Code.Ldloc_S or Code.Ldloc_0,
@@ -283,16 +289,17 @@ public sealed class CallsAndMembersPatternTests
             .RequireMethod("CallBase");
         var bType = RuntimeSymbols.Type<B>(assignable: true);
         var baseCall = RuntimeSymbols.Method<B>(nameof(B.C));
+        var self = Cil.Any<B>();
         var relaxed = DualPattern.Value(dsl,
-            () => P.Any<B>("self").C(),
-            () => P.Any(bType, "self").Call(baseCall));
+            () => self.Value.C(),
+            () => self.Expr.Call(baseCall));
 
         Assert.Single(method.Match(relaxed));
 
         var strictOptions = new PatternOptions { IgnoreCallOpcodeDifference = false };
         var strict = DualPattern.Value(dsl,
-            () => P.Any<B>("self").C(),
-            () => P.Any(bType, "self").Call(baseCall),
+            () => self.Value.C(),
+            () => self.Expr.Call(baseCall),
             strictOptions);
 
         Assert.Empty(method.Match(strict));

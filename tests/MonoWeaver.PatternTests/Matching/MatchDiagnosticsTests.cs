@@ -44,8 +44,9 @@ public sealed class MatchDiagnosticsTests
         var method = PatternTestSupport.FixtureMethod(module, "WriteAndReturnStaticField");
 
         //return Type.F = x; 的赋值结果被复用，该写入不作为可删除 effect 提供
+        var value = Cil.Any<int>();
         var matches = method.Match(Cil.Effect(() =>
-            P.StoreField(MemberHost.StaticField, P.Any<int>("value"))));
+            P.StoreField(MemberHost.StaticField, value)));
 
         Assert.Empty(matches);
         Assert.Contains(matches.Diagnostics, candidate =>
@@ -59,8 +60,8 @@ public sealed class MatchDiagnosticsTests
         using var module = PatternTestSupport.OpenUnoptimizedFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "MultipleDefinitions");
 
-        var pattern = Cil.Value(() => P.Local<bool>("ret"))
-            .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
+        var ret = Cil.Local(Cil.Value(() => Ops.XXX()));
+        var pattern = Cil.Value(() => ret.Value);
         var matches = method.Match(pattern);
 
         Assert.Empty(matches);

@@ -23,10 +23,10 @@ public sealed class CecilMetadataPatternTests
         var symbols = CilSymbols.In("GameAssembly");
         var player = symbols.Type("Game.Player");
         var getState = player.InstanceMethod("GetState", CilType.Int32);
-        var match = target.Match(Cil.Value(
-            P.Arg(0, player).Call(getState).Mark("state"))).Single();
+        var state = Cil.Value(P.Arg(0, player).Call(getState));
+        var match = target.Match(Cil.Value(state.Expr)).Single();
 
-        match.Captures.Value("state").Transform(transform).Apply();
+        match[state].Transform(transform).Apply();
 
         var imported = (MethodReference)target.Body.Instructions
             .Where(i => i.OpCode.Code == Code.Call)

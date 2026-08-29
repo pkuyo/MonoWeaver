@@ -33,11 +33,15 @@ public sealed class CaptureAndAmbiguityPatternTests
         var aType = RuntimeSymbols.Type<A>(assignable: true);
         var callB = RuntimeSymbols.Method<A>(nameof(A.B));
         var callD = RuntimeSymbols.Method<B>(nameof(B.D));
+        //内嵌片段替代原 Mark：片段对象即捕获身份。
+        var hookFragment = DualPattern.Value(dsl,
+            () => P.Arg<A>(0).B(),
+            () => P.Arg(0, aType).Call(callB));
         var pattern = DualPattern.Value(dsl,
-            () => P.Mark("hook", P.Arg<A>(0).B()).D(),
-            () => P.Arg(0, aType).Call(callB).Mark("hook").Call(callD));
+            () => hookFragment.Value.D(),
+            () => hookFragment.Expr.Call(callD));
 
-        var hook = method.Match(pattern).Single().Captures.Value("hook");
+        var hook = method.Match(pattern).Single()[hookFragment];
 
         PatternTestSupport.AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         PatternTestSupport.AssertCallTo(hook.ConsumerInstruction, nameof(B.D));
@@ -45,29 +49,42 @@ public sealed class CaptureAndAmbiguityPatternTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void DuplicateCaptureNameRejectsCandidateInsteadOfOverwriting(PatternDsl dsl)
+    public void DuplicateFragmentEmbeddingThrowsAtConstruction(PatternDsl dsl)
     {
-        using var module = PatternTestSupport.OpenFixtureModule();
-        var method = PatternTestSupport.FixtureMethod(module, "Argument0");
-        var pattern = DualPattern.Value(dsl,
-            () => P.Mark("same", P.Mark("same", P.Arg<int>(0))),
-            () => P.Arg(0, CilType.Int32).Mark("same").Mark("same"));
+        var fragment = DualPattern.Value(dsl,
+            () => P.Arg<int>(0),
+            () => P.Arg(0, CilType.Int32));
 
-        Assert.Empty(method.Match(pattern));
+        //形状类 pattern 不绑定身份，同一对象嵌两次在构造期拒绝。
+        Assert.Throws<System.InvalidOperationException>(() => DualPattern.Value(dsl,
+            () => fragment + fragment,
+            () => fragment.Expr + fragment.Expr));
     }
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void MissingLocalConstraintCaptureRejectsCandidate(PatternDsl dsl)
+    public void DuplicateWildcardThrowsAtConstruction(PatternDsl dsl)
+    {
+        var any = Cil.Any<int>();
+
+        Assert.Throws<System.InvalidOperationException>(() => DualPattern.Value(dsl,
+            () => any + any,
+            () => any.Expr + any.Expr));
+    }
+
+    [Theory]
+    [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
+    public void UnsatisfiableLocalDefinitionRejectsAllCandidates(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "Argument0");
+
+        var local = Cil.Local(DualPattern.Value(dsl,
+            () => 1,
+            () => P.Constant(1)));
         var pattern = DualPattern.Value(dsl,
-                () => P.Arg<int>(0),
-                () => P.Arg(0, CilType.Int32))
-            .LocalDefinedBy("missing", DualPattern.Value(dsl,
-                () => 1,
-                () => P.Constant(1)));
+            () => local.Value,
+            () => local.Expr);
 
         Assert.Empty(method.Match(pattern));
     }
@@ -89,18 +106,19 @@ public sealed class CaptureAndAmbiguityPatternTests
 
     [Theory]
     [MemberData(nameof(PatternDslData.Both), MemberType = typeof(PatternDslData))]
-    public void CaptureAccessorsRejectWrongCaptureKind(PatternDsl dsl)
+    public void CaptureIndexerRejectsUnrelatedPattern(PatternDsl dsl)
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "Argument0");
+        var arg = Cil.Arg<int>(0);
         var pattern = DualPattern.Value(dsl,
-            () => P.Arg<int>(0, "argument"),
-            () => P.Arg(0, CilType.Int32, "argument"));
+            () => arg.Value,
+            () => arg.Expr);
         var match = method.Match(pattern).Single();
 
-        Assert.IsType<ArgumentCapture>(match.Captures.Argument("argument"));
-        Assert.Throws<System.InvalidOperationException>(() => match.Captures.Local("argument"));
-        Assert.Throws<System.Collections.Generic.KeyNotFoundException>(() => match.Captures.Value("missing"));
+        Assert.IsType<ArgumentCapture>(match[arg]);
+        var unrelated = Cil.Arg<int>(0);
+        Assert.Throws<System.Collections.Generic.KeyNotFoundException>(() => match[unrelated]);
     }
 
     [Theory]

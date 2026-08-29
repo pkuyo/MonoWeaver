@@ -147,12 +147,15 @@ public sealed class BinaryPatternTests
     {
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "NotEqual");
+        var leftFragment = DualPattern.Value(dsl,
+            () => P.Arg<int>(0),
+            () => P.Arg(0, CilType.Int32));
         var pattern = DualPattern.Value(dsl,
-            () => P.Mark("left", P.Arg<int>(0)) != P.Arg<int>(1),
-            () => P.Arg(0, CilType.Int32).Mark("left") != P.Arg(1, CilType.Int32));
+            () => leftFragment != P.Arg<int>(1),
+            () => leftFragment.Expr != P.Arg(1, CilType.Int32));
 
         var match = method.Match(pattern).Single();
-        var left = match.Captures.Value("left");
+        var left = match[leftFragment];
 
         Assert.NotNull(left.ConsumerInstruction);
         var consumer = left.ConsumerInstruction!;

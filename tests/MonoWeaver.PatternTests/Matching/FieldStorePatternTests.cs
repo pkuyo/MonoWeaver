@@ -17,17 +17,18 @@ public sealed class FieldStorePatternTests
         var method = PatternTestSupport.FixtureMethod(module, "WriteInstanceField");
         var field = RuntimeSymbols.Field<MemberHost>(nameof(MemberHost.InstanceField));
 
+        var amount = Cil.Arg<int>(1);
         var pattern = DualPattern.Effect(dsl,
-            () => P.StoreField(P.Arg<MemberHost>(0).InstanceField, P.Arg<int>(1, "amount")),
+            () => P.StoreField(P.Arg<MemberHost>(0).InstanceField, amount),
             () => P.StoreField(
                 P.Arg(0, RuntimeSymbols.Type<MemberHost>(assignable: true)),
                 field,
-                P.Arg(1, RuntimeSymbols.Type<int>(assignable: true), "amount")));
+                amount.Expr));
 
         var match = method.Match(pattern).Single();
 
         Assert.Equal(Code.Stfld, match.LastInstruction.OpCode.Code);
-        Assert.Equal(1, match.Captures.Argument("amount").ParameterIndex);
+        Assert.Equal(1, match[amount].ParameterIndex);
     }
 
     [Theory]
@@ -92,12 +93,13 @@ public sealed class FieldStorePatternTests
         var method = PatternTestSupport.FixtureMethod(module, "WriteStaticField");
         var otherField = RuntimeSymbols.Field<MemberHost>(nameof(MemberHost.InstanceField));
 
+        var value = Cil.Any<int>();
         var pattern = DualPattern.Effect(dsl,
-            () => P.StoreField(P.Arg<MemberHost>(0).InstanceField, P.Any<int>("value")),
+            () => P.StoreField(P.Arg<MemberHost>(0).InstanceField, value),
             () => P.StoreField(
                 P.Arg(0, RuntimeSymbols.Type<MemberHost>(assignable: true)),
                 otherField,
-                P.Any(RuntimeSymbols.Type<int>(assignable: true), "value")));
+                value.Expr));
 
         Assert.Empty(method.Match(pattern));
     }
@@ -124,8 +126,9 @@ public sealed class FieldStorePatternTests
         var method = PatternTestSupport.FixtureMethod(module, "WriteAndReturnStaticField");
 
         //return Type.F = x; 的赋值结果被 dup 复用，删除会导致 ret 栈下溢——不作为 effect 提供
+        var value = Cil.Any<int>();
         Assert.Empty(method.Match(Cil.Effect(() =>
-            P.StoreField(MemberHost.StaticField, P.Any<int>("value")))));
+            P.StoreField(MemberHost.StaticField, value))));
     }
 
     [Fact]
@@ -134,8 +137,9 @@ public sealed class FieldStorePatternTests
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "WriteAndReturnInstanceField");
 
+        var value = Cil.Any<int>();
         Assert.Empty(method.Match(Cil.Effect(() =>
-            P.StoreField(P.Arg<MemberHost>(0).InstanceField, P.Any<int>("value")))));
+            P.StoreField(P.Arg<MemberHost>(0).InstanceField, value))));
     }
 
     [Fact]

@@ -36,15 +36,41 @@ public sealed class PatternConstructionValidationTests
         Assert.Throws<ArgumentOutOfRangeException>(() => P.Local(-1, CilType.Int32));
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void MetadataCaptureNamesMustBeNonEmpty(string capture)
+    [Fact]
+    public void LeafFactoriesRejectVoidType()
     {
-        Assert.Throws<ArgumentException>(() => P.Arg(CilType.Int32, capture));
-        Assert.Throws<ArgumentException>(() => P.Local(CilType.Int32, capture));
-        Assert.Throws<ArgumentException>(() => P.Any(CilType.Int32, capture));
-        Assert.Throws<ArgumentException>(() => P.Mark(capture, P.Constant(1)));
+        Assert.Throws<ArgumentException>(() => Cil.Any(CilType.Void));
+        Assert.Throws<ArgumentException>(() => Cil.Local(CilType.Void));
+        Assert.Throws<ArgumentException>(() => Cil.Arg(CilType.Void));
+        Assert.Throws<ArgumentException>(() => Cil.This(CilType.Void));
+    }
+
+    [Fact]
+    public void LeafFactoriesRejectNegativeIndex()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cil.Local<int>(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Cil.Arg<int>(-1));
+    }
+
+    [Fact]
+    public void PatternObjectCannotBeUsedOutsideLambda()
+    {
+        var local = Cil.Local<int>();
+
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            int value = local;
+            return value;
+        });
+    }
+
+    [Fact]
+    public void CilFactoryCallInsideLambdaIsRejected()
+    {
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            Cil.Value(() => Cil.Local<int>(0, null) + 1));
+
+        Assert.Contains("outside the lambda", exception.Message);
     }
 
     [Fact]

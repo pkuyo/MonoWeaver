@@ -20,9 +20,10 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Chain");
 
-        var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
+        var hookFragment = Cil.Value(() => P.Arg<A>(0).B());
+        var pattern = Cil.Value(() => hookFragment.Value.C());
         var match = PatternMatcher.For(method).Find(pattern).Single();
-        var hook = match.Captures.Value("hook");
+        var hook = match[hookFragment];
 
         AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         Assert.Same(hook.DefinitionInstruction, hook.ResultInstruction);
@@ -33,12 +34,11 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Condition");
 
-        var pattern = Cil.Condition(() =>
-            P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB())
-            && (Ops.CallC() || Ops.CallD()));
+        var abFragment = Cil.Condition(() => Ops.CallA() && P.Arg<B>(0).CallB());
+        var pattern = Cil.Condition(() => abFragment && (Ops.CallC() || Ops.CallD()));
 
         var match = PatternMatcher.For(method).Find(pattern).Single();
-        var ab = match.Captures.Condition("ab");
+        var ab = match[abFragment];
         Assert.True(ab.Fragment.TrueExits.Count == 1, "A && B has one true exit into the remaining condition.");
         Assert.True(ab.Fragment.FalseExits.Count == 2, "A && B has two short-circuit false exits.");
         Assert.True(ab.CanRewrite, ab.RewriteFailureReason ?? "The captured condition should be rewritable.");
@@ -62,8 +62,9 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Context");
 
-        var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).D());
-        var hook = PatternMatcher.For(method).Find(pattern).Single().Captures.Value("hook");
+        var hookFragment = Cil.Value(() => P.Arg<A>(0).B());
+        var pattern = Cil.Value(() => hookFragment.Value.D());
+        var hook = PatternMatcher.For(method).Find(pattern).Single()[hookFragment];
 
         AssertCallTo(hook.DefinitionInstruction, nameof(A.B));
         AssertCallTo(hook.ResultInstruction.Next, nameof(B.D));
@@ -91,10 +92,11 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "AssignableArgument");
 
+        var valueLeaf = Cil.Arg<object>(0);
         var match = PatternMatcher.For(method)
-            .Find(Cil.Value(() => P.Arg<object>(0, "value")))
+            .Find(Cil.Value(() => valueLeaf.Value))
             .Single();
-        var value = match.Captures.Argument("value");
+        var value = match[valueLeaf];
 
         Assert.True(value.ParameterIndex == 0, "ParameterDefinition operands must keep explicit parameter indexes.");
         Assert.True(value.DefinitionInstruction.OpCode.Code is Code.Ldarg or Code.Ldarg_S or Code.Ldarg_0,
@@ -139,8 +141,8 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "MultipleDefinitions");
 
-        var pattern = Cil.Condition(() => P.Local<bool>("ret"))
-            .LocalDefinedBy("ret", Cil.Value(() => Ops.XXX()));
+        var ret = Cil.Local(Cil.Value(() => Ops.XXX()));
+        var pattern = Cil.Condition(() => ret.Value);
         var matches = PatternMatcher.For(method).Find(pattern);
 
         Assert.True(matches.Count == 0,
@@ -220,8 +222,9 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "ChainTransform");
 
-        var pattern = Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C());
-        var hook = method.Match(pattern).Single().Captures.Value("hook");
+        var hookFragment = Cil.Value(() => P.Arg<A>(0).B());
+        var pattern = Cil.Value(() => hookFragment.Value.C());
+        var hook = method.Match(pattern).Single()[hookFragment];
         hook.Transform((Func<B, B>)Ops.IdentityB).Apply();
 
         var callbackCall = method.Body.Instructions.Single(instruction =>
@@ -238,8 +241,9 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "Observe");
 
-        var hook = method.Match(Cil.Value(() => P.Mark("hook", P.Arg<A>(0).B()).C()))
-            .Single().Captures.Value("hook");
+        var hookFragment = Cil.Value(() => P.Arg<A>(0).B());
+        var hook = method.Match(Cil.Value(() => hookFragment.Value.C()))
+            .Single()[hookFragment];
         hook.Observe((Action<B>)Ops.ObserveB).Apply();
 
         var duplicate = method.Body.Instructions.Single(instruction => instruction.OpCode.Code == Code.Dup);
@@ -255,9 +259,9 @@ public sealed class PatternMatcherTests
         using var module = OpenFixtureModule();
         var method = FixtureMethod(module, "ConditionTransform");
 
-        var pattern = Cil.Condition(() =>
-            P.Mark("ab", Ops.CallA() && P.Arg<B>(0).CallB()) && (Ops.CallC() || Ops.CallD()));
-        var condition = method.Match(pattern).Single().Captures.Condition("ab");
+        var abFragment = Cil.Condition(() => Ops.CallA() && P.Arg<B>(0).CallB());
+        var pattern = Cil.Condition(() => abFragment && (Ops.CallC() || Ops.CallD()));
+        var condition = method.Match(pattern).Single()[abFragment];
         condition.Transform((Func<bool, bool>)Ops.IdentityBool).Apply();
 
         var callbackCalls = method.Body.Instructions.Count(static instruction =>

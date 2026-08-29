@@ -37,14 +37,15 @@ public sealed class AddressReceiverPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "StructArgCallWithArgument");
         var scaled = RuntimeSymbols.Method<GamePoint>(nameof(GamePoint.Scaled), typeof(int));
 
+        var factor = Cil.Arg<int>(1);
         var pattern = DualPattern.Value(dsl,
-            () => P.Arg<GamePoint>(0).Scaled(P.Arg<int>(1, "factor")),
+            () => P.Arg<GamePoint>(0).Scaled(factor),
             () => P.Arg(0, RuntimeSymbols.Type<GamePoint>())
-                .Call(scaled, P.Arg(1, RuntimeSymbols.Type<int>(assignable: true), "factor")));
+                .Call(scaled, factor.Expr));
 
         var match = method.Match(pattern).Single();
 
-        Assert.Equal(1, match.Captures.Argument("factor").ParameterIndex);
+        Assert.Equal(1, match[factor].ParameterIndex);
     }
 
     [Fact]
@@ -99,12 +100,12 @@ public sealed class AddressReceiverPatternTests
         var mutate = RuntimeSymbols.Method<Ops>(nameof(Ops.Mutate), typeof(int).MakeByRefType());
 
         //ref 实参在 IL 中是 ldarga；pattern 直接按底层参数描述
-        var pattern = Cil.Effect(P.Call(mutate,
-            P.Arg(0, RuntimeSymbols.Type<int>(assignable: true), "target")));
+        var target = Cil.Arg(RuntimeSymbols.Type<int>(assignable: true), 0);
+        var pattern = Cil.Effect(P.Call(mutate, target.Expr));
 
         var match = method.Match(pattern).Single();
 
-        Assert.Equal(0, match.Captures.Argument("target").ParameterIndex);
+        Assert.Equal(0, match[target].ParameterIndex);
     }
 
     [Fact]
@@ -124,9 +125,9 @@ public sealed class AddressReceiverPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "RefArgumentCall");
         var mutate = RuntimeSymbols.Method<Ops>(nameof(Ops.Mutate), typeof(int).MakeByRefType());
 
-        var match = method.Match(Cil.Effect(P.Call(mutate,
-            P.Arg(0, RuntimeSymbols.Type<int>(assignable: true), "target")))).Single();
-        var capture = match.Captures.Argument("target");
+        var target = Cil.Arg(RuntimeSymbols.Type<int>(assignable: true), 0);
+        var match = method.Match(Cil.Effect(P.Call(mutate, target.Expr))).Single();
+        var capture = match[target];
 
         //该 capture 的占位是 ldarga：栈上是指针而非 int，占位改写必须被拒绝
         Assert.True(capture.IsAddressBacked);
@@ -142,8 +143,9 @@ public sealed class AddressReceiverPatternTests
         using var module = PatternTestSupport.OpenFixtureModule();
         var method = PatternTestSupport.FixtureMethod(module, "StructArgCall");
 
-        var match = method.Match(Cil.Value(() => P.Arg<GamePoint>(0, "p").Sum())).Single();
-        var capture = match.Captures.Argument("p");
+        var p = Cil.Arg<GamePoint>(0);
+        var match = method.Match(Cil.Value(() => p.Value.Sum())).Single();
+        var capture = match[p];
 
         Assert.True(capture.IsAddressBacked);
         Assert.Throws<NotSupportedException>(() => capture.Observe((Action<GamePoint>)Ops.ObservePoint));
@@ -156,9 +158,9 @@ public sealed class AddressReceiverPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "RefArgumentCall");
         var mutate = RuntimeSymbols.Method<Ops>(nameof(Ops.Mutate), typeof(int).MakeByRefType());
 
-        var match = method.Match(Cil.Effect(P.Call(mutate,
-            P.Arg(0, RuntimeSymbols.Type<int>(assignable: true), "target")))).Single();
-        var capture = match.Captures.Argument("target");
+        var target = Cil.Arg(RuntimeSymbols.Type<int>(assignable: true), 0);
+        var match = method.Match(Cil.Effect(P.Call(mutate, target.Expr))).Single();
+        var capture = match[target];
 
         Assert.Throws<NotSupportedException>(() =>
             match.Before((Action<int>)Ops.ObserveInt, args => args.Capture(capture)));
@@ -171,9 +173,9 @@ public sealed class AddressReceiverPatternTests
         var method = PatternTestSupport.FixtureMethod(module, "RefArgumentCall");
         var mutate = RuntimeSymbols.Method<Ops>(nameof(Ops.Mutate), typeof(int).MakeByRefType());
 
-        var match = method.Match(Cil.Effect(P.Call(mutate,
-            P.Arg(0, RuntimeSymbols.Type<int>(assignable: true), "target")))).Single();
-        var capture = match.Captures.Argument("target");
+        var target = Cil.Arg(RuntimeSymbols.Type<int>(assignable: true), 0);
+        var match = method.Match(Cil.Effect(P.Call(mutate, target.Expr))).Single();
+        var capture = match[target];
 
         //推荐替代路径：args.Arg 重新按变量装载值，安全可用
         match.Before((Action<int>)Ops.ObserveInt, args => args.Arg(capture))
